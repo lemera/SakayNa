@@ -11,6 +11,9 @@ import CommuterDetails from './app/commuter/CommuterDetails.js';
 import HomePage from "./app/commuter/HomePage";
 import DriverLoginScreen from './app/Driver/DriverLogin.js';
 import DriverDetails from './app/Driver/DriverDetails.js';
+import DriverOtpScreen from './app/Driver/DriverOtpScreen.js';
+import DriverCameraVerification from './app/Driver/DriverCameraVerification.js';
+import DriverHomePage from './app/Driver/DriverHomePage.js';
 
 const Stack = createNativeStackNavigator();
 
@@ -27,6 +30,9 @@ export default function App() {
           <Stack.Screen name="CommuterDetails" component={CommuterDetails} />
           <Stack.Screen name="HomePage" component={HomePage} />
           <Stack.Screen name="DriverDetails" component={DriverDetails} />
+          <Stack.Screen name="DriverOtpScreen" component={DriverOtpScreen} />
+          <Stack.Screen name="DriverCameraVerification" component={DriverCameraVerification} />
+          <Stack.Screen name="DriverHomePage" component={DriverHomePage} />
         </Stack.Navigator>
       </NavigationContainer>
     </GestureHandlerRootView>

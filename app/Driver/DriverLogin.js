@@ -47,7 +47,7 @@ export default function CommuterLogin({ navigation }) {
       return;
     }
 
-    navigation.navigate("OtpScreen", {
+    navigation.navigate("DriverOtpScreen", {
       phone: `+63${raw}`,
     });
   };
@@ -97,8 +97,8 @@ export default function CommuterLogin({ navigation }) {
           {/* VERIFY BUTTON */}
           <Pressable
             onPress={() =>
-              navigation.navigate("OtpScreen", {
-                phone: "+639709946945", // temporary dummy number
+              navigation.navigate("DriverOtpScreen", {
+                phone: `+63${rawNumber}`,
               })
             }
             onPressIn={() => setOtpPressed(true)}

@@ -1,0 +1,165 @@
+import { StyleSheet } from "react-native";
+
+export const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#FAFBFC",
+    paddingHorizontal: 16,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 28,
+  },
+  headerContent: {
+    flex: 1,
+  },
+  logo: {
+    width: 40,
+    height: 40,
+    resizeMode: "contain",
+    marginRight: 12,
+  },
+  status: {
+    color: "#27AE60",
+    fontWeight: "600",
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  userName: {
+    color: "#1A1A1A",
+    fontWeight: "700",
+    fontSize: 18,
+  },
+  avatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#E8F0FE",
+  },
+  balanceCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  balanceItem: {
+    marginBottom: 16,
+  },
+  balanceItemLast: {
+    marginBottom: 0,
+  },
+  balanceLabel: {
+    color: "#999",
+    fontSize: 13,
+    marginBottom: 6,
+    fontWeight: "500",
+  },
+  balanceValue: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#183B5C",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#F0F0F0",
+    marginVertical: 16,
+  },
+  earningsCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  earningsTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 16,
+    color: "#1A1A1A",
+  },
+  earningsTabs: {
+    flexDirection: "row",
+    backgroundColor: "#F8F9FA",
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 16,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    borderRadius: 8,
+  },
+  activeTab: {
+    backgroundColor: "#183B5C",
+  },
+  tabText: {
+    color: "#666",
+    fontWeight: "600",
+    fontSize: 12,
+  },
+  tabTextActive: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 12,
+  },
+  earningsContent: {
+    alignItems: "center",
+    paddingVertical: 8,
+  },
+  tripsContainer: {
+    marginTop: 12,
+    width: "100%",
+    maxHeight: 400,
+  },
+  tripCard: {
+    backgroundColor: "#F8F9FA",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+    marginHorizontal: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    borderLeftWidth: 4,
+    borderLeftColor: "#E97A3E",
+  },
+  tripIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: "#E8F0FE",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  tripInfo: {
+    flex: 1,
+  },
+  tripRoute: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#1A1A1A",
+    marginBottom: 2,
+  },
+  tripDistance: {
+    fontSize: 11,
+    color: "#999",
+    marginBottom: 4,
+  },
+  tripEarnings: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#27AE60",
+  },
+});
