@@ -6,6 +6,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import CommuterLoginScreen from './app/commuter/CommuterLogin.js';
 import UserTypeScreen from './app/UserTypeScreen.js';
 import SplashScreen from './app/SplashScreen.js';
+import OtpScreen from './app/commuter/OtpScreen.js';
 const Stack = createNativeStackNavigator();
 
 
@@ -17,6 +18,7 @@ export default function App() {
         <Stack.Screen name="Splash" component={SplashScreen} />
         <Stack.Screen name="UserType" component={UserTypeScreen} />
         <Stack.Screen name="CommuterLogin" component={CommuterLoginScreen} />
+        <Stack.Screen name="OtpScreen" component={OtpScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

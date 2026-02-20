@@ -11,10 +11,11 @@ import {
   ScrollView,
 } from "react-native";
 import { styles } from "../styles/LoginStyles";
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from "@expo/vector-icons";
 
 export default function CommuterLogin({ navigation }) {
   const [phone, setPhone] = useState("");
+  const [otpPressed, setOtpPressed] = useState(false);
 
   const formatPhoneNumber = (input) => {
     let cleaned = input.replace(/\D/g, "");
@@ -40,13 +41,19 @@ export default function CommuterLogin({ navigation }) {
 
   const handleLogin = () => {
     const raw = phone.replace(/\s/g, "");
+
     if (raw.length !== 10) {
       Alert.alert("Invalid Number", "Please enter a valid PH number.");
       return;
     }
 
-    Alert.alert("Success", `OTP Sent to +63${raw}`);
+    navigation.navigate("OtpScreen", {
+      phone: `+63${raw}`,
+    });
   };
+
+  const rawNumber = phone.replace(/\s/g, "");
+  const isValid = rawNumber.length === 10;
 
   return (
     <KeyboardAvoidingView
@@ -58,6 +65,7 @@ export default function CommuterLogin({ navigation }) {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.container}>
+          {/* BACK BUTTON */}
           <Pressable
             style={{ position: "absolute", top: 50, left: 20 }}
             onPress={() => navigation.goBack()}
@@ -72,6 +80,7 @@ export default function CommuterLogin({ navigation }) {
 
           <Text style={styles.title}>Log in using your phone number</Text>
 
+          {/* PHONE INPUT */}
           <View style={styles.phoneContainer}>
             <Text style={styles.countryCode}>+63</Text>
 
@@ -85,7 +94,22 @@ export default function CommuterLogin({ navigation }) {
             />
           </View>
 
-          <Pressable style={styles.button}>
+          {/* VERIFY BUTTON */}
+          <Pressable
+            onPress={() =>
+              navigation.navigate("OtpScreen", {
+                phone: "+639123456789", // temporary dummy number
+              })
+            }
+            onPressIn={() => setOtpPressed(true)}
+            onPressOut={() => setOtpPressed(false)}
+            style={[
+              styles.button,
+              {
+                backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
+              },
+            ]}
+          >
             <Text style={styles.buttonText}>Verify Number</Text>
           </Pressable>
 
