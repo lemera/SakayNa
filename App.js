@@ -9,6 +9,8 @@ import SplashScreen from './app/SplashScreen.js';
 import OtpScreen from './app/commuter/OtpScreen.js';
 import CommuterDetails from './app/commuter/CommuterDetails.js';
 import HomePage from "./app/commuter/HomePage";
+import DriverLoginScreen from './app/Driver/DriverLogin.js';
+import DriverDetails from './app/Driver/DriverDetails.js';
 
 const Stack = createNativeStackNavigator();
 
@@ -20,9 +22,11 @@ export default function App() {
           <Stack.Screen name="Splash" component={SplashScreen} />
           <Stack.Screen name="UserType" component={UserTypeScreen} />
           <Stack.Screen name="CommuterLogin" component={CommuterLoginScreen} />
+          <Stack.Screen name="DriverLoginScreen" component={DriverLoginScreen} />
           <Stack.Screen name="OtpScreen" component={OtpScreen} />
           <Stack.Screen name="CommuterDetails" component={CommuterDetails} />
           <Stack.Screen name="HomePage" component={HomePage} />
+          <Stack.Screen name="DriverDetails" component={DriverDetails} />
         </Stack.Navigator>
       </NavigationContainer>
     </GestureHandlerRootView>

@@ -33,7 +33,7 @@ export default function UserTypeScreen({ navigation }) {
         </Pressable>
 
         <Pressable
-          onPress={() => Alert.alert('Driver', 'Driver option selected!')}
+          onPress={() => navigation.navigate('DriverLoginScreen')}
           onPressIn={() => setDriverPressed(true)}
           onPressOut={() => setDriverPressed(false)}
           style={[
