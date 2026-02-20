@@ -115,8 +115,20 @@ export default function CommuterLogin({ navigation }) {
 
           <Text style={styles.terms}>
             By verifying my phone number, I accept SakayNa{" "}
-            <Text style={styles.link}>Terms of Service</Text> and the{" "}
-            <Text style={styles.link}>Personal Data Processing Policy</Text>.
+            <Text
+              style={styles.link}
+              onPress={() => navigation.navigate("TermsScreen")}
+            >
+              Terms of Service
+            </Text>{" "}
+            and the{" "}
+            <Text
+              style={styles.link}
+              onPress={() => navigation.navigate("PrivacyScreen")}
+            >
+              Personal Data Processing Policy
+            </Text>
+            .
           </Text>
         </View>
       </ScrollView>

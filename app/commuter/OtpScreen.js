@@ -7,7 +7,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   Image,
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
@@ -15,47 +14,30 @@ import { styles } from "../styles/OtpStyles";
 export default function OtpScreen({ route, navigation }) {
   const { phone } = route.params;
   const [code, setCode] = useState(["", "", "", "", "", ""]);
-
+  const [otpPressed, setOtpPressed] = useState(false);
   const inputs = useRef([]);
 
   const handleChange = (text, index) => {
-    // Only allow numbers
     if (!/^\d*$/.test(text)) return;
 
     const newCode = [...code];
 
-    // If deleting
     if (text === "") {
       newCode[index] = "";
       setCode(newCode);
-
-      // Move focus to previous box when deleting
-      if (index > 0) {
-        inputs.current[index - 1].focus();
-      }
+      if (index > 0) inputs.current[index - 1].focus();
       return;
     }
 
-    // If typing
     newCode[index] = text;
     setCode(newCode);
 
-    // Move to next box
-    if (index < 5) {
-      inputs.current[index + 1].focus();
-    }
+    if (index < 5) inputs.current[index + 1].focus();
   };
 
+  // ✅ TEMPORARY NAVIGATION
   const handleVerify = () => {
-    const finalCode = code.join("");
-
-    if (finalCode.length !== 6) {
-      Alert.alert("Invalid Code", "Please enter the 6-digit code.");
-      return;
-    }
-
-    Alert.alert("Success", "Phone Verified!");
-    // navigation.replace('Home');
+    navigation.navigate("CommuterDetails"); // <-- Temporary screen
   };
 
   return (
@@ -71,7 +53,6 @@ export default function OtpScreen({ route, navigation }) {
           />
 
           <Text style={styles.title}>We sent a message with a code</Text>
-
           <Text style={styles.subtitle}>to {phone}</Text>
 
           {/* OTP Inputs */}
@@ -89,7 +70,18 @@ export default function OtpScreen({ route, navigation }) {
             ))}
           </View>
 
-          <Pressable style={styles.button} onPress={handleVerify}>
+          {/* TEMPORARY VERIFY BUTTON */}
+          <Pressable
+            onPress={handleVerify}
+            onPressIn={() => setOtpPressed(true)}
+            onPressOut={() => setOtpPressed(false)}
+            style={[
+              styles.button,
+              {
+                backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
+              },
+            ]}
+          >
             <Text style={styles.buttonText}>Verify</Text>
           </Pressable>
 
@@ -101,4 +93,3 @@ export default function OtpScreen({ route, navigation }) {
     </KeyboardAvoidingView>
   );
 }
-

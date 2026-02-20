@@ -16,7 +16,7 @@ export const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 10,
   },
-
+ 
   subtitle: {
     fontSize: 16,
     color: '#555',
@@ -33,8 +33,8 @@ export const styles = StyleSheet.create({
   otpInput: {
     width: 50,
     height: 60,
-    borderWidth: 2,
-    borderColor: '#183B5C',
+    borderWidth: 1,
+    borderColor: '#ccc',
     borderRadius: 12,
     textAlign: 'center',
     fontSize: 22,
@@ -66,6 +66,7 @@ export const styles = StyleSheet.create({
     color: '#E97A3E',
     fontWeight: 'bold',
   },
+  
   logo: {
   width: 140,
   height: 140,
