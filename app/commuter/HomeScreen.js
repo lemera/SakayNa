@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Keyboard, Modal } from "react-native";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Keyboard, Modal, ScrollView } from "react-native";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
@@ -17,8 +16,6 @@ export default function HomeScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [showDropoffMap, setShowDropoffMap] = useState(false);
   const [dropoffMarker, setDropoffMarker] = useState(null);
-  const mapRef = React.useRef(null);
-  const dropoffMapRef = React.useRef(null);
 
   // Calculate distance between two coordinates using Haversine formula
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -98,14 +95,6 @@ export default function HomeScreen() {
     try {
       let loc = await Location.getCurrentPositionAsync({});
       const coords = loc.coords;
-      
-      // Animate map to current location
-      mapRef.current?.animateToRegion({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        latitudeDelta: 0.05,
-        longitudeDelta: 0.05,
-      }, 1000);
       
       // Reverse geocode to get address
       const address = await Location.reverseGeocodeAsync({
@@ -188,26 +177,11 @@ export default function HomeScreen() {
     }
   };
 
-  // Handle drop-off marker drag
-  const handleMarkerDragEnd = (e) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
-    setDropoffMarker({
-      latitude,
-      longitude,
-    });
-  };
-
   // Confirm drop-off location
   const confirmDropoffLocation = async () => {
     if (!dropoffMarker) return;
 
     try {
-      // Animate map to marker
-      dropoffMapRef.current?.animateToRegion({
-        ...dropoffMarker,
-        latitudeDelta: 0.05,
-        longitudeDelta: 0.05,
-      }, 500);
 
       // Reverse geocode to get address
       const address = await Location.reverseGeocodeAsync({
@@ -279,40 +253,17 @@ export default function HomeScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
     >
-      {/* Map Background */}
-      <MapView
-        ref={mapRef}
-        style={screenStyles.map}
-        initialRegion={{
-          latitude: location ? location.latitude : 14.5,
-          longitude: location ? location.longitude : 121.0,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
-      >
-        {location && <Marker coordinate={location} pinColor="#E97A3E" />}
-        {pickupCoords && (
-          <Marker
-            coordinate={pickupCoords}
-            pinColor="#27AE60"
-            title="Pickup"
-          />
+      {/* Location Preview Card */}
+      <View style={[screenStyles.map, { backgroundColor: "#F5F5F5", justifyContent: "center", alignItems: "center" }]}>
+        <Ionicons name="map" size={80} color="#DDD" />
+        <Text style={[screenStyles.locationTitle, { marginTop: 16, color: "#999" }]}>Map View</Text>
+        <Text style={{ color: "#BBB", fontSize: 12, marginTop: 8 }}>Locations shown in detail below</Text>
+        {location && (
+          <Text style={{ color: "#888", fontSize: 10, marginTop: 12 }}>
+            Current: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
+          </Text>
         )}
-        {dropoffCoords && (
-          <Marker
-            coordinate={dropoffCoords}
-            pinColor="#E74C3C"
-            title="Drop-off"
-          />
-        )}
-        {pickupCoords && dropoffCoords && (
-          <Polyline
-            coordinates={[pickupCoords, dropoffCoords]}
-            strokeColor="#183B5C"
-            strokeWidth={3}
-          />
-        )}
-      </MapView>
+      </View>
 
       {/* Floating Blur Card */}
       <BlurView intensity={90} style={screenStyles.locationContainer} tint="light">
@@ -394,44 +345,141 @@ export default function HomeScreen() {
 
       </BlurView>
 
-      {/* Drop-off Map Selection Modal */}
+      {/* Drop-off Location Picker Modal */}
       <Modal
         visible={showDropoffMap}
         animationType="slide"
         onRequestClose={() => setShowDropoffMap(false)}
       >
-        <View style={{ flex: 1 }}>
-          <MapView
-            ref={dropoffMapRef}
-            style={{ flex: 1 }}
-            initialRegion={{
-              latitude: dropoffMarker?.latitude || 14.5,
-              longitude: dropoffMarker?.longitude || 121.0,
-              latitudeDelta: 0.05,
-              longitudeDelta: 0.05,
-            }}
-          >
-            {dropoffMarker && (
-              <Marker
-                coordinate={dropoffMarker}
-                draggable
-                onDragEnd={handleMarkerDragEnd}
-                title="Drop-off Location"
-                description="Drag to change location"
-              />
-            )}
-          </MapView>
-
-          {/* Center Marker Pin (Visual guide) */}
-          <View style={screenStyles.centerMarkerContainer}>
-            <Ionicons name="location" size={40} color="#E97A3E" />
-          </View>
-
-          {/* Header with instructions */}
+        <View style={{ flex: 1, backgroundColor: "#FFF" }}>
+          {/* Header */}
           <View style={screenStyles.mapHeader}>
             <Text style={screenStyles.mapHeaderText}>Select Drop-off Location</Text>
-            <Text style={screenStyles.mapHeaderSubText}>Drag the map to move the pin</Text>
+            <Text style={screenStyles.mapHeaderSubText}>Enter coordinates or address below</Text>
           </View>
+
+          {/* Location Input Form */}
+          <ScrollView style={{ flex: 1, paddingHorizontal: 16, paddingTop: 20 }}>
+            <View style={{ marginBottom: 24 }}>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginBottom: 8 }}>
+                Current Marker Position
+              </Text>
+              <View style={{ 
+                backgroundColor: "#F5F5F5", 
+                padding: 16, 
+                borderRadius: 8,
+                marginBottom: 16
+              }}>
+                <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Latitude</Text>
+                <Text style={{ fontSize: 14, fontWeight: "500", color: "#183B5C", marginBottom: 12 }}>
+                  {dropoffMarker?.latitude.toFixed(6)}
+                </Text>
+                <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Longitude</Text>
+                <Text style={{ fontSize: 14, fontWeight: "500", color: "#183B5C" }}>
+                  {dropoffMarker?.longitude.toFixed(6)}
+                </Text>
+              </View>
+
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginBottom: 8 }}>
+                Move Location
+              </Text>
+              <View style={{ 
+                flexDirection: "row", 
+                gap: 12, 
+                marginBottom: 16
+              }}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setDropoffMarker(prev => ({
+                      ...prev,
+                      latitude: prev.latitude + 0.005
+                    }));
+                  }}
+                  style={{ 
+                    flex: 1, 
+                    backgroundColor: "#183B5C", 
+                    padding: 12, 
+                    borderRadius: 8,
+                    alignItems: "center"
+                  }}
+                >
+                  <Ionicons name="arrow-up" size={20} color="#FFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setDropoffMarker(prev => ({
+                      ...prev,
+                      latitude: prev.latitude - 0.005
+                    }));
+                  }}
+                  style={{ 
+                    flex: 1, 
+                    backgroundColor: "#183B5C", 
+                    padding: 12, 
+                    borderRadius: 8,
+                    alignItems: "center"
+                  }}
+                >
+                  <Ionicons name="arrow-down" size={20} color="#FFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setDropoffMarker(prev => ({
+                      ...prev,
+                      longitude: prev.longitude - 0.005
+                    }));
+                  }}
+                  style={{ 
+                    flex: 1, 
+                    backgroundColor: "#183B5C", 
+                    padding: 12, 
+                    borderRadius: 8,
+                    alignItems: "center"
+                  }}
+                >
+                  <Ionicons name="arrow-back" size={20} color="#FFF" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => {
+                    setDropoffMarker(prev => ({
+                      ...prev,
+                      longitude: prev.longitude + 0.005
+                    }));
+                  }}
+                  style={{ 
+                    flex: 1, 
+                    backgroundColor: "#183B5C", 
+                    padding: 12, 
+                    borderRadius: 8,
+                    alignItems: "center"
+                  }}
+                >
+                  <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Reset to current location button */}
+              <TouchableOpacity
+                onPress={() => {
+                  if (location) {
+                    setDropoffMarker({
+                      latitude: location.latitude,
+                      longitude: location.longitude
+                    });
+                  }
+                }}
+                style={{
+                  backgroundColor: "#E97A3E",
+                  padding: 12,
+                  borderRadius: 8,
+                  alignItems: "center",
+                  marginBottom: 24
+                }}
+              >
+                <Text style={{ color: "#FFF", fontWeight: "600" }}>Use Current Location</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
 
           {/* Control Buttons */}
           <View style={screenStyles.mapControlsContainer}>
