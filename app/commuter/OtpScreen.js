@@ -10,6 +10,7 @@ import {
   Image,
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
+import { Ionicons } from "@expo/vector-icons";
 
 export default function OtpScreen({ route, navigation }) {
   const { phone } = route.params;
@@ -47,6 +48,12 @@ export default function OtpScreen({ route, navigation }) {
     >
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={styles.container}>
+          <Pressable
+            style={{ position: "absolute", top: 50, left: 20 }}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={28} color="#183B5C" />
+          </Pressable>
           <Image
             source={require("../../assets/logo-sakayna.png")}
             style={styles.logo}
