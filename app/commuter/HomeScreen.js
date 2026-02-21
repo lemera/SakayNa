@@ -1,9 +1,14 @@
-import React, { useState, useEffect } from "react";
-import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Keyboard, Modal, ScrollView } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { View, Text, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform, Dimensions } from "react-native";
+import MapView, { Marker, UrlTile, Polyline } from "react-native-maps";
 import * as Location from "expo-location";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { screenStyles } from "../styles/ScreenStyles";
+import { mapStyles } from "../styles/MapStyles";
+import DropoffMapScreen from "./DropoffMapScreen";
+
+const { width, height } = Dimensions.get("window");
 
 export default function HomeScreen() {
   const [location, setLocation] = useState(null);
@@ -17,41 +22,7 @@ export default function HomeScreen() {
   const [showDropoffMap, setShowDropoffMap] = useState(false);
   const [dropoffMarker, setDropoffMarker] = useState(null);
 
-  // Calculate distance between two coordinates using Haversine formula
-  const calculateDistance = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; // Earth's radius in kilometers
-    const dLat = (lat2 - lat1) * (Math.PI / 180);
-    const dLon = (lon2 - lon1) * (Math.PI / 180);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) *
-        Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c; // Distance in kilometers
-  };
-
-  // Auto-calculate distance when pickup or dropoff changes
-  useEffect(() => {
-    if (pickupCoords && dropoffCoords) {
-      const distance = calculateDistance(
-        pickupCoords.latitude,
-        pickupCoords.longitude,
-        dropoffCoords.latitude,
-        dropoffCoords.longitude
-      );
-      setKilometers(parseFloat(distance.toFixed(2)));
-    }
-  }, [pickupCoords, dropoffCoords]);
-
-  // Calculate fare based on kilometers
-  const MIN_PRICE = 15;
-  const PRICE_PER_KM = 12;
-  const calculateFare = () => {
-    const fare = kilometers * PRICE_PER_KM;
-    return Math.max(fare, MIN_PRICE);
-  };
+  const mapRef = useRef(null);
 
   // Auto-detect location
   useEffect(() => {
@@ -68,212 +39,132 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Listen for keyboard show/hide events
+  // Calculate distance
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * (Math.PI / 180)) *
+        Math.cos(lat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  // Auto-calculate distance when pickup/dropoff changes
   useEffect(() => {
-    const keyboardShowListener = Keyboard.addListener(
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow",
-      (e) => {
-        setKeyboardHeight(e.endCoordinates.height);
-      }
-    );
-
-    const keyboardHideListener = Keyboard.addListener(
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide",
-      () => {
-        setKeyboardHeight(0);
-      }
-    );
-
-    return () => {
-      keyboardShowListener.remove();
-      keyboardHideListener.remove();
-    };
-  }, []);
-
-  // Handle Pickup Button Click
-  const handlePickupMap = async () => {
-    try {
-      let loc = await Location.getCurrentPositionAsync({});
-      const coords = loc.coords;
-      
-      // Reverse geocode to get address
-      const address = await Location.reverseGeocodeAsync({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-      });
-      
-      if (address.length > 0) {
-        const addressData = address[0];
-        // Build location name with purok, barangay, city, and region
-        const addressParts = [];
-        
-        if (addressData.postalCode) addressParts.push(addressData.postalCode); // Purok/Postal Code
-        if (addressData.district) addressParts.push(addressData.district); // District/Barangay
-        if (addressData.city) addressParts.push(addressData.city); // City
-        if (addressData.region) addressParts.push(addressData.region); // Region
-        
-        const locationName = addressParts.length > 0 
-          ? addressParts.join(", ") 
-          : addressData.name || `Lat: ${coords.latitude.toFixed(5)}, Lon: ${coords.longitude.toFixed(5)}`;
-        
-        setPickup(locationName);
-        setPickupCoords({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        });
-        Alert.alert("Pickup Location Set", locationName);
-      } else {
-        // Fall back to coordinates if reverse geocoding returns empty
-        const coordName = `Lat: ${coords.latitude.toFixed(5)}, Lon: ${coords.longitude.toFixed(5)}`;
-        setPickup(coordName);
-        setPickupCoords({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        });
-        Alert.alert("Pickup Location Set", coordName);
-      }
-    } catch (err) {
-      // Fall back to coordinates on error
-      try {
-        let loc = await Location.getCurrentPositionAsync({});
-        const coords = loc.coords;
-        const coordName = `Lat: ${coords.latitude.toFixed(5)}, Lon: ${coords.longitude.toFixed(5)}`;
-        setPickup(coordName);
-        setPickupCoords({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        });
-        Alert.alert("Pickup Location Set", coordName);
-      } catch {
-        Alert.alert("Error", "Could not get pickup location.");
-      }
+    if (pickupCoords && dropoffCoords) {
+      const distance = calculateDistance(
+        pickupCoords.latitude,
+        pickupCoords.longitude,
+        dropoffCoords.latitude,
+        dropoffCoords.longitude
+      );
+      setKilometers(parseFloat(distance.toFixed(2)));
     }
-  };
-
-  // Handle Drop-off Button Click - Open Map for selection
-  const handleDropoffMap = async () => {
-    try {
-      // Use pickup coordinates as reference, or default location
-      let initialLat = 14.5;
-      let initialLon = 121.0;
-      
-      // If user has set a pickup location, start drop-off map from there
-      if (pickupCoords) {
-        // Offset drop-off marker slightly south (~1km) so it's different from pickup
-        initialLat = pickupCoords.latitude - 0.01;
-        initialLon = pickupCoords.longitude;
-      }
-      
-      // Set initial marker position
-      setDropoffMarker({
-        latitude: initialLat,
-        longitude: initialLon,
-      });
-      
-      // Show the map modal
-      setShowDropoffMap(true);
-    } catch (err) {
-      Alert.alert("Error", "Could not open drop-off map.");
-    }
-  };
-
-  // Confirm drop-off location
-  const confirmDropoffLocation = async () => {
-    if (!dropoffMarker) return;
-
-    try {
-
-      // Reverse geocode to get address
-      const address = await Location.reverseGeocodeAsync({
-        latitude: dropoffMarker.latitude,
-        longitude: dropoffMarker.longitude,
-      });
-
-      if (address.length > 0) {
-        const addressData = address[0];
-        // Build location name with purok, barangay, city, and region
-        const addressParts = [];
-        
-        if (addressData.postalCode) addressParts.push(addressData.postalCode); // Purok/Postal Code
-        if (addressData.district) addressParts.push(addressData.district); // District/Barangay
-        if (addressData.city) addressParts.push(addressData.city); // City
-        if (addressData.region) addressParts.push(addressData.region); // Region
-        
-        const locationName = addressParts.length > 0 
-          ? addressParts.join(", ") 
-          : addressData.name || `Lat: ${dropoffMarker.latitude.toFixed(5)}, Lon: ${dropoffMarker.longitude.toFixed(5)}`;
-        
-        setDropoff(locationName);
-        setDropoffCoords({
-          latitude: dropoffMarker.latitude,
-          longitude: dropoffMarker.longitude,
-        });
-        Alert.alert("Drop-off Location Set", locationName);
-        setShowDropoffMap(false);
-      } else {
-        // Fall back to coordinates if reverse geocoding returns empty
-        const coordName = `Lat: ${dropoffMarker.latitude.toFixed(5)}, Lon: ${dropoffMarker.longitude.toFixed(5)}`;
-        setDropoff(coordName);
-        setDropoffCoords({
-          latitude: dropoffMarker.latitude,
-          longitude: dropoffMarker.longitude,
-        });
-        Alert.alert("Drop-off Location Set", coordName);
-        setShowDropoffMap(false);
-      }
-    } catch (err) {
-      // Fall back to coordinates on error
-      const coordName = `Lat: ${dropoffMarker.latitude.toFixed(5)}, Lon: ${dropoffMarker.longitude.toFixed(5)}`;
-      setDropoff(coordName);
-      setDropoffCoords({
-        latitude: dropoffMarker.latitude,
-        longitude: dropoffMarker.longitude,
-      });
-      Alert.alert("Drop-off Location Set", coordName);
-      setShowDropoffMap(false);
-    }
-  };
+  }, [pickupCoords, dropoffCoords]);
 
   // Swap pickup and drop-off
   const handleSwap = () => {
-    // Swap location names
     const tempPickup = pickup;
     setPickup(dropoff);
     setDropoff(tempPickup);
 
-    // Swap coordinates
     const tempCoords = pickupCoords;
     setPickupCoords(dropoffCoords);
     setDropoffCoords(tempCoords);
   };
 
+  // Confirm drop-off location from map
+  const handleConfirmDropoffLocation = (locationName, coords) => {
+    setDropoff(locationName);
+    setDropoffCoords(coords);
+    setShowDropoffMap(false);
+  };
+
+  // Fare calculation
+  const MIN_PRICE = 15;
+  const PRICE_PER_KM = 15;
+  const calculateFare = () => Math.max(kilometers * PRICE_PER_KM, MIN_PRICE);
+
+  // Reverse geocode function
+  const reverseGeocode = async (lat, lon) => {
+    try {
+      const addr = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lon });
+      if (addr.length > 0) {
+        const a = addr[0];
+        const parts = [];
+        if (a.postalCode) parts.push(a.postalCode);
+        if (a.district) parts.push(a.district);
+        if (a.city) parts.push(a.city);
+        if (a.region) parts.push(a.region);
+        return parts.length > 0 ? parts.join(", ") : a.name || `Lat: ${lat.toFixed(5)}, Lon: ${lon.toFixed(5)}`;
+      }
+      return `Lat: ${lat.toFixed(5)}, Lon: ${lon.toFixed(5)}`;
+    } catch {
+      return `Lat: ${lat.toFixed(5)}, Lon: ${lon.toFixed(5)}`;
+    }
+  };
+
+  // New: Drop-off search handler
+  const handleDropoffSearch = async (query) => {
+    if (!query) return;
+    try {
+      const results = await Location.geocodeAsync(query);
+      if (results.length > 0) {
+        const loc = results[0];
+        const coords = { latitude: loc.latitude, longitude: loc.longitude };
+        setDropoffCoords(coords);
+        setDropoff(query);
+        mapRef.current.animateToRegion(
+          { ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+          500
+        );
+      } else {
+        Alert.alert("Location not found", "Please try a different address");
+      }
+    } catch (error) {
+      Alert.alert("Error", "Failed to search location");
+      console.error(error);
+    }
+  };
+
+  if (!location) return null;
+
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       style={screenStyles.screenContainer}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
     >
-      {/* Location Preview Card */}
-      <View style={[screenStyles.map, { backgroundColor: "#F5F5F5", justifyContent: "center", alignItems: "center" }]}>
-        <Ionicons name="map" size={80} color="#DDD" />
-        <Text style={[screenStyles.locationTitle, { marginTop: 16, color: "#999" }]}>Map View</Text>
-        <Text style={{ color: "#BBB", fontSize: 12, marginTop: 8 }}>Locations shown in detail below</Text>
-        {location && (
-          <Text style={{ color: "#888", fontSize: 10, marginTop: 12 }}>
-            Current: {location.latitude.toFixed(4)}, {location.longitude.toFixed(4)}
-          </Text>
-        )}
+      {/* Map */}
+      <View style={screenStyles.map}>
+        <MapView
+          ref={mapRef}
+          style={{ flex: 1 }}
+          initialRegion={{
+            latitude: location.latitude,
+            longitude: location.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }}
+          showsUserLocation={true}
+          zoomControlEnabled={true}
+        >
+          <UrlTile urlTemplate="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png" maximumZ={19} />
+          {pickupCoords && <Marker coordinate={pickupCoords} title="Pickup" pinColor="green" />}
+          {dropoffCoords && <Marker coordinate={dropoffCoords} title="Drop-off" pinColor="red" />}
+          {pickupCoords && dropoffCoords && <Polyline coordinates={[pickupCoords, dropoffCoords]} strokeColor="#007AFF" strokeWidth={3} />}
+        </MapView>
       </View>
 
-      {/* Floating Blur Card */}
+      {/* Blur Input Card */}
       <BlurView intensity={90} style={screenStyles.locationContainer} tint="light">
         <View style={screenStyles.titleContainer}>
           <Text style={screenStyles.locationTitle}>Where to?</Text>
-          <TouchableOpacity
-            onPress={handleSwap}
-            style={screenStyles.swapButton}
-            disabled={!pickup || !dropoff}
-          >
+          <TouchableOpacity onPress={handleSwap} style={screenStyles.swapButton} disabled={!pickup || !dropoff}>
             <Ionicons name="swap-vertical" size={20} color={pickup && dropoff ? "#183B5C" : "#CCC"} />
           </TouchableOpacity>
           {isOnRide && (
@@ -284,7 +175,7 @@ export default function HomeScreen() {
           )}
         </View>
 
-        {/* Pickup Row */}
+        {/* Pickup */}
         <View style={screenStyles.inputRow}>
           <Ionicons name="location" size={20} color="#E97A3E" />
           <TextInput
@@ -294,14 +185,26 @@ export default function HomeScreen() {
             value={pickup}
             onChangeText={setPickup}
           />
-          <TouchableOpacity onPress={handlePickupMap} style={screenStyles.iconButton}>
+          <TouchableOpacity
+            style={screenStyles.iconButton}
+            onPress={async () => {
+              const loc = await Location.getCurrentPositionAsync({});
+              const name = await reverseGeocode(loc.coords.latitude, loc.coords.longitude);
+              setPickupCoords({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+              setPickup(name);
+              mapRef.current.animateToRegion(
+                { latitude: loc.coords.latitude, longitude: loc.coords.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+                500
+              );
+            }}
+          >
             <Ionicons name="map" size={24} color="#183B5C" />
           </TouchableOpacity>
         </View>
 
         <View style={screenStyles.divider} />
 
-        {/* Drop-off Row */}
+        {/* Drop-off */}
         <View style={screenStyles.inputRow}>
           <Ionicons name="flag" size={20} color="#183B5C" />
           <TextInput
@@ -310,194 +213,40 @@ export default function HomeScreen() {
             style={screenStyles.input}
             value={dropoff}
             onChangeText={setDropoff}
+            onSubmitEditing={() => handleDropoffSearch(dropoff)}
           />
-          <TouchableOpacity onPress={handleDropoffMap} style={screenStyles.iconButton}>
+          <TouchableOpacity style={screenStyles.iconButton} onPress={() => handleDropoffSearch(dropoff)}>
+            <Ionicons name="search" size={24} color="#183B5C" />
+          </TouchableOpacity>
+          <TouchableOpacity style={screenStyles.iconButton} onPress={() => setShowDropoffMap(true)}>
             <Ionicons name="map" size={24} color="#183B5C" />
           </TouchableOpacity>
         </View>
 
         <View style={screenStyles.divider} />
 
-        {/* Kilometers Input & Price Display */}
+        {/* Distance & Price */}
         <View style={screenStyles.distancePriceRow}>
-          {/* Left: Kilometers Display */}
           <View style={screenStyles.kmSection}>
-            <View style={screenStyles.kmInputRow}>
-              <Text style={screenStyles.inputLabel}>Distance (km)</Text>
-              <Ionicons name="navigate" size={18} color="#E97A3E" />
-              <TextInput
-                placeholder="0"
-                placeholderTextColor="#999"
-                style={screenStyles.kmInput}
-                keyboardType="decimal-pad"
-                value={kilometers.toString()}
-                editable={false}
-              />
-            </View>
+            <Text style={screenStyles.inputLabel}>Distance (km)</Text>
+            <Text style={screenStyles.kmInput}>{kilometers.toFixed(2)}</Text>
           </View>
-
-          {/* Right: Price Display */}
           <View style={screenStyles.priceSection}>
             <Text style={screenStyles.priceLabel}>Total Price</Text>
             <Text style={screenStyles.priceValue}>₱{calculateFare().toFixed(2)}</Text>
           </View>
         </View>
-
       </BlurView>
 
-      {/* Drop-off Location Picker Modal */}
-      <Modal
+      {/* Drop-off Map Modal */}
+      <DropoffMapScreen
         visible={showDropoffMap}
-        animationType="slide"
-        onRequestClose={() => setShowDropoffMap(false)}
-      >
-        <View style={{ flex: 1, backgroundColor: "#FFF" }}>
-          {/* Header */}
-          <View style={screenStyles.mapHeader}>
-            <Text style={screenStyles.mapHeaderText}>Select Drop-off Location</Text>
-            <Text style={screenStyles.mapHeaderSubText}>Enter coordinates or address below</Text>
-          </View>
-
-          {/* Location Input Form */}
-          <ScrollView style={{ flex: 1, paddingHorizontal: 16, paddingTop: 20 }}>
-            <View style={{ marginBottom: 24 }}>
-              <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginBottom: 8 }}>
-                Current Marker Position
-              </Text>
-              <View style={{ 
-                backgroundColor: "#F5F5F5", 
-                padding: 16, 
-                borderRadius: 8,
-                marginBottom: 16
-              }}>
-                <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Latitude</Text>
-                <Text style={{ fontSize: 14, fontWeight: "500", color: "#183B5C", marginBottom: 12 }}>
-                  {dropoffMarker?.latitude.toFixed(6)}
-                </Text>
-                <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>Longitude</Text>
-                <Text style={{ fontSize: 14, fontWeight: "500", color: "#183B5C" }}>
-                  {dropoffMarker?.longitude.toFixed(6)}
-                </Text>
-              </View>
-
-              <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginBottom: 8 }}>
-                Move Location
-              </Text>
-              <View style={{ 
-                flexDirection: "row", 
-                gap: 12, 
-                marginBottom: 16
-              }}>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDropoffMarker(prev => ({
-                      ...prev,
-                      latitude: prev.latitude + 0.005
-                    }));
-                  }}
-                  style={{ 
-                    flex: 1, 
-                    backgroundColor: "#183B5C", 
-                    padding: 12, 
-                    borderRadius: 8,
-                    alignItems: "center"
-                  }}
-                >
-                  <Ionicons name="arrow-up" size={20} color="#FFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDropoffMarker(prev => ({
-                      ...prev,
-                      latitude: prev.latitude - 0.005
-                    }));
-                  }}
-                  style={{ 
-                    flex: 1, 
-                    backgroundColor: "#183B5C", 
-                    padding: 12, 
-                    borderRadius: 8,
-                    alignItems: "center"
-                  }}
-                >
-                  <Ionicons name="arrow-down" size={20} color="#FFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDropoffMarker(prev => ({
-                      ...prev,
-                      longitude: prev.longitude - 0.005
-                    }));
-                  }}
-                  style={{ 
-                    flex: 1, 
-                    backgroundColor: "#183B5C", 
-                    padding: 12, 
-                    borderRadius: 8,
-                    alignItems: "center"
-                  }}
-                >
-                  <Ionicons name="arrow-back" size={20} color="#FFF" />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => {
-                    setDropoffMarker(prev => ({
-                      ...prev,
-                      longitude: prev.longitude + 0.005
-                    }));
-                  }}
-                  style={{ 
-                    flex: 1, 
-                    backgroundColor: "#183B5C", 
-                    padding: 12, 
-                    borderRadius: 8,
-                    alignItems: "center"
-                  }}
-                >
-                  <Ionicons name="arrow-forward" size={20} color="#FFF" />
-                </TouchableOpacity>
-              </View>
-
-              {/* Reset to current location button */}
-              <TouchableOpacity
-                onPress={() => {
-                  if (location) {
-                    setDropoffMarker({
-                      latitude: location.latitude,
-                      longitude: location.longitude
-                    });
-                  }
-                }}
-                style={{
-                  backgroundColor: "#E97A3E",
-                  padding: 12,
-                  borderRadius: 8,
-                  alignItems: "center",
-                  marginBottom: 24
-                }}
-              >
-                <Text style={{ color: "#FFF", fontWeight: "600" }}>Use Current Location</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-
-          {/* Control Buttons */}
-          <View style={screenStyles.mapControlsContainer}>
-            <TouchableOpacity
-              onPress={() => setShowDropoffMap(false)}
-              style={screenStyles.mapCancelButton}
-            >
-              <Text style={screenStyles.mapButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={confirmDropoffLocation}
-              style={screenStyles.mapConfirmButton}
-            >
-              <Text style={screenStyles.mapButtonText}>Confirm</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        dropoffMarker={dropoffMarker}
+        setDropoffMarker={setDropoffMarker}
+        onConfirm={handleConfirmDropoffLocation}
+        onCancel={() => setShowDropoffMap(false)}
+        location={location}
+      />
     </KeyboardAvoidingView>
   );
 }
