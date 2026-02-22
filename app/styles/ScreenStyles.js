@@ -172,4 +172,20 @@ export const screenStyles = StyleSheet.create({
     fontWeight: "bold",
     color: "#E97A3E",
   },
+  selectDriverButton: {
+  marginTop: 12,
+  backgroundColor: "#183B5C",
+  paddingVertical: 14,
+  borderRadius: 12,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+},
+
+selectDriverButtonText: {
+  color: "#FFF",
+  fontSize: 16,
+  fontWeight: "bold",
+},
 });

@@ -11,6 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import styles from "../styles/WalletStyles";
+
 const { width } = Dimensions.get("window");
 
 export default function WalletScreen() {
@@ -21,26 +22,9 @@ export default function WalletScreen() {
     { id: "3", type: "Earned", amount: 100, date: "2026-02-15" },
   ]);
 
+  // Redeem button now shows "Coming Soon" alert
   const handleRedeem = () => {
-    if (points >= 500) {
-      Alert.alert("Redeem Points", "You redeemed 500 points!", [
-        { text: "OK", onPress: () => setPoints(points - 500) },
-      ]);
-      setTransactions([
-        {
-          id: Date.now().toString(),
-          type: "Spent",
-          amount: 500,
-          date: new Date().toISOString().split("T")[0],
-        },
-        ...transactions,
-      ]);
-    } else {
-      Alert.alert(
-        "Not enough points",
-        "You need at least 500 points to redeem.",
-      );
-    }
+    Alert.alert("Coming Soon", "Redeem feature is coming soon!");
   };
 
   const renderItem = ({ item }) => (
@@ -64,7 +48,6 @@ export default function WalletScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Top Wallet Card */}
       {/* Wallet Card */}
       <LinearGradient
         colors={["#183B5C", "#E97A3E"]}
@@ -87,11 +70,9 @@ export default function WalletScreen() {
           <TouchableOpacity style={styles.redeemButton} onPress={handleRedeem}>
             <Ionicons
               name="gift"
-              size={20}
+              size={28}
               color="#fff"
-              style={{ marginRight: 8 }}
             />
-            <Text style={styles.redeemButtonText}>Redeem</Text>
           </TouchableOpacity>
         </View>
 
