@@ -3,141 +3,148 @@ import { StyleSheet } from "react-native";
 export const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FAFBFC",
-    paddingHorizontal: 16,
+    backgroundColor: "#F4F6F9",
+    paddingHorizontal: 20,
   },
+
+  /* HEADER */
   header: {
+    borderRadius: 24,
+    padding: 20,
+    marginBottom: 24,
+  },
+  headerTop: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 20,
-    marginBottom: 28,
+  },
+  logo: {
+    width: 38,
+    height: 38,
+    resizeMode: "contain",
+    marginRight: 12,
   },
   headerContent: {
     flex: 1,
   },
-  logo: {
-    width: 40,
-    height: 40,
-    resizeMode: "contain",
-    marginRight: 12,
-  },
-  status: {
-    color: "#27AE60",
-    fontWeight: "600",
-    fontSize: 12,
-    marginBottom: 2,
-  },
   userName: {
-    color: "#1A1A1A",
+    color: "#FFF",
     fontWeight: "700",
     fontSize: 18,
+    marginTop: 4,
+  },
+  onlineBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  onlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#27AE60",
+    marginRight: 6,
+  },
+  onlineText: {
+    color: "#DFFFE8",
+    fontSize: 12,
+    fontWeight: "600",
   },
   avatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#E8F0FE",
+    width: 48,
+    height: 48,
+    borderRadius: 24,
   },
+
+  /* BALANCE CARD */
   balanceCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-    elevation: 2,
+    backgroundColor: "#FFF",
+    borderRadius: 20,
+    padding: 22,
+    marginBottom: 24,
     shadowColor: "#000",
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
-  balanceItem: {
-    marginBottom: 16,
-  },
-  balanceItemLast: {
-    marginBottom: 0,
+  balanceRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   balanceLabel: {
-    color: "#999",
-    fontSize: 13,
+    color: "#7A7A7A",
+    fontSize: 12,
     marginBottom: 6,
     fontWeight: "500",
   },
   balanceValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "700",
     color: "#183B5C",
   },
-  divider: {
-    height: 1,
-    backgroundColor: "#F0F0F0",
-    marginVertical: 16,
+  verticalDivider: {
+    width: 1,
+    height: 40,
+    backgroundColor: "#EEE",
   },
+
+  /* EARNINGS */
   earningsCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    elevation: 2,
+    backgroundColor: "#FFF",
+    borderRadius: 20,
+    padding: 22,
+    marginBottom: 40,
     shadowColor: "#000",
     shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
-  earningsTitle: {
+  sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
     marginBottom: 16,
     color: "#1A1A1A",
   },
-  earningsTabs: {
+
+  tabs: {
     flexDirection: "row",
-    backgroundColor: "#F8F9FA",
-    borderRadius: 10,
+    backgroundColor: "#F1F3F6",
+    borderRadius: 14,
     padding: 4,
-    marginBottom: 16,
+    marginBottom: 18,
   },
-  tab: {
+  tabButton: {
     flex: 1,
     paddingVertical: 10,
-    paddingHorizontal: 12,
     alignItems: "center",
-    borderRadius: 8,
+    borderRadius: 12,
   },
   activeTab: {
     backgroundColor: "#183B5C",
   },
   tabText: {
-    color: "#666",
+    fontSize: 13,
     fontWeight: "600",
-    fontSize: 12,
+    color: "#6B7280",
   },
-  tabTextActive: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 12,
+  activeTabText: {
+    color: "#FFF",
   },
-  earningsContent: {
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  tripsContainer: {
-    marginTop: 12,
-    width: "100%",
-    maxHeight: 400,
-  },
+
+  /* TRIP CARD */
   tripCard: {
-    backgroundColor: "#F8F9FA",
-    borderRadius: 12,
+    backgroundColor: "#F9FAFB",
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 10,
-    marginHorizontal: 0,
+    marginBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderLeftWidth: 4,
-    borderLeftColor: "#E97A3E",
   },
   tripIcon: {
     width: 40,
     height: 40,
-    borderRadius: 8,
+    borderRadius: 12,
     backgroundColor: "#E8F0FE",
     justifyContent: "center",
     alignItems: "center",
@@ -147,19 +154,20 @@ export const styles = StyleSheet.create({
     flex: 1,
   },
   tripRoute: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "600",
     color: "#1A1A1A",
-    marginBottom: 2,
   },
   tripDistance: {
-    fontSize: 11,
-    color: "#999",
-    marginBottom: 4,
+    fontSize: 12,
+    color: "#8A8A8A",
+    marginTop: 4,
   },
   tripEarnings: {
     fontSize: 14,
     fontWeight: "700",
     color: "#27AE60",
   },
+
+  
 });
