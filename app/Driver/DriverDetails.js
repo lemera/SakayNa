@@ -34,7 +34,7 @@ export default function DriverDetails({ navigation }) {
       return;
     }
 
-    navigation.navigate("DriverCameraVerification");
+    navigation.navigate("DriverIdVerification");
   };
 
   return (
