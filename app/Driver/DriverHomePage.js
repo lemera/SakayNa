@@ -88,6 +88,7 @@ export default function HomePage() {
 
       <Tab.Screen name="Inbox" component={InboxScreen} />
       <Tab.Screen name="Account" component={AccountScreen} />
+      
     </Tab.Navigator>
   );
 }

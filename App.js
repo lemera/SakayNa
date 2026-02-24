@@ -19,7 +19,7 @@ import DriverDetails from './app/Driver/DriverDetails.js';
 import DriverCameraVerification from './app/Driver/DriverCameraVerification.js';
 import DriverHomePage from './app/Driver/DriverHomePage.js';
 import DriverIdVerification from './app/Driver/DriverIdVerification.js';
-
+import RankingPage from "./app/Driver/RankingPage";
 // Help & FAQ
 import HelpScreen from './app/commuter/HelpScreen.js';
 import FAQScreen from './app/commuter/FAQScreen.js';
@@ -61,6 +61,7 @@ export default function App() {
           <Stack.Screen name="DriverCameraVerification" component={DriverCameraVerification} />
           <Stack.Screen name="DriverHomePage" component={DriverHomePage} />
           <Stack.Screen name="DriverIdVerification" component={DriverIdVerification} />
+          <Stack.Screen name="RankingPage" component={RankingPage} />
         </Stack.Navigator>
       </NavigationContainer>
     </GestureHandlerRootView>

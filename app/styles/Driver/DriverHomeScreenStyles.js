@@ -169,5 +169,21 @@ export const styles = StyleSheet.create({
     color: "#27AE60",
   },
 
-  
+  userRow: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 5, // space between name and icon
+},
+
+rankingIcon: {
+  width: 24, // adjust size as needed
+  height: 24,
+},
+rankingIconBadge: {
+  width: 32,        // size of the badge
+  height: 32,
+  position: "absolute",
+  top: 10,          // distance from top of header
+  right: 10,        // distance from right of header
+},
 });
