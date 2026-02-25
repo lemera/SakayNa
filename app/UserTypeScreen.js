@@ -1,44 +1,69 @@
-import React, { useState } from 'react';
-import { View, Text, Image, Pressable, Alert } from 'react-native';
-import { styles } from './styles/UserTypeStyles.js'; 
+// UserTypeScreen.js
+import React, { useState } from "react";
+import { View, Text, Image, Pressable } from "react-native";
+import { styles } from "./styles/UserTypeStyles.js";
 
 export default function UserTypeScreen({ navigation }) {
-  const [commuterPressed, setCommuterPressed] = useState(false);
-  const [driverPressed, setDriverPressed] = useState(false);
+  const [selectedType, setSelectedType] = useState(null);
+
+  const handleSelect = (type) => {
+    setSelectedType(type);
+
+    // Small delay for visual feedback
+    setTimeout(() => {
+      if (type === "commuter") {
+        navigation.navigate("CommuterLogin", { userType: "commuter" });
+      } else if (type === "driver") {
+        navigation.navigate("DriverLoginScreen", { userType: "driver" });
+      }
+    }, 150);
+  };
 
   return (
     <View style={styles.container}>
       <Image
-        source={require('../assets/logo-sakayna.png')}
+        source={require("../assets/logo-sakayna.png")}
         style={[styles.logo, { marginBottom: 20 }]}
+        resizeMode="contain"
       />
-      <Text style={styles.title}>
-  Welcome to <Text style={{ color: '#E97A3E' }}>SakayNa</Text>
-  
-</Text>
 
-      <Text style={styles.subtitle}>Select a User Type to Continue</Text>
+      <Text style={styles.title}>
+        Welcome to{" "}
+        <Text style={{ color: "#E97A3E", fontWeight: "bold" }}>
+          SakayNa
+        </Text>
+      </Text>
+
+      <Text style={styles.subtitle}>
+        Select a user type to continue
+      </Text>
 
       <View style={styles.buttonRow}>
+        {/* Commuter Button */}
         <Pressable
-          onPress={() => navigation.navigate('CommuterLogin')}
-          onPressIn={() => setCommuterPressed(true)}
-          onPressOut={() => setCommuterPressed(false)}
+          onPress={() => handleSelect("commuter")}
           style={[
             styles.button,
-            { backgroundColor: commuterPressed ? '#E97A3E' : '#183B5C', marginRight: 10 }
+            {
+              backgroundColor:
+                selectedType === "commuter" ? "#E97A3E" : "#183B5C",
+              marginRight: 10,
+            },
           ]}
         >
           <Text style={styles.buttonText}>Commuter</Text>
         </Pressable>
 
+        {/* Driver Button */}
         <Pressable
-          onPress={() => navigation.navigate('DriverLoginScreen')}
-          onPressIn={() => setDriverPressed(true)}
-          onPressOut={() => setDriverPressed(false)}
+          onPress={() => handleSelect("driver")}
           style={[
             styles.button,
-            { backgroundColor: driverPressed ? '#183B5C' : '#E97A3E', marginLeft: 10 }
+            {
+              backgroundColor:
+                selectedType === "driver" ? "#183B5C" : "#E97A3E",
+              marginLeft: 10,
+            },
           ]}
         >
           <Text style={styles.buttonText}>Driver</Text>

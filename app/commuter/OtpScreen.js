@@ -1,3 +1,4 @@
+// OtpScreen.js
 import React, { useState, useRef } from "react";
 import {
   View,
@@ -13,13 +14,13 @@ import {
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
-import { verifyOtp } from "../../lib/otp";
+import { supabase } from "../../lib/supabase"; // Make sure supabase client is initialized
 
 export default function OtpScreen({ route, navigation }) {
   const { phone } = route.params;
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
-  const [loading, setLoading] = useState(false); // <-- loading state
+  const [loading, setLoading] = useState(false);
   const inputs = useRef([]);
 
   const handleChange = (text, index) => {
@@ -41,39 +42,61 @@ export default function OtpScreen({ route, navigation }) {
   };
 
   const handleVerify = async () => {
-  const pin = code.join("");
-  if (pin.length !== 6) {
-    Alert.alert("Invalid code", "Please enter the 6-digit code.");
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    const result = await verifyOtp(phone, pin);
-
-    if (result.success) {
-      // ✅ Save logged-in user info if needed 
-      const user = result.user || result.user_id || { id: result.user?.id, phone };
-      
-      // Optional: store user in local storage / context
-      // AsyncStorage.setItem('user', JSON.stringify(user));
-
-      Alert.alert("Success", "OTP verified successfully!", [
-        {
-          text: "OK",
-          onPress: () => navigation.navigate("CommuterDetails", { user }),
-        },
-      ]);
-    } else {
-      Alert.alert("Verification Failed", result.message || "Incorrect OTP");
+    const pin = code.join("");
+    if (pin.length !== 6) {
+      Alert.alert("Invalid code", "Please enter the 6-digit code.");
+      return;
     }
-  } catch (err) {
-    Alert.alert("Verification Error", err.message || "Something went wrong");
-  } finally {
-    setLoading(false);
-  }
-};
+
+    setLoading(true);
+
+    try {
+      // ✅ Call Edge Function to verify OTP
+      const res = await fetch("https://your-edge-function-url/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, otp: pin }),
+      });
+
+      const result = await res.json();
+
+      if (!result.success) {
+        Alert.alert("Verification Failed", result.message || "Incorrect OTP");
+        return;
+      }
+
+      const userId = result.user?.id;
+      if (!userId) {
+        Alert.alert("Error", "Could not get user ID after OTP verification");
+        return;
+      }
+
+      // ✅ Check if the user is already registered in `commuters`
+      const { data: commuter, error: commuterError } = await supabase
+        .from("commuters")
+        .select("*")
+        .eq("id", userId)
+        .single();
+
+      if (commuterError && commuterError.code !== "PGRST116") {
+        throw commuterError;
+      }
+
+      if (commuter) {
+        // Already registered → navigate to HomePage
+        Alert.alert("Welcome Back!", "You are logged in successfully.", [
+          { text: "OK", onPress: () => navigation.replace("HomePage") },
+        ]);
+      } else {
+        // Not registered → navigate to CommuterDetails
+        navigation.replace("CommuterDetails", { userId, phone });
+      }
+    } catch (err) {
+      Alert.alert("Verification Error", err.message || "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -116,12 +139,12 @@ export default function OtpScreen({ route, navigation }) {
             onPress={handleVerify}
             onPressIn={() => setOtpPressed(true)}
             onPressOut={() => setOtpPressed(false)}
-            disabled={loading} // disable button during loading
+            disabled={loading}
             style={[
               styles.button,
               {
                 backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
-                opacity: loading ? 0.7 : 1, // dim when loading
+                opacity: loading ? 0.7 : 1,
               },
             ]}
           >
