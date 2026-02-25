@@ -188,4 +188,33 @@ selectDriverButtonText: {
   fontSize: 16,
   fontWeight: "bold",
 },
+minimizedContainer: {
+  width: "50%",        // 👈 smaller width when minimized
+  height: 70,
+  alignSelf: "center", // keeps it centered
+  paddingVertical: 8,
+  justifyContent: "center",
+},
+
+headerActions: {
+  flexDirection: "row",
+  alignItems: "center",
+},
+
+minimizedRow: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+  alignItems: "center",
+  paddingHorizontal: 12,
+},
+
+minimizedText: {
+  fontSize: 14,
+  fontWeight: "600",
+},
+
+disabledButton: {
+  backgroundColor: "#CCC",
+},
+
 });

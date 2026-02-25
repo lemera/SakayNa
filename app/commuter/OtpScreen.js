@@ -8,14 +8,18 @@ import {
   Platform,
   ScrollView,
   Image,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
+import { verifyOtp } from "../../lib/otp";
 
 export default function OtpScreen({ route, navigation }) {
   const { phone } = route.params;
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
+  const [loading, setLoading] = useState(false); // <-- loading state
   const inputs = useRef([]);
 
   const handleChange = (text, index) => {
@@ -36,10 +40,40 @@ export default function OtpScreen({ route, navigation }) {
     if (index < 5) inputs.current[index + 1].focus();
   };
 
-  // ✅ TEMPORARY NAVIGATION
-  const handleVerify = () => {
-    navigation.navigate("CommuterDetails"); // <-- Temporary screen
-  };
+  const handleVerify = async () => {
+  const pin = code.join("");
+  if (pin.length !== 6) {
+    Alert.alert("Invalid code", "Please enter the 6-digit code.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const result = await verifyOtp(phone, pin);
+
+    if (result.success) {
+      // ✅ Save logged-in user info if needed 
+      const user = result.user || result.user_id || { id: result.user?.id, phone };
+      
+      // Optional: store user in local storage / context
+      // AsyncStorage.setItem('user', JSON.stringify(user));
+
+      Alert.alert("Success", "OTP verified successfully!", [
+        {
+          text: "OK",
+          onPress: () => navigation.navigate("CommuterDetails", { user }),
+        },
+      ]);
+    } else {
+      Alert.alert("Verification Failed", result.message || "Incorrect OTP");
+    }
+  } catch (err) {
+    Alert.alert("Verification Error", err.message || "Something went wrong");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <KeyboardAvoidingView
@@ -54,6 +88,7 @@ export default function OtpScreen({ route, navigation }) {
           >
             <Ionicons name="arrow-back" size={28} color="#183B5C" />
           </Pressable>
+
           <Image
             source={require("../../assets/logo-sakayna.png")}
             style={styles.logo}
@@ -77,19 +112,24 @@ export default function OtpScreen({ route, navigation }) {
             ))}
           </View>
 
-          {/* TEMPORARY VERIFY BUTTON */}
           <Pressable
             onPress={handleVerify}
             onPressIn={() => setOtpPressed(true)}
             onPressOut={() => setOtpPressed(false)}
+            disabled={loading} // disable button during loading
             style={[
               styles.button,
               {
                 backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
+                opacity: loading ? 0.7 : 1, // dim when loading
               },
             ]}
           >
-            <Text style={styles.buttonText}>Verify</Text>
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Verify</Text>
+            )}
           </Pressable>
 
           <Text style={styles.resend}>

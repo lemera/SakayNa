@@ -11,11 +11,13 @@ import {
   ActivityIndicator,
   Alert,
 } from "react-native";
-import MapView, { Marker } from "react-native-maps";
+import MapView, { Marker, Polyline } from "react-native-maps";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
+import { GooglePlacesAutocomplete } from "react-native-google-places-autocomplete";
 import { styles } from "../styles/SelectDriverScreenStyles";
+import { getGooglePlaceDetails, getRoutePolyline } from "./utils/locationUtils";
 
 export default function SelectDriverScreen({ route, navigation }) {
   const { pickup, dropoff, kilometers, totalPrice } = route.params || {};
@@ -25,6 +27,8 @@ export default function SelectDriverScreen({ route, navigation }) {
   const [selectedDriver, setSelectedDriver] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [loadingDriverId, setLoadingDriverId] = useState(null);
+  const [currentDropoff, setCurrentDropoff] = useState(dropoff);
+  const [routePolyline, setRoutePolyline] = useState([]);
 
   const mapRef = useRef(null);
   const flatListRef = useRef(null);
@@ -57,6 +61,20 @@ export default function SelectDriverScreen({ route, navigation }) {
       setDrivers(nearbyDrivers);
     })();
   }, []);
+
+  // Fetch route from pickup to dropoff
+  useEffect(() => {
+    if (currentLocation && pickup && dropoff) {
+      // For now, we'll need the actual lat/lng of dropoff
+      // This is a placeholder - you should pass actual dropoff coordinates
+      const fetchRoute = async () => {
+        // Note: You may need to geocode the dropoff address first
+        // For demo, we'll skip this if exact coordinates aren't available
+        // In a real app, you'd geocode the dropoff address to get coordinates
+      };
+      fetchRoute();
+    }
+  }, [currentLocation, pickup, dropoff]);
 
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
     const toRad = (v) => (v * Math.PI) / 180;
@@ -186,11 +204,54 @@ export default function SelectDriverScreen({ route, navigation }) {
 
         <View style={styles.rideInfo}>
           <Text style={styles.rideText}>From: {pickup}</Text>
-          <Text style={styles.rideText}>To: {dropoff}</Text>
+          <Text style={styles.rideText}>To: {currentDropoff}</Text>
           <Text style={styles.rideText}>
             Distance: {kilometers?.toFixed(2)} km
           </Text>
           <Text style={styles.priceText}>₱{totalPrice?.toFixed(2)}</Text>
+        </View>
+
+        {/* Google Places Autocomplete for Dropoff */}
+        <View style={{ marginHorizontal: 10, marginTop: 10 }}>
+          <GooglePlacesAutocomplete
+            placeholder="Change dropoff location"
+            onPress={async (data, details = null) => {
+              const placeDetails = await getGooglePlaceDetails(data.place_id);
+              if (placeDetails) {
+                setCurrentDropoff(placeDetails.address);
+              }
+            }}
+            query={{
+              key: "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws",
+              language: "en",
+              components: "country:ph",
+            }}
+            textInputProps={{
+              placeholderTextColor: "#999",
+            }}
+            styles={{
+              textInput: {
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 6,
+                borderColor: "#fff",
+                borderWidth: 1,
+                fontSize: 14,
+                color: "#fff",
+                backgroundColor: "rgba(255,255,255,0.2)",
+              },
+              listView: {
+                marginTop: 4,
+                borderRadius: 6,
+                elevation: 2,
+                zIndex: 100,
+              },
+              row: {
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+              },
+            }}
+          />
         </View>
       </LinearGradient>
 
@@ -206,6 +267,15 @@ export default function SelectDriverScreen({ route, navigation }) {
         showsUserLocation
         showsMyLocationButton
       >
+        {/* Display route polyline if available */}
+        {routePolyline.length > 0 && (
+          <Polyline
+            coordinates={routePolyline}
+            strokeColor="#007AFF"
+            strokeWidth={4}
+          />
+        )}
+
         {drivers.map((driver) => (
           <Marker
             key={driver.id}

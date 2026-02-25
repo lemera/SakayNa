@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,18 +9,36 @@ import {
   Platform,
   ScrollView,
   Alert,
+  ActivityIndicator,
 } from "react-native";
 import { styles } from "../styles/CommuterDetailsStyles";
 import { Ionicons } from "@expo/vector-icons";
+import { supabase } from "../../lib/supabase";
 
 export default function CommuterDetails({ navigation }) {
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
+  const [loading, setLoading] = useState(false);
   const [buttonPressed, setButtonPressed] = useState(false);
+  const [userId, setUserId] = useState(null);
 
-  const handleNext = () => {
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
+      if (!user) {
+        Alert.alert("Error", "You must be logged in to register.");
+        navigation.goBack();
+      } else {
+        setUserId(user.id);
+      }
+    };
+    getUser();
+  }, []);
+
+  const handleRegister = async () => {
     if (!firstName || !lastName || !email) {
       Alert.alert("Missing Fields", "Please fill in all required fields.");
       return;
@@ -31,8 +49,40 @@ export default function CommuterDetails({ navigation }) {
       Alert.alert("Invalid Email", "Please enter a valid email address.");
       return;
     }
-navigation.navigate("HomePage");
-    navigation.navigate("NextScreen", { firstName, middleName, lastName, email });
+
+    if (!userId) {
+      Alert.alert("Error", "User not authenticated.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("commuters")
+        .insert([
+          {
+            id: userId,
+            first_name: firstName,
+            middle_name: middleName,
+            last_name: lastName,
+            email,
+          },
+        ]);
+
+      if (error) throw error;
+
+      Alert.alert("Success", "Registration successful!", [
+        { text: "OK", onPress: () => navigation.navigate("HomePage") },
+      ]);
+    } catch (err) {
+      Alert.alert(
+        "Registration Failed",
+        err.message || "Could not register user."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -45,7 +95,6 @@ navigation.navigate("HomePage");
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.container}>
-          {/* BACK BUTTON */}
           <Pressable
             style={{ position: "absolute", top: 50, left: 20 }}
             onPress={() => navigation.goBack()}
@@ -53,21 +102,16 @@ navigation.navigate("HomePage");
             <Ionicons name="arrow-back" size={28} color="#183B5C" />
           </Pressable>
 
-          {/* LOGO */}
           <Image
             source={require("../../assets/logo-sakayna.png")}
             style={styles.logo}
           />
 
-          {/* TITLE */}
           <Text style={styles.title}>Enter Your Details</Text>
-
-          {/* SUBTITLE */}
           <Text style={styles.subtitle}>
             Please provide your information to continue.
           </Text>
 
-          {/* INPUT FIELDS */}
           <TextInput
             style={styles.input}
             placeholder="First Name"
@@ -75,7 +119,6 @@ navigation.navigate("HomePage");
             onChangeText={setFirstName}
             placeholderTextColor="#999"
           />
-
           <TextInput
             style={styles.input}
             placeholder="Middle Name"
@@ -83,7 +126,6 @@ navigation.navigate("HomePage");
             onChangeText={setMiddleName}
             placeholderTextColor="#999"
           />
-
           <TextInput
             style={styles.input}
             placeholder="Last Name"
@@ -91,7 +133,6 @@ navigation.navigate("HomePage");
             onChangeText={setLastName}
             placeholderTextColor="#999"
           />
-
           <TextInput
             style={styles.input}
             placeholder="Email Address"
@@ -101,19 +142,25 @@ navigation.navigate("HomePage");
             placeholderTextColor="#999"
           />
 
-          {/* NEXT BUTTON WITH HOVER */}
           <Pressable
-            onPress={handleNext}
+            onPress={handleRegister}
             onPressIn={() => setButtonPressed(true)}
             onPressOut={() => setButtonPressed(false)}
-            
+            disabled={loading}
             style={[
               styles.button,
-              { backgroundColor: buttonPressed ? "#E97A3E" : "#183B5C", marginTop: 20 },
+              {
+                backgroundColor: buttonPressed ? "#E97A3E" : "#183B5C",
+                marginTop: 20,
+                opacity: loading ? 0.7 : 1,
+              },
             ]}
           >
-            <Text style={styles.buttonText}>Next</Text>
-            
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Register</Text>
+            )}
           </Pressable>
         </View>
       </ScrollView>
