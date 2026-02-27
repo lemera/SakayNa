@@ -14,13 +14,15 @@ import {
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
-import { supabase } from "../../lib/supabase"; // Make sure supabase client is initialized
-
+import { verifyOtp, sendOtp } from "../../lib/otp";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 export default function OtpScreen({ route, navigation }) {
-  const { phone } = route.params;
+  const { phone, userType } = route.params;
+
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
+
   const inputs = useRef([]);
 
   const handleChange = (text, index) => {
@@ -41,60 +43,50 @@ export default function OtpScreen({ route, navigation }) {
     if (index < 5) inputs.current[index + 1].focus();
   };
 
-  const handleVerify = async () => {
-    const pin = code.join("");
-    if (pin.length !== 6) {
-      Alert.alert("Invalid code", "Please enter the 6-digit code.");
-      return;
+const handleVerify = async () => {
+  const pin = code.join("");
+
+  if (pin.length !== 6) {
+    Alert.alert("Invalid code", "Please enter the 6-digit code.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const data = await verifyOtp(phone, pin, userType);
+
+    if (!data.success) {
+      throw new Error(data.error || "OTP verification failed");
     }
 
-    setLoading(true);
+    const user = data.user;
 
+    // ✅ SAVE SESSION LOCALLY
+    await AsyncStorage.setItem("user_id", user.id);
+    await AsyncStorage.setItem("user_phone", user.phone);
+    await AsyncStorage.setItem("user_type", user.user_type);
+
+    // 🔥 Navigate based on type
+    if (user.user_type === "commuter") {
+      navigation.replace("CommuterDetails");
+    } else {
+      navigation.replace("DriverDetails");
+    }
+
+  } catch (err) {
+    Alert.alert("Verification Failed", err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+  const handleResend = async () => {
     try {
-      // ✅ Call Edge Function to verify OTP
-      const res = await fetch("https://your-edge-function-url/verify-otp", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, otp: pin }),
-      });
-
-      const result = await res.json();
-
-      if (!result.success) {
-        Alert.alert("Verification Failed", result.message || "Incorrect OTP");
-        return;
-      }
-
-      const userId = result.user?.id;
-      if (!userId) {
-        Alert.alert("Error", "Could not get user ID after OTP verification");
-        return;
-      }
-
-      // ✅ Check if the user is already registered in `commuters`
-      const { data: commuter, error: commuterError } = await supabase
-        .from("commuters")
-        .select("*")
-        .eq("id", userId)
-        .single();
-
-      if (commuterError && commuterError.code !== "PGRST116") {
-        throw commuterError;
-      }
-
-      if (commuter) {
-        // Already registered → navigate to HomePage
-        Alert.alert("Welcome Back!", "You are logged in successfully.", [
-          { text: "OK", onPress: () => navigation.replace("HomePage") },
-        ]);
-      } else {
-        // Not registered → navigate to CommuterDetails
-        navigation.replace("CommuterDetails", { userId, phone });
-      }
+      await sendOtp(phone);
+      Alert.alert("Resent", "OTP has been sent again.");
     } catch (err) {
-      Alert.alert("Verification Error", err.message || "Something went wrong");
-    } finally {
-      setLoading(false);
+      Alert.alert("Error", "Failed to resend OTP.");
     }
   };
 
@@ -117,8 +109,8 @@ export default function OtpScreen({ route, navigation }) {
             style={styles.logo}
           />
 
-          <Text style={styles.title}>We sent a message with a code</Text>
-          <Text style={styles.subtitle}>to {phone}</Text>
+          <Text style={styles.title}>We sent a code to your phone</Text>
+          <Text style={styles.subtitle}>{phone}</Text>
 
           {/* OTP Inputs */}
           <View style={styles.otpContainer}>
@@ -156,7 +148,10 @@ export default function OtpScreen({ route, navigation }) {
           </Pressable>
 
           <Text style={styles.resend}>
-            Didn’t receive code? <Text style={styles.resendLink}>Resend</Text>
+            Didn’t receive code?{" "}
+            <Text style={styles.resendLink} onPress={handleResend}>
+              Resend
+            </Text>
           </Text>
         </View>
       </ScrollView>

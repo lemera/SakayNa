@@ -34,25 +34,32 @@ export default function CommuterLogin({ navigation }) {
 
   const handleChange = (text) => setPhone(formatPhoneNumber(text));
 
-  const handleLogin = async () => {
-    const raw = phone.replace(/\s/g, "");
-    if (raw.length !== 10) {
-      Alert.alert("Invalid Number", "Please enter a valid PH number.");
-      return;
-    }
+const handleLogin = async () => {
+  const raw = phone.replace(/\s/g, "");
 
-    setLoading(true); // start loading
-    try {
-      await requestOtp(`+63${raw}`); // send OTP
-      Alert.alert("Success", "OTP sent successfully!", [
-        { text: "OK", onPress: () => navigation.navigate("OtpScreen", { phone: `+63${raw}` }) },
-      ]);
-    } catch (err) {
-      Alert.alert("Error", err.message || "Failed to send OTP. Try again.");
-    } finally {
-      setLoading(false); // stop loading
-    }
-  };
+  if (raw.length !== 10) {
+    Alert.alert("Invalid Number", "Please enter a valid PH number.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const formattedPhone = `+63${raw}`;
+
+    await requestOtp(formattedPhone);
+
+    navigation.navigate("OtpScreen", {
+      phone: formattedPhone,
+      userType: "commuter",
+    });
+
+  } catch (err) {
+    Alert.alert("Error", err.message || "Failed to send OTP.");
+  } finally {
+    setLoading(false);
+  }
+};
 
   const rawNumber = phone.replace(/\s/g, "");
   const isValid = rawNumber.length === 10;

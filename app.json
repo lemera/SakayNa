@@ -7,6 +7,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "scheme": "sakayna",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -39,5 +40,7 @@
         "projectId": "2c53eff2-d71b-44a1-b9ac-cfc13330d935"
       }
     }
+    
   }
+  
 }

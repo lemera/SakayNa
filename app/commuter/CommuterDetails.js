@@ -14,39 +14,61 @@ import {
 import { styles } from "../styles/CommuterDetailsStyles";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function CommuterDetails({ navigation }) {
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [buttonPressed, setButtonPressed] = useState(false);
   const [userId, setUserId] = useState(null);
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const [buttonPressed, setButtonPressed] = useState(false);
 
+  // 🔥 INITIAL LOAD
   useEffect(() => {
-    const getUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (!user) {
-        Alert.alert("Error", "You must be logged in to register.");
-        navigation.goBack();
-      } else {
-        setUserId(user.id);
+    const init = async () => {
+      try {
+        const storedUserId = await AsyncStorage.getItem("user_id");
+        const storedPhone = await AsyncStorage.getItem("user_phone");
+
+        if (!storedUserId) {
+          Alert.alert("Session Expired", "Please login again.");
+          navigation.replace("UserTypeScreen");
+          return;
+        }
+
+        setUserId(storedUserId);
+        setPhone(storedPhone);
+
+        // ✅ Check if already registered
+        const { data: existing, error } = await supabase
+          .from("commuters")
+          .select("id")
+          .eq("id", storedUserId)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (existing) {
+          navigation.replace("HomePage");
+        }
+
+      } catch (err) {
+        Alert.alert("Error", err.message);
+      } finally {
+        setInitializing(false);
       }
     };
-    getUser();
+
+    init();
   }, []);
 
+  // 🔥 REGISTER COMMUTER
   const handleRegister = async () => {
-    if (!firstName || !lastName || !email) {
-      Alert.alert("Missing Fields", "Please fill in all required fields.");
-      return;
-    }
-
-    const emailRegex = /\S+@\S+\.\S+/;
-    if (!emailRegex.test(email)) {
-      Alert.alert("Invalid Email", "Please enter a valid email address.");
+    if (!firstName.trim() || !lastName.trim()) {
+      Alert.alert("Missing Fields", "First and Last name are required.");
       return;
     }
 
@@ -58,42 +80,51 @@ export default function CommuterDetails({ navigation }) {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase
-        .from("commuters")
-        .insert([
-          {
-            id: userId,
-            first_name: firstName,
-            middle_name: middleName,
-            last_name: lastName,
-            email,
-          },
-        ]);
+      // 1️⃣ Insert commuter
+      const { error } = await supabase.from("commuters").insert([
+        {
+          id: userId,
+          phone: phone,
+          first_name: firstName.trim(),
+          middle_name: middleName.trim(),
+          last_name: lastName.trim(),
+        },
+      ]);
 
       if (error) throw error;
 
-      Alert.alert("Success", "Registration successful!", [
-        { text: "OK", onPress: () => navigation.navigate("HomePage") },
+      // 2️⃣ Create wallet automatically (recommended)
+      await supabase.from("commuter_wallets").insert([
+        {
+          commuter_id: userId,
+          balance: 0,
+          points: 0,
+        },
       ]);
+
+      navigation.replace("HomePage");
+
     } catch (err) {
-      Alert.alert(
-        "Registration Failed",
-        err.message || "Could not register user."
-      );
+      Alert.alert("Registration Failed", err.message);
     } finally {
       setLoading(false);
     }
   };
+
+  if (initializing) {
+    return (
+      <View style={{ flex:1, justifyContent:"center", alignItems:"center" }}>
+        <ActivityIndicator size="large" color="#183B5C" />
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <ScrollView
-        contentContainerStyle={{ flexGrow: 1 }}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={styles.container}>
           <Pressable
             style={{ position: "absolute", top: 50, left: 20 }}
@@ -119,6 +150,7 @@ export default function CommuterDetails({ navigation }) {
             onChangeText={setFirstName}
             placeholderTextColor="#999"
           />
+
           <TextInput
             style={styles.input}
             placeholder="Middle Name"
@@ -126,6 +158,7 @@ export default function CommuterDetails({ navigation }) {
             onChangeText={setMiddleName}
             placeholderTextColor="#999"
           />
+
           <TextInput
             style={styles.input}
             placeholder="Last Name"
@@ -133,13 +166,11 @@ export default function CommuterDetails({ navigation }) {
             onChangeText={setLastName}
             placeholderTextColor="#999"
           />
+
           <TextInput
-            style={styles.input}
-            placeholder="Email Address"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            placeholderTextColor="#999"
+            style={[styles.input, { backgroundColor: "#eee" }]}
+            value={phone}
+            editable={false}
           />
 
           <Pressable
