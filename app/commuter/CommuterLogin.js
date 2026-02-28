@@ -14,52 +14,73 @@ import {
 } from "react-native";
 import { styles } from "../styles/LoginStyles";
 import { Ionicons } from "@expo/vector-icons";
-import { requestOtp } from "../../lib/otp"; // <-- import send OTP function
 
 export default function CommuterLogin({ navigation }) {
   const [phone, setPhone] = useState("");
   const [otpPressed, setOtpPressed] = useState(false);
-  const [loading, setLoading] = useState(false); // <-- loading state
+  const [loading, setLoading] = useState(false);
 
   const formatPhoneNumber = (input) => {
     let cleaned = input.replace(/\D/g, "");
     if (cleaned.startsWith("0")) cleaned = cleaned.substring(1);
     cleaned = cleaned.substring(0, 10);
+
     if (cleaned.length >= 7)
       return cleaned.replace(/(\d{3})(\d{3})(\d{0,4})/, "$1 $2 $3");
     else if (cleaned.length >= 4)
       return cleaned.replace(/(\d{3})(\d{0,3})/, "$1 $2");
+
     return cleaned;
   };
 
   const handleChange = (text) => setPhone(formatPhoneNumber(text));
 
-const handleLogin = async () => {
-  const raw = phone.replace(/\s/g, "");
+  const handleLogin = async () => {
+    const raw = phone.replace(/\s/g, "");
 
-  if (raw.length !== 10) {
-    Alert.alert("Invalid Number", "Please enter a valid PH number.");
-    return;
-  }
+    if (raw.length !== 10) {
+      Alert.alert("Invalid Number", "Please enter a valid PH number.");
+      return;
+    }
 
-  setLoading(true);
+    setLoading(true);
 
-  try {
-    const formattedPhone = `+63${raw}`;
+    try {
+      const formattedPhone = `+63${raw}`;
 
-    await requestOtp(formattedPhone);
+      const response = await fetch(
+        "https://riseunullhczomqxkcbn.supabase.co/functions/v1/send_otp",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            phone: formattedPhone,
+            role: "commuter",   // ✅ REQUIRED
+          }),
+        }
+      );
 
-    navigation.navigate("OtpScreen", {
-      phone: formattedPhone,
-      userType: "commuter",
-    });
+      const result = await response.json();
 
-  } catch (err) {
-    Alert.alert("Error", err.message || "Failed to send OTP.");
-  } finally {
-    setLoading(false);
-  }
-};
+      if (!response.ok || !result.success) {
+        Alert.alert("Login Failed", result.error || "Something went wrong.");
+        return;
+      }
+
+      navigation.navigate("OtpScreen", {
+        phone: formattedPhone,
+        userType: "commuter",
+        action: "login",
+      });
+
+    } catch (err) {
+      Alert.alert("Error", "Failed to connect to server.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const rawNumber = phone.replace(/\s/g, "");
   const isValid = rawNumber.length === 10;
@@ -85,7 +106,10 @@ const handleLogin = async () => {
             source={require("../../assets/logo-sakayna.png")}
             style={styles.logo}
           />
-          <Text style={styles.title}>Log in using your phone number</Text>
+
+          <Text style={styles.title}>
+            Log in using your phone number
+          </Text>
 
           <View style={styles.phoneContainer}>
             <Text style={styles.countryCode}>+63</Text>
@@ -96,6 +120,7 @@ const handleLogin = async () => {
               value={phone}
               onChangeText={handleChange}
               placeholderTextColor="#999"
+              maxLength={12}
             />
           </View>
 
@@ -103,12 +128,12 @@ const handleLogin = async () => {
             onPress={handleLogin}
             onPressIn={() => setOtpPressed(true)}
             onPressOut={() => setOtpPressed(false)}
-            disabled={loading} // disable button while loading
+            disabled={loading || !isValid}
             style={[
               styles.button,
               {
                 backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
-                opacity: loading ? 0.7 : 1, // dim button when loading
+                opacity: loading || !isValid ? 0.6 : 1,
               },
             ]}
           >

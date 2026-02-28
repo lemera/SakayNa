@@ -10,31 +10,48 @@ import {
   ScrollView,
   Alert,
 } from "react-native";
-import { styles } from "../styles/CommuterDetailsStyles";
 import { Ionicons } from "@expo/vector-icons";
+import { supabase } from "../../lib/supabase";
+import { styles } from "../styles/CommuterDetailsStyles";
 
 export default function DriverDetails({ navigation }) {
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
   const [plateNumber, setPlateNumber] = useState("");
-  const [orCrNumber, setOrCrNumber] = useState("");
-  const [buttonPressed, setButtonPressed] = useState(false);
+  const [vehicleType, setVehicleType] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleNext = () => {
-    if (!firstName || !lastName || !email) {
-      Alert.alert("Missing Fields", "Please fill in all required fields.");
+  const handleNext = async () => {
+    if (!firstName || !lastName || !plateNumber || !vehicleType) {
+      Alert.alert("Missing Fields", "Please fill all required fields.");
       return;
     }
 
-    const emailRegex = /\S+@\S+\.\S+/;
-    if (!emailRegex.test(email)) {
-      Alert.alert("Invalid Email", "Please enter a valid email address.");
-      return;
-    }
+    try {
+      setLoading(true);
 
-    navigation.navigate("DriverIdVerification");
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const { error } = await supabase.from("drivers").upsert({
+        id: user.id,
+        first_name: firstName,
+        middle_name: middleName,
+        last_name: lastName,
+        plate_number: plateNumber,
+        vehicle_type: vehicleType,
+        status: "pending",
+      });
+
+      if (error) throw error;
+
+      navigation.navigate("DriverIdVerification");
+
+    } catch (err) {
+      Alert.alert("Error", err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -42,50 +59,28 @@ export default function DriverDetails({ navigation }) {
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <ScrollView
-        contentContainerStyle={{
-          flexGrow: 1,
-          paddingBottom: 50, // ✅ prevents overlap with bottom tabs
-        }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
+      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={styles.container}>
 
-          {/* BACK BUTTON */}
           <Pressable
-            style={{
-              position: "absolute",
-              top: 60,
-              left: 20,
-              zIndex: 10,
-            }}
+            style={{ position: "absolute", top: 60, left: 20 }}
             onPress={() => navigation.goBack()}
           >
             <Ionicons name="arrow-back" size={28} color="#183B5C" />
           </Pressable>
 
-          {/* LOGO */}
           <Image
             source={require("../../assets/logo-sakayna.png")}
             style={styles.logo}
           />
 
-          {/* TITLE */}
-          <Text style={styles.title}>Enter Your Details</Text>
+          <Text style={styles.title}>Driver Registration</Text>
 
-          {/* SUBTITLE */}
-          <Text style={styles.subtitle}>
-            Please provide your information to continue.
-          </Text>
-
-          {/* INPUT FIELDS */}
           <TextInput
             style={styles.input}
             placeholder="First Name"
             value={firstName}
             onChangeText={setFirstName}
-            placeholderTextColor="#999"
           />
 
           <TextInput
@@ -93,7 +88,6 @@ export default function DriverDetails({ navigation }) {
             placeholder="Middle Name"
             value={middleName}
             onChangeText={setMiddleName}
-            placeholderTextColor="#999"
           />
 
           <TextInput
@@ -101,16 +95,6 @@ export default function DriverDetails({ navigation }) {
             placeholder="Last Name"
             value={lastName}
             onChangeText={setLastName}
-            placeholderTextColor="#999"
-          />
-
-          <TextInput
-            style={styles.input}
-            placeholder="Email Address"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            placeholderTextColor="#999"
           />
 
           <TextInput
@@ -118,31 +102,23 @@ export default function DriverDetails({ navigation }) {
             placeholder="Plate Number"
             value={plateNumber}
             onChangeText={setPlateNumber}
-            placeholderTextColor="#999"
           />
 
           <TextInput
             style={styles.input}
-            placeholder="OR/CR Number"
-            value={orCrNumber}
-            onChangeText={setOrCrNumber}
-            placeholderTextColor="#999"
+            placeholder="Vehicle Type (Motorcycle, Car)"
+            value={vehicleType}
+            onChangeText={setVehicleType}
           />
 
-          {/* NEXT BUTTON */}
           <Pressable
+            style={styles.button}
             onPress={handleNext}
-            onPressIn={() => setButtonPressed(true)}
-            onPressOut={() => setButtonPressed(false)}
-            style={[
-              styles.button,
-              {
-                backgroundColor: buttonPressed ? "#E97A3E" : "#183B5C",
-                marginTop: 20,
-              },
-            ]}
+            disabled={loading}
           >
-            <Text style={styles.buttonText}>Next</Text>
+            <Text style={styles.buttonText}>
+              {loading ? "Saving..." : "Next"}
+            </Text>
           </Pressable>
 
         </View>

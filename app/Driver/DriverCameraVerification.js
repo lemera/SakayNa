@@ -8,44 +8,74 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { Ionicons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
+import { supabase } from "../../lib/supabase";
 import { styles } from "../styles/Driver/DriverCameraVerificationStyles";
 
 export default function DriverCameraVerification({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [photo, setPhoto] = useState(null);
   const cameraRef = useRef(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     requestPermission();
   }, []);
 
   const takePicture = async () => {
-    if (cameraRef.current) {
-      const result = await cameraRef.current.takePictureAsync();
-      setPhoto(result.uri);
+    const result = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+    setPhoto(result.uri);
+  };
+
+  const uploadImage = async (uri, filePath) => {
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const { error } = await supabase.storage
+      .from("driver-documents")
+      .upload(filePath, Buffer.from(base64, "base64"), {
+        contentType: "image/jpeg",
+      });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage
+      .from("driver-documents")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
+
+  const handleConfirm = async () => {
+    try {
+      setLoading(true);
+
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const selfieUrl = await uploadImage(photo, `${user.id}/selfie.jpg`);
+
+      await supabase.from("drivers").update({
+        selfie_with_id_url: selfieUrl,
+        status: "under_review",
+      }).eq("id", user.id);
+
+      Alert.alert("Submitted", "Your documents are under review.");
+      navigation.navigate("DriverHomePage");
+
+    } catch (err) {
+      Alert.alert("Upload Error", err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleConfirm = () => {
-    Alert.alert("Verification Complete", "Your selfie has been securely saved.");
-    navigation.navigate("DriverHomePage");
-  };
-
-  if (!permission) {
+  if (!permission?.granted) {
     return (
       <View style={styles.center}>
-        <Text>Requesting camera permission...</Text>
-      </View>
-    );
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.center}>
-        <Text>Camera access is required for verification.</Text>
-        <Pressable style={styles.permissionBtn} onPress={requestPermission}>
-          <Text style={styles.permissionText}>Allow Camera</Text>
+        <Text>Camera permission required.</Text>
+        <Pressable onPress={requestPermission}>
+          <Text>Allow Camera</Text>
         </Pressable>
       </View>
     );
@@ -53,65 +83,31 @@ export default function DriverCameraVerification({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* HEADER */}
-      <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-        <Ionicons name="arrow-back" size={26} color="#183B5C" />
-      </Pressable>
+      <Text style={styles.title}>Selfie with ID</Text>
 
-      <Text style={styles.title}>Driver Face ID Verification</Text>
-
-      <Text style={styles.subtitle}>
-        1. Take a clear selfie while holding your driver’s license.
-        {"\n"}2. Align your face within the guide and ensure your ID is visible in the frame.
-        {"\n"}3. This helps us verify your identity and protect passenger safety.
-      </Text>
-
-      {/* CAMERA SECTION */}
       <View style={styles.cameraWrapper}>
         {photo ? (
           <Image source={{ uri: photo }} style={styles.camera} />
         ) : (
-          <>
-            <CameraView
-              style={styles.camera}
-              ref={cameraRef}
-              facing="front"
-            />
-            <View style={styles.faceGuide} />
-            {/* ID GUIDE */}
-            <View style={styles.idGuide}>
-              <Text style={styles.idText}>Driver's License</Text>
-            </View>
-          </>
+          <CameraView ref={cameraRef} style={styles.camera} facing="front" />
         )}
       </View>
 
-      {/* SAFETY NOTE */}
-      <View style={styles.securityBox}>
-        <Ionicons name="shield-checkmark-outline" size={18} color="#2E7D32" />
-        <Text style={styles.securityText}>
-          Your photo is encrypted and securely stored. We do not share your data.
-        </Text>
-      </View>
-
-      {/* BUTTONS */}
-      <View style={styles.buttonContainer}>
-        {photo ? (
-          <>
-            <Pressable style={styles.secondaryBtn} onPress={() => setPhoto(null)}>
-              <Text style={styles.secondaryText}>Retake</Text>
-            </Pressable>
-
-            <Pressable style={styles.primaryBtn} onPress={handleConfirm}>
-              <Text style={styles.primaryText}>Confirm</Text>
-            </Pressable>
-          </>
-        ) : (
-          <Pressable style={styles.captureButton} onPress={takePicture}>
-            <View style={styles.innerCircle} />
+      {photo ? (
+        <>
+          <Pressable onPress={() => setPhoto(null)}>
+            <Text>Retake</Text>
           </Pressable>
-        )}
-      </View>
+
+          <Pressable onPress={handleConfirm}>
+            <Text>{loading ? "Uploading..." : "Confirm"}</Text>
+          </Pressable>
+        </>
+      ) : (
+        <Pressable style={styles.captureButton} onPress={takePicture}>
+          <View style={styles.innerCircle} />
+        </Pressable>
+      )}
     </SafeAreaView>
   );
 }

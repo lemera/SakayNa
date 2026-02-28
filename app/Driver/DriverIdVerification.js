@@ -5,11 +5,11 @@ import {
   Pressable,
   Alert,
   Image,
-  StyleSheet,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { Ionicons } from "@expo/vector-icons";
+import * as FileSystem from "expo-file-system";
+import { supabase } from "../../lib/supabase";
 import { styles } from "../styles/Driver/DriverCameraVerificationStyles";
 
 export default function DriverIdVerification({ navigation }) {
@@ -19,237 +19,103 @@ export default function DriverIdVerification({ navigation }) {
   const [side, setSide] = useState("front");
   const [frontPhoto, setFrontPhoto] = useState(null);
   const [backPhoto, setBackPhoto] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     requestPermission();
   }, []);
 
   const takePicture = async () => {
+    const result = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+    side === "front"
+      ? setFrontPhoto(result.uri)
+      : setBackPhoto(result.uri);
+  };
+
+  const uploadImage = async (uri, filePath) => {
+    const base64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+
+    const { error } = await supabase.storage
+      .from("driver-documents")
+      .upload(filePath, Buffer.from(base64, "base64"), {
+        contentType: "image/jpeg",
+      });
+
+    if (error) throw error;
+
+    const { data } = supabase.storage
+      .from("driver-documents")
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
+  };
+
+  const handleConfirmAll = async () => {
+    if (!frontPhoto || !backPhoto) {
+      Alert.alert("Incomplete", "Please capture both sides.");
+      return;
+    }
+
     try {
-      if (cameraRef.current) {
-        const result = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-        if (side === "front") setFrontPhoto(result.uri);
-        else setBackPhoto(result.uri);
-      }
+      setLoading(true);
+
+      const { data: { user } } = await supabase.auth.getUser();
+
+      const frontUrl = await uploadImage(frontPhoto, `${user.id}/front.jpg`);
+      const backUrl = await uploadImage(backPhoto, `${user.id}/back.jpg`);
+
+      await supabase.from("drivers").update({
+        license_front_url: frontUrl,
+        license_back_url: backUrl,
+        status: "id_submitted",
+        submitted_at: new Date(),
+      }).eq("id", user.id);
+
+      navigation.navigate("DriverCameraVerification");
+
     } catch (err) {
-      console.warn("takePicture error", err);
-      Alert.alert("Camera error", "Unable to take picture. Please try again.");
+      Alert.alert("Upload Error", err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleNextAfterFront = () => {
-    setSide("back");
-  };
-
-  const handleConfirmAll = () => {
-    Alert.alert("ID Captured", "Front and back of your ID have been saved.", [
-      { text: "OK", onPress: () => navigation.navigate("DriverCameraVerification") },
-    ]);
-  };
-
-  if (!permission) {
+  if (!permission?.granted) {
     return (
       <View style={styles.center}>
-        <Text>Requesting camera permission...</Text>
-      </View>
-    );
-  }
-
-  if (!permission.granted) {
-    return (
-      <View style={styles.center}>
-        <Text>Camera access is required for ID verification.</Text>
-        <Pressable style={styles.permissionBtn} onPress={requestPermission}>
-          <Text style={styles.permissionText}>Allow Camera</Text>
+        <Text>Camera permission required.</Text>
+        <Pressable onPress={requestPermission}>
+          <Text>Allow Camera</Text>
         </Pressable>
       </View>
     );
   }
-
-  const renderCameraOrPreview = () => {
-    const currentPhoto = side === "front" ? frontPhoto : backPhoto;
-
-    return (
-      <View style={styles.cameraWrapper}>
-        {currentPhoto ? (
-          <Image
-            source={{ uri: currentPhoto }}
-            style={styles.camera}
-            resizeMode="cover"
-          />
-        ) : (
-          <>
-            <CameraView style={styles.camera} ref={cameraRef} facing={"back"} />
-            <View style={localStyles.idFrame} pointerEvents="none">
-              <Text style={styles.idText}>
-                {side === "front" ? "Front of ID" : "Back of ID"}
-              </Text>
-            </View>
-          </>
-        )}
-      </View>
-    );
-  };
-
-  const renderButtons = () => {
-    if (side === "front" && frontPhoto) {
-      return (
-        <View style={styles.buttonContainer}>
-          <Pressable style={styles.secondaryBtn} onPress={() => setFrontPhoto(null)}>
-            <Text style={styles.secondaryText}>Retake Front</Text>
-          </Pressable>
-          <Pressable style={styles.primaryBtn} onPress={handleNextAfterFront}>
-            <Text style={styles.primaryText}>Next: Capture Back</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    if (side === "back" && backPhoto) {
-      return (
-        <View style={styles.buttonContainer}>
-          <Pressable style={styles.secondaryBtn} onPress={() => setBackPhoto(null)}>
-            <Text style={styles.secondaryText}>Retake Back</Text>
-          </Pressable>
-          <Pressable
-            style={styles.primaryBtn}
-            onPress={() => {
-              setSide("review");
-            }}
-          >
-            <Text style={styles.primaryText}>Review</Text>
-          </Pressable>
-        </View>
-      );
-    }
-
-    if (side === "review") {
-      return (
-        <View style={{ alignItems: "center", marginTop: 10 }}>
-          <View style={{ flexDirection: "row", gap: 12 }}>
-            <Image source={{ uri: frontPhoto }} style={{ width: 150, height: 100, borderRadius: 8 }} resizeMode="contain" />
-            <Image source={{ uri: backPhoto }} style={{ width: 150, height: 100, borderRadius: 8 }} resizeMode="contain" />
-          </View>
-
-          <View style={[styles.buttonContainer, { marginTop: 12 }]}>
-            <Pressable style={styles.secondaryBtn} onPress={() => setSide("front")}>
-              <Text style={styles.secondaryText}>Retake Front</Text>
-            </Pressable>
-            <Pressable style={styles.secondaryBtn} onPress={() => setSide("back")}>
-              <Text style={styles.secondaryText}>Retake Back</Text>
-            </Pressable>
-            <Pressable style={styles.primaryBtn} onPress={handleConfirmAll}>
-              <Text style={styles.primaryText}>Confirm All</Text>
-            </Pressable>
-          </View>
-        </View>
-      );
-    }
-
-    return (
-      <View style={styles.buttonContainer}>
-        <Pressable style={styles.captureButton} onPress={takePicture}>
-          <View style={styles.innerCircle} />
-        </Pressable>
-      </View>
-    );
-  };
 
   return (
     <SafeAreaView style={styles.container}>
-      <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
-        <Ionicons name="arrow-back" size={26} color="#183B5C" />
-      </Pressable>
+      <Text style={styles.title}>Capture Driver License</Text>
 
-      <Text style={styles.title}>Driver ID Verification</Text>
-
-      <Text style={styles.subtitle}>
-        Please capture the front and back of your Drivers License ID. Ensure the text and photo are
-        clear and readable.
-      </Text>
-
-      {/* Reference Section */}
-      <View style={localStyles.referenceRow}>
-        <View style={localStyles.referenceItem}>
-          <View style={localStyles.refImageContainer}>
-            <Image
-              source={require("../../assets/correct id.png")}
-              style={localStyles.refImage}
-            />
-          </View>
-          <Text style={localStyles.refLabel}>Correct</Text>
-        </View>
-
-        <View style={localStyles.referenceItem}>
-          <View style={localStyles.refImageContainer}>
-            <Image
-              source={require("../../assets/wrong id.png")}
-              style={localStyles.refImage}
-            />
-          </View>
-          <Text style={localStyles.refLabel}>Wrong</Text>
-        </View>
+      <View style={styles.cameraWrapper}>
+        <CameraView ref={cameraRef} style={styles.camera} facing="back" />
       </View>
 
-      {side === "review" ? (
-        <View style={{ marginTop: 18 }} />
-      ) : (
-        renderCameraOrPreview()
+      <Pressable style={styles.captureButton} onPress={takePicture}>
+        <View style={styles.innerCircle} />
+      </Pressable>
+
+      {frontPhoto && side === "front" && (
+        <Pressable onPress={() => setSide("back")}>
+          <Text>Next: Back</Text>
+        </Pressable>
       )}
 
-      {renderButtons()}
+      {backPhoto && (
+        <Pressable onPress={handleConfirmAll}>
+          <Text>{loading ? "Uploading..." : "Confirm & Upload"}</Text>
+        </Pressable>
+      )}
     </SafeAreaView>
   );
 }
-
-const localStyles = StyleSheet.create({
-  idFrame: {
-    position: "absolute",
-    width: 280,
-    height: 170,
-    borderRadius: 12,
-    borderWidth: 3,
-    borderColor: "#FFD700",
-    alignSelf: "center",
-    top: 95,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.15)",
-  },
-
-  referenceRow: {
-    marginTop: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-  },
-
-  referenceItem: {
-    alignItems: "center",
-    width: 140,
-  },
-
-  refImageContainer: {
-    width: 120,
-    height: 70,
-    borderRadius: 8,
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden",
-    // No border, no background
-  },
-
-  refImage: {
-    width: "100%",
-    height: "100%",
-    resizeMode: "contain", // 🔥 prevents stretching
-  },
-
-  refLabel: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#333",
-    fontWeight: "600",
-    backgroundColor: "transparent",
-  },
-});
