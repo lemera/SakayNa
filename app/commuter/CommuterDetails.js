@@ -22,6 +22,7 @@ export default function CommuterDetails({ navigation }) {
   const [lastName, setLastName] = useState("");
   const [userId, setUserId] = useState(null);
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [buttonPressed, setButtonPressed] = useState(false);
@@ -164,6 +165,14 @@ export default function CommuterDetails({ navigation }) {
             placeholder="Last Name"
             value={lastName}
             onChangeText={setLastName}
+            placeholderTextColor="#999"
+          />
+
+          <TextInput
+            style={styles.input}
+            placeholder="Email"
+            value={email}
+            onChangeText={setEmail}
             placeholderTextColor="#999"
           />
 

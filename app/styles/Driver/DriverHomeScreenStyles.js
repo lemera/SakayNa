@@ -186,4 +186,6 @@ rankingIconBadge: {
   top: 10,          // distance from top of header
   right: 10,        // distance from right of header
 },
+
+
 });

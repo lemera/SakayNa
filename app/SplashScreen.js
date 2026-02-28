@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, Animated, Alert } from 'react-native';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../lib/supabase'; // adjust path if needed
 import { styles } from './styles/SplashScreenStyle.js';
 
 function SplashScreen({ navigation }) {
@@ -21,6 +23,68 @@ function SplashScreen({ navigation }) {
       }
     };
 
+const checkSessionAndNavigate = async () => {
+  try {
+    const userId = await AsyncStorage.getItem('user_id');
+
+    if (!userId) {
+      navigation.replace('UserType');
+      return;
+    }
+
+    // 1️⃣ Check users table
+    const { data: user } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (!user) {
+      await AsyncStorage.removeItem('user_id');
+      navigation.replace('UserType');
+      return;
+    }
+
+    // 2️⃣ If commuter
+    if (user.user_type === 'commuter') {
+      const { data: commuter } = await supabase
+        .from('commuters')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (commuter) {
+        navigation.replace('HomePage');
+      } else {
+        navigation.replace('CommuterDetails');
+      }
+
+      return;
+    }
+
+    // 3️⃣ If driver
+    if (user.user_type === 'driver') {
+      const { data: driver } = await supabase
+        .from('drivers')
+        .select('id')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (driver) {
+        navigation.replace('DriverHomePage');
+      } else {
+        navigation.replace('DriverDetails');
+      }
+
+      return;
+    }
+
+  } catch (error) {
+    console.log('Session check error:', error);
+    navigation.replace('UserType');
+  }
+};
+
     const fadeOutAndNavigate = async () => {
       Animated.timing(fadeAnim, {
         toValue: 0,
@@ -28,7 +92,7 @@ function SplashScreen({ navigation }) {
         useNativeDriver: true,
       }).start(async () => {
         await requestLocationPermission();
-        navigation.replace('UserType');
+        await checkSessionAndNavigate();
       });
     };
 
@@ -39,6 +103,7 @@ function SplashScreen({ navigation }) {
     }).start(() => {
       setTimeout(fadeOutAndNavigate, 1000);
     });
+
   }, []);
 
   return (

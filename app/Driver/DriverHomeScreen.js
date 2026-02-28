@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -7,19 +7,25 @@ import {
   FlatList,
   Pressable,
   Dimensions,
+  Animated,
+  Easing,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { styles } from "../styles/Driver/DriverHomeScreenStyles";
-import { useNavigation } from "@react-navigation/native";
-// Import chart
-import { LineChart, BarChart } from "react-native-chart-kit";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
+import { LineChart } from "react-native-chart-kit";
+import { supabase } from "../../lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function DriverHomeScreen() {
   const insets = useSafeAreaInsets();
-  const [activeTab, setActiveTab] = useState("earnings");
   const navigation = useNavigation();
+  const [activeTab, setActiveTab] = useState("earnings");
+  const [driver, setDriver] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isOnline, setIsOnline] = useState(false);
   const trips = [
     {
       id: 1,
@@ -47,6 +53,81 @@ export default function DriverHomeScreen() {
     },
   ];
 
+  // * ================= FETCH DRIVER ================= */
+  useFocusEffect(
+    useCallback(() => {
+      const getDriver = async () => {
+        try {
+          setLoading(true);
+
+          const storedUserId = await AsyncStorage.getItem("user_id");
+          if (!storedUserId) return;
+
+          const { data, error } = await supabase
+            .from("drivers")
+            .select("id, first_name, middle_name, last_name, status, is_active")
+            .eq("id", storedUserId)
+            .single();
+
+          if (error) {
+            console.log(error.message);
+            return;
+          }
+
+          setDriver(data);
+          setIsOnline(data?.is_active ?? false);
+        } catch (err) {
+          console.log(err.message);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      getDriver();
+    }, []),
+  );
+
+  /* ================= ANIMATED TOGGLE ================= */
+
+  const toggleAnim = useRef(new Animated.Value(0)).current;
+
+  const translateY = toggleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 30], // movement distance
+  });
+
+  useEffect(() => {
+    Animated.timing(toggleAnim, {
+      toValue: isOnline ? 1 : 0,
+      duration: 250,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: false,
+    }).start();
+  }, [isOnline]);
+
+  /* ================= TOGGLE ONLINE ================= */
+  const toggleAvailability = async () => {
+    if (!driver || driver.status !== "approved") return;
+
+    try {
+      const { error } = await supabase
+        .from("drivers")
+        .update({
+          is_active: !isOnline,
+          updated_at: new Date(),
+        })
+        .eq("id", driver.id);
+
+      if (error) {
+        console.log(error.message);
+        return;
+      }
+
+      setIsOnline(!isOnline);
+    } catch (err) {
+      console.log(err.message);
+    }
+  };
   // Sample weekly data for graph
   const weeklyData = {
     labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -80,47 +161,135 @@ export default function DriverHomeScreen() {
       style={[styles.container, { paddingTop: insets.top }]}
       showsVerticalScrollIndicator={false}
     >
-{/* HEADER */}
-<LinearGradient
-  colors={["#FFB37A", "#183B5C"]}
-  start={{ x: 0, y: 0 }}
-  end={{ x: 1, y: 0 }}
-  style={styles.header}
->
-  <View style={styles.headerTop}>
-    <View style={styles.logoWrapper}>
-      <Image
-        source={require("../../assets/logo-sakayna.png")}
-        style={styles.logo}
-        resizeMode="contain"
-      />
-    </View>
+      {/* HEADER */}
+      <LinearGradient
+        colors={["#FFB37A", "#183B5C"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.header}
+      >
+        <View style={styles.headerTop}>
+          <View style={styles.logoWrapper}>
+            <Image
+              source={require("../../assets/logo-sakayna.png")}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
 
-    <View style={styles.headerContent}>
-      <View style={styles.onlineBadge}>
-        <View style={[styles.onlineDot, { backgroundColor: "#00FF00" }]} />
-        <Text style={[styles.onlineText, { color: "#FFF" }]}>Online</Text>
-      </View>
-      <Text style={[styles.userName, { color: "#FFF" }]}>John Earl Quiros</Text>
-    </View>
+          <View style={styles.headerContent}>
+            <View style={styles.onlineBadge}>
+              <View
+                style={[
+                  styles.onlineDot,
+                  {
+                    backgroundColor:
+                      driver?.status === "approved" ? "#00FF00" : "#FF0000",
+                  },
+                ]}
+              />
+              <Text style={[styles.onlineText, { color: "#FFF" }]}>
+                {driver?.status === "approved"
+                  ? "Online"
+                  : driver?.status === "under_review"
+                    ? "Under Review"
+                    : driver?.status === "pending"
+                      ? "Not Verified"
+                      : driver?.status === "rejected"
+                        ? "Rejected"
+                        : driver?.status === "suspended"
+                          ? "Suspended"
+                          : "Inactive"}
+              </Text>
+            </View>
 
-    {/* Ranking Icon - Clickable */}
-    <Pressable
-      style={styles.rankingIconBadge}
-      onPress={() => navigation.navigate("RankingPage")} // <-- Replace with your target page
-    >
-      <Image
-        source={require("../../assets/ranking.png")}
-        style={{ width: "100%", height: "100%" }}
-        resizeMode="contain"
-      />
-    </Pressable>
+            <Text style={[styles.userName, { color: "#FFF" }]}>
+              {loading
+                ? "Loading..."
+                : driver
+                  ? `${driver.first_name} ${driver.middle_name ? driver.middle_name + " " : ""}${driver.last_name}`
+                  : "Driver"}
+            </Text>
+          </View>
 
-  </View>
-</LinearGradient>
+          {/* Ranking Icon - Clickable */}
+          <Pressable
+            style={styles.rankingIconBadge}
+            onPress={() => navigation.navigate("RankingPage")} // <-- Replace with your target page
+          >
+            <Image
+              source={require("../../assets/ranking.png")}
+              style={{ width: "100%", height: "100%" }}
+              resizeMode="contain"
+            />
+          </Pressable>
+        </View>
+      </LinearGradient>
+      {/* DRIVER STATUS WARNING */}
+      {!loading && driver && driver.status !== "approved" && (
+        <View
+          style={{
+            marginHorizontal: 20,
+            marginTop: 15,
+            marginBottom: 10,
+            padding: 10,
+            borderRadius: 12,
+            borderLeftWidth: 5,
+            backgroundColor:
+              driver.status === "rejected"
+                ? "#FFD6D6"
+                : driver.status === "suspended"
+                  ? "#F8D7DA"
+                  : "#FFF4CC",
+            borderLeftColor:
+              driver.status === "rejected"
+                ? "#B00020"
+                : driver.status === "suspended"
+                  ? "#8B0000"
+                  : "#FF8C00",
+          }}
+        >
+          <Text style={{ fontWeight: "600", marginBottom: 5 }}>
+            {driver.status === "pending" && "Account Setup Incomplete"}
+            {driver.status === "under_review" && "Verification Under Review"}
+            {driver.status === "rejected" && "Verification Rejected"}
+            {driver.status === "suspended" && "Account Suspended"}
+          </Text>
 
+          <Text style={{ marginBottom: 10 }}>
+            {driver.status === "pending" &&
+              "Please complete your verification to start accepting rides."}
+
+            {driver.status === "under_review" &&
+              "Your documents are being reviewed by admin. Please wait."}
+
+            {driver.status === "rejected" &&
+              "Your documents were rejected. Please resubmit."}
+
+            {driver.status === "suspended" &&
+              "Your account has been suspended. Contact support."}
+          </Text>
+
+          {/* Button Logic */}
+          {(driver.status === "pending" || driver.status === "rejected") && (
+            <Pressable
+              onPress={() => navigation.navigate("DriverVerificationScreen")}
+              style={{
+                backgroundColor: "#183B5C",
+                paddingVertical: 8,
+                borderRadius: 8,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                Verify Now
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
       {/* BALANCE CARD */}
-      <View style={styles.balanceCard}>
+      <View style={[styles.balanceCard, { position: "relative" }]}>
         <View style={styles.balanceRow}>
           <View>
             <Text style={styles.balanceLabel}>Wallet Balance</Text>
@@ -133,6 +302,97 @@ export default function DriverHomeScreen() {
             <Text style={styles.balanceLabel}>Today's Earnings</Text>
             <Text style={styles.balanceValue}>₱100.00</Text>
           </View>
+        </View>
+
+        {/* CENTER VERTICAL TOGGLE */}
+        <View
+          style={{
+            position: "absolute",
+            alignSelf: "center",
+            top: 5,
+            alignItems: "center",
+          }}
+        >
+          <Pressable
+            onPress={toggleAvailability}
+            disabled={driver?.status !== "approved"}
+            style={{
+              width: 30,
+              height: 60,
+              borderRadius: 40,
+              padding: 5,
+              justifyContent: "flex-start",
+              backgroundColor:
+                driver?.status !== "approved"
+                  ? "#D0D5DD"
+                  : isOnline
+                    ? "#12B76A"
+                    : "#F2F4F7",
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 4 },
+              shadowOpacity: 0.15,
+              shadowRadius: 6,
+              elevation: 6,
+            }}
+          >
+            <Animated.View
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 10,
+                backgroundColor: "#FFF",
+                transform: [{ translateY }],
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.2,
+                shadowRadius: 4,
+                elevation: 4,
+              }}
+            />
+          </Pressable>
+
+          {/* STATUS TEXT */}
+          <Text
+            style={{
+              marginTop: 9,
+              fontWeight: "700",
+              fontSize: 12,
+              color:
+                driver?.status !== "approved"
+                  ? "#999"
+                  : isOnline
+                    ? "#12B76A"
+                    : "#555",
+            }}
+          >
+            {driver?.status !== "approved"
+              ? "LOCKED"
+              : isOnline
+                ? "ONLINE"
+                : "OFFLINE"}
+          </Text>
+
+          {/* BOOKING STATUS TEXT */}
+          <Text
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              textAlign: "center",
+              fontWeight: "500",
+              color:
+                driver?.status !== "approved"
+                  ? "#98A2B3"
+                  : isOnline
+                    ? "#12B76A"
+                    : "#667085",
+            }}
+          >
+            {driver?.status !== "approved"
+              ? "Account pending approval"
+              : isOnline
+                ? "Receiving booking requests"
+                : "Not receiving booking requests"}
+          </Text>
         </View>
       </View>
 

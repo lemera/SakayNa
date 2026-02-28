@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-picker/picker": "^2.11.4",
     "@react-navigation/bottom-tabs": "^6.5.12",
     "@react-navigation/native": "^6.1.6",
@@ -20,8 +21,11 @@
     "expo": "~54.0.33",
     "expo-blur": "^15.0.8",
     "expo-camera": "~17.0.10",
+    "expo-image-picker": "~17.0.10",
     "expo-linear-gradient": "~15.0.8",
+    "expo-local-authentication": "~17.0.8",
     "expo-location": "~19.0.8",
+    "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "firebase": "^12.9.0",
@@ -40,7 +44,7 @@
     "react-native-vector-icons": "^10.3.0",
     "react-native-webview": "^13.16.0",
     "twilio": "^5.12.2",
-    "@react-native-async-storage/async-storage": "2.2.0"
+    "@react-native-community/datetimepicker": "8.4.4"
   },
   "private": true,
   "devDependencies": {

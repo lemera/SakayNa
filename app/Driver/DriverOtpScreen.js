@@ -1,3 +1,4 @@
+// OtpScreen.js
 import React, { useState, useRef } from "react";
 import {
   View,
@@ -8,14 +9,22 @@ import {
   Platform,
   ScrollView,
   Image,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons } from "@expo/vector-icons";
+import { verifyOtp, sendOtp } from "../../lib/otp";
+import { supabase } from '../../lib/supabase'; // adjust path if needed
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
 export default function OtpScreen({ route, navigation }) {
-  const { phone } = route.params;
+  const { phone, userType } = route.params;
+
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
+  const [loading, setLoading] = useState(false);
+
   const inputs = useRef([]);
 
   const handleChange = (text, index) => {
@@ -36,10 +45,80 @@ export default function OtpScreen({ route, navigation }) {
     if (index < 5) inputs.current[index + 1].focus();
   };
 
-  // ✅ TEMPORARY NAVIGATION
-  const handleVerify = () => {
-    navigation.navigate("DriverDetails"); // <-- Temporary screen
-  };
+const handleVerify = async () => {
+  const pin = code.join("");
+
+  if (pin.length !== 6) {
+    Alert.alert("Invalid code", "Please enter the 6-digit code.");
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const data = await verifyOtp(phone, pin, userType);
+
+    if (!data.success) {
+      throw new Error(data.error || "OTP verification failed");
+    }
+
+    const user = data.user;
+
+    // ✅ SAVE SESSION LOCALLY
+    await AsyncStorage.setItem("user_id", user.id);
+    await AsyncStorage.setItem("user_phone", user.phone);
+    await AsyncStorage.setItem("user_type", user.user_type);
+
+    // 🔥 Navigate based on type
+    // After saving AsyncStorage
+
+if (user.user_type === "driver") {
+  const { data: driver } = await supabase
+    .from("drivers")
+    .select("id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (driver) {
+    navigation.replace("DriverHomePage");
+  } else {
+    navigation.replace("DriverDetails");
+  }
+
+} else {
+  const { data: commuter } = await supabase
+    .from("commuters")
+    .select("id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (commuter) {
+    navigation.replace("HomePage");
+  } else {
+    navigation.replace("CommuterDetails");
+  }
+}
+
+  } catch (err) {
+    Alert.alert("Verification Failed", err.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleResend = async () => {
+  try {
+    await sendOtp(phone, userType);
+
+    // ✅ CLEAR OLD INPUTS
+    setCode(["", "", "", "", "", ""]);
+    inputs.current[0]?.focus();
+
+    Alert.alert("Resent", "OTP has been sent again.");
+  } catch (err) {
+    Alert.alert("Error", err.message);
+  }
+};
 
   return (
     <KeyboardAvoidingView
@@ -49,23 +128,19 @@ export default function OtpScreen({ route, navigation }) {
       <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
         <View style={styles.container}>
           <Pressable
-            style={{
-              position: "absolute",
-              top: 60,
-              left: 20,
-              zIndex: 10,
-            }}
+            style={{ position: "absolute", top: 50, left: 20 }}
             onPress={() => navigation.goBack()}
           >
             <Ionicons name="arrow-back" size={28} color="#183B5C" />
           </Pressable>
+
           <Image
             source={require("../../assets/logo-sakayna.png")}
             style={styles.logo}
           />
 
-          <Text style={styles.title}>We sent a message with a code</Text>
-          <Text style={styles.subtitle}>to {phone}</Text>
+          <Text style={styles.title}>We sent a code to your phone</Text>
+          <Text style={styles.subtitle}>{phone}</Text>
 
           {/* OTP Inputs */}
           <View style={styles.otpContainer}>
@@ -82,23 +157,31 @@ export default function OtpScreen({ route, navigation }) {
             ))}
           </View>
 
-          {/* TEMPORARY VERIFY BUTTON */}
           <Pressable
             onPress={handleVerify}
             onPressIn={() => setOtpPressed(true)}
             onPressOut={() => setOtpPressed(false)}
+            disabled={loading}
             style={[
               styles.button,
               {
                 backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
+                opacity: loading ? 0.7 : 1,
               },
             ]}
           >
-            <Text style={styles.buttonText}>Verify</Text>
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Verify</Text>
+            )}
           </Pressable>
 
           <Text style={styles.resend}>
-            Didn’t receive code? <Text style={styles.resendLink}>Resend</Text>
+            Didn’t receive code?{" "}
+            <Text style={styles.resendLink} onPress={handleResend}>
+              Resend
+            </Text>
           </Text>
         </View>
       </ScrollView>

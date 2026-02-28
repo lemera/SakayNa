@@ -19,10 +19,11 @@ import { styles } from "../styles/AccountScreenStyles";
 export default function AccountScreen({ navigation }) {
   const [userId, setUserId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
   const [user, setUser] = useState({
     name: "",
-    email: "",
+    phone: "",
     avatar: "https://i.pravatar.cc/150?img=5",
   });
 
@@ -32,47 +33,63 @@ export default function AccountScreen({ navigation }) {
 
   // ✅ FETCH USER DATA
   useEffect(() => {
+    let isMounted = true;
+
     const fetchUser = async () => {
       try {
         const storedUserId = await AsyncStorage.getItem("user_id");
 
         if (!storedUserId) {
-          navigation.replace("UserTypeScreen");
+          navigation.reset({
+            index: 0,
+            routes: [{ name: "UserType" }],
+          });
           return;
         }
 
-        setUserId(storedUserId);
+        if (isMounted) setUserId(storedUserId);
 
         const { data, error } = await supabase
           .from("commuters")
           .select("first_name, middle_name, last_name, phone")
           .eq("id", storedUserId)
-          .single();
+          .maybeSingle();
 
-        if (error) throw error;
+        if (error || !data) throw new Error("User not found");
 
-        const fullName = `${data.first_name} ${data.middle_name || ""} ${data.last_name}`.trim();
+        const fullName = [
+          data.first_name,
+          data.middle_name,
+          data.last_name,
+        ]
+          .filter(Boolean)
+          .join(" ");
 
-        setUser({
-          name: fullName,
-          email: data.phone,
-          avatar: "https://i.pravatar.cc/150?img=5",
-        });
+        if (isMounted) {
+          setUser({
+            name: fullName,
+            phone: data.phone,
+            avatar: "https://i.pravatar.cc/150?img=5",
+          });
 
-        setTempName(fullName);
-        setTempAvatar("https://i.pravatar.cc/150?img=5");
-
+          setTempName(fullName);
+          setTempAvatar("https://i.pravatar.cc/150?img=5");
+        }
       } catch (err) {
         console.log("Fetch error:", err.message);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     fetchUser();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // ✅ SAVE PROFILE (UPDATE DATABASE)
+  // ✅ SAVE PROFILE
   const saveProfile = async () => {
     if (!tempName.trim()) {
       Alert.alert("Name required");
@@ -80,13 +97,15 @@ export default function AccountScreen({ navigation }) {
     }
 
     try {
-      const nameParts = tempName.trim().split(" ");
+      setSaving(true);
 
-      const first_name = nameParts[0];
-      const last_name = nameParts[nameParts.length - 1];
+      const nameParts = tempName.trim().split(" ").filter(Boolean);
+
+      const first_name = nameParts[0] || "";
+      const last_name = nameParts[nameParts.length - 1] || "";
       const middle_name =
         nameParts.length > 2
-          ? nameParts.slice(1, nameParts.length - 1).join(" ")
+          ? nameParts.slice(1, -1).join(" ")
           : "";
 
       const { error } = await supabase
@@ -100,32 +119,44 @@ export default function AccountScreen({ navigation }) {
 
       if (error) throw error;
 
-      setUser({
-        ...user,
+      setUser((prev) => ({
+        ...prev,
         name: tempName,
         avatar: tempAvatar,
-      });
+      }));
 
       setEditModalVisible(false);
-      Alert.alert("Profile Updated");
-
+      Alert.alert("Success", "Profile Updated");
     } catch (err) {
       Alert.alert("Update Failed", err.message);
+    } finally {
+      setSaving(false);
     }
   };
 
-  // ✅ LOGOUT
-  const handleLogout = async () => {
+  // ✅ IMPROVED LOGOUT
+  const handleLogout = () => {
     Alert.alert("Logout", "Are you sure you want to logout?", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Logout",
         style: "destructive",
         onPress: async () => {
-          await AsyncStorage.removeItem("user_id");
-          await AsyncStorage.removeItem("user_phone");
+          try {
+            await supabase.auth.signOut(); // important
+            await AsyncStorage.multiRemove([
+              "user_id",
+              "user_phone",
+              "user_type",
+            ]);
 
-          navigation.replace("UserTypeScreen");
+            navigation.reset({
+              index: 0,
+              routes: [{ name: "UserType" }],
+            });
+          } catch (error) {
+            console.log("Logout error:", error);
+          }
         },
       },
     ]);
@@ -133,7 +164,7 @@ export default function AccountScreen({ navigation }) {
 
   if (loading) {
     return (
-      <View style={{ flex:1, justifyContent:"center", alignItems:"center" }}>
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
         <ActivityIndicator size="large" color="#183B5C" />
       </View>
     );
@@ -149,35 +180,20 @@ export default function AccountScreen({ navigation }) {
       >
         <Image source={{ uri: user.avatar }} style={styles.avatar} />
         <Text style={styles.userName}>{user.name}</Text>
-        <Text style={styles.userEmail}>{user.email}</Text>
+        <Text style={styles.userEmail}>{user.phone}</Text>
 
         <TouchableOpacity
           style={styles.editButton}
           onPress={() => setEditModalVisible(true)}
         >
-          <Ionicons name="pencil" size={16} color="#183B5C" style={{ marginRight: 6 }} />
+          <Ionicons name="pencil" size={16} color="#183B5C" />
           <Text style={styles.editButtonText}>Edit Profile</Text>
         </TouchableOpacity>
       </LinearGradient>
 
       <View style={styles.menuContainer}>
-        <TouchableOpacity style={styles.menuItem}>
-          <Ionicons name="wallet" size={24} color="#183B5C" style={{ marginRight: 16 }} />
-          <Text style={styles.menuText}>Wallet</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.menuItem}>
-          <Ionicons name="car" size={24} color="#183B5C" style={{ marginRight: 16 }} />
-          <Text style={styles.menuText}>Ride History</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.menuItem}>
-          <Ionicons name="settings" size={24} color="#183B5C" style={{ marginRight: 16 }} />
-          <Text style={styles.menuText}>Settings</Text>
-        </TouchableOpacity>
-
         <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
-          <Ionicons name="log-out" size={24} color="red" style={{ marginRight: 16 }} />
+          <Ionicons name="log-out" size={24} color="red" />
           <Text style={[styles.menuText, { color: "red" }]}>Logout</Text>
         </TouchableOpacity>
       </View>
@@ -218,13 +234,18 @@ export default function AccountScreen({ navigation }) {
               <TouchableOpacity
                 style={styles.modalSaveButton}
                 onPress={saveProfile}
+                disabled={saving}
               >
-                <Text style={styles.modalSaveText}>Save</Text>
+                {saving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalSaveText}>Save</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
     </ScrollView>
-  ); 
+  );
 }

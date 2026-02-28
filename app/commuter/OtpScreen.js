@@ -15,6 +15,7 @@ import {
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
 import { verifyOtp, sendOtp } from "../../lib/otp";
+
 import AsyncStorage from "@react-native-async-storage/async-storage";
 export default function OtpScreen({ route, navigation }) {
   const { phone, userType } = route.params;
@@ -81,14 +82,19 @@ const handleVerify = async () => {
   }
 };
 
-  const handleResend = async () => {
-    try {
-      await sendOtp(phone);
-      Alert.alert("Resent", "OTP has been sent again.");
-    } catch (err) {
-      Alert.alert("Error", "Failed to resend OTP.");
-    }
-  };
+const handleResend = async () => {
+  try {
+    await sendOtp(phone, userType);
+
+    // ✅ CLEAR OLD INPUTS
+    setCode(["", "", "", "", "", ""]);
+    inputs.current[0]?.focus();
+
+    Alert.alert("Resent", "OTP has been sent again.");
+  } catch (err) {
+    Alert.alert("Error", err.message);
+  }
+};
 
   return (
     <KeyboardAvoidingView
