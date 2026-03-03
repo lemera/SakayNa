@@ -1096,7 +1096,7 @@ const renderTrip = ({ item }) => (
       >
         <View style={styles.balanceRow}>
           <Pressable
-      onPress={() => navigation.navigate("DriverWalletScreen")}
+      onPress={() => navigation.navigate("Wallet")}
       style={{ flex: 1 }}
     >
       <Text style={styles.balanceLabel}>Wallet Balance</Text>
