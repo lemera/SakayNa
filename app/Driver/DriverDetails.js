@@ -21,21 +21,20 @@ import { styles } from "../styles/Driver/DriverDetailsStyle";
 export default function DriverDetails({ navigation }) {
   const [userId, setUserId] = useState(null);
   const [loadingUser, setLoadingUser] = useState(true);
+  const [phone, setPhone] = useState("");
 
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [plateNumber, setPlateNumber] = useState("");
-  const [vehicleType, setVehicleType] = useState("");
-  const [licenseNumber, setLicenseNumber] = useState("");
-  const [licenseExpiry, setLicenseExpiry] = useState("");
+  const [email, setEmail] = useState("");
+
   const [loading, setLoading] = useState(false);
 
   // ✅ Load user_id safely
   useEffect(() => {
     const loadUser = async () => {
       try {
-        const id = await AsyncStorage.getItem("user_id"); // make sure this matches login
+        const id = await AsyncStorage.getItem("user_id");
 
         if (!id) {
           Alert.alert("Session Expired", "Please login again.");
@@ -47,6 +46,20 @@ export default function DriverDetails({ navigation }) {
         }
 
         setUserId(id);
+        
+        // Also fetch the user's phone number
+        const { data: userData, error: userError } = await supabase
+          .from("users")
+          .select("phone")
+          .eq("id", id)
+          .single();
+
+        if (userError || !userData) {
+          throw new Error("User not found.");
+        }
+
+        setPhone(userData.phone || "");
+        
       } catch (error) {
         console.log("Error loading user:", error);
         navigation.reset({
@@ -70,10 +83,7 @@ export default function DriverDetails({ navigation }) {
     if (
       !firstName.trim() ||
       !lastName.trim() ||
-      !plateNumber.trim() ||
-      !vehicleType.trim() ||
-      !licenseNumber.trim() ||
-      !licenseExpiry.trim()
+      !email.trim()
     ) {
       Alert.alert("Missing Fields", "Please fill all required fields.");
       return;
@@ -82,38 +92,69 @@ export default function DriverDetails({ navigation }) {
     try {
       setLoading(true);
 
-      // 🔹 Get phone from users table
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("phone")
+      // Check if driver record already exists
+      const { data: existingDriver, error: checkError } = await supabase
+        .from("drivers")
+        .select("id")
         .eq("id", userId)
         .single();
 
-      if (userError || !userData) {
-        throw new Error("User not found.");
+      if (checkError && checkError.code !== 'PGRST116') { // PGRST116 means no rows returned
+        console.log("Check error:", checkError);
       }
 
-      // 🔹 Upsert driver record
-      const { error } = await supabase.from("drivers").upsert(
-        {
-          id: userId, // important: same as users.id
-          first_name: firstName.trim(),
-          middle_name: middleName.trim() || null,
-          last_name: lastName.trim(),
-          phone: userData.phone,
-          email: `${userData.phone}@sakayna.app`,
-          license_number: licenseNumber.trim(),
-          license_expiry_date: licenseExpiry,
-          plate_number: plateNumber.toUpperCase().trim(),
-          vehicle_type: vehicleType.trim(),
-          status: "pending",
-          submitted_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "id" }
-      );
+      let error;
+      
+      if (existingDriver) {
+        // Update existing driver
+        const { error: updateError } = await supabase
+          .from("drivers")
+          .update({
+            first_name: firstName.trim(),
+            middle_name: middleName.trim() || null,
+            last_name: lastName.trim(),
+            phone: phone,
+            email: email.trim(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", userId);
+        
+        error = updateError;
+      } else {
+        // Insert new driver
+        const { error: insertError } = await supabase
+          .from("drivers")
+          .insert({
+            id: userId,
+            first_name: firstName.trim(),
+            middle_name: middleName.trim() || null,
+            last_name: lastName.trim(),
+            phone: phone,
+            email: email.trim(),
+            status: "pending",
+            is_active: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+        
+        error = insertError;
+      }
 
       if (error) throw error;
+
+      // Update user type in users table if needed (optional)
+      const { error: userUpdateError } = await supabase
+        .from("users")
+        .update({ 
+          user_type: "driver",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", userId);
+
+      if (userUpdateError) {
+        console.log("User type update error:", userUpdateError);
+        // Don't throw, continue with navigation
+      }
 
       // ✅ Navigate to DriverHomePage and remove registration from stack
       navigation.reset({
@@ -186,33 +227,20 @@ export default function DriverDetails({ navigation }) {
 
             <TextInput
               style={styles.input}
-              placeholder="License Number"
-              value={licenseNumber}
-              onChangeText={setLicenseNumber}
+              placeholder="Email"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
             />
-
+            
             <TextInput
-              style={styles.input}
-              placeholder="License Expiry (YYYY-MM-DD)"
-              value={licenseExpiry}
-              onChangeText={setLicenseExpiry}
+              style={[styles.input, { backgroundColor: "#eee" }]}
+              placeholder="Phone Number"
+              value={phone}
+              editable={false}
             />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Plate Number"
-              value={plateNumber}
-              onChangeText={setPlateNumber}
-              autoCapitalize="characters"
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Vehicle Type (Motorcycle, Car)"
-              value={vehicleType}
-              onChangeText={setVehicleType}
-            />
-
+            
             <Pressable
               style={[
                 styles.button,

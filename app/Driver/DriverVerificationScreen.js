@@ -269,9 +269,9 @@ export default function DriverVerificationScreen({ navigation }) {
           </Pressable>
 
           <View style={{ flex: 1, alignItems: "center", marginRight: 24 }}>
-            <Text style={styles.title}>Driver Verification</Text>
+            <Text style={styles.title}>Driver verification muna, bes!</Text>
             <Text style={styles.subtitle}>
-              Complete all required fields to activate your driver account
+              Need lang kompletohin lahat ng required fields para ma-activate na yung driver account mo. Go na, saglit lang 'to!
             </Text>
           </View>
         </View>
@@ -389,7 +389,7 @@ export default function DriverVerificationScreen({ navigation }) {
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>Submit for Review</Text>
+            <Text style={styles.buttonText}>Ready na? Submit!</Text>
           )}
         </Pressable>
       </View>

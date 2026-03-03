@@ -1,3 +1,4 @@
+
 import 'react-native-gesture-handler';
 import React from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -42,7 +43,8 @@ import DriverDetails from './app/Driver/DriverDetails.js';
 import DriverHomePage from './app/Driver/DriverHomePage.js';
 import RankingPage from "./app/Driver/RankingPage";
 import DriverVerificationScreen from './app/Driver/DriverVerificationScreen.js';
-
+import SubscriptionScreen from './app/Driver/SubscriptionScreen.js';
+import TripDetailsScreen from "./app/Driver/TripDetailsScreen";
 const Stack = createNativeStackNavigator();
 
 export default function App() {
@@ -100,6 +102,8 @@ export default function App() {
           <Stack.Screen name="DriverHomePage" component={DriverHomePage} />
           <Stack.Screen name="RankingPage" component={RankingPage} />
           <Stack.Screen name="DriverVerificationScreen" component={DriverVerificationScreen} />
+          <Stack.Screen name="SubscriptionScreen" component={SubscriptionScreen} />
+          <Stack.Screen name="TripDetailsScreen" component={TripDetailsScreen} />
 
         </Stack.Navigator>
       </NavigationContainer>
