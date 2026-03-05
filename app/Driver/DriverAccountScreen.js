@@ -375,7 +375,7 @@ export default function DriverAccountScreen({ navigation }) {
           try {
             await AsyncStorage.removeItem("user_id");
             await supabase.auth.signOut();
-            navigation.replace("LoginScreen");
+            navigation.replace("UserType");
           } catch (err) {
             console.log("Error signing out:", err.message);
           }
@@ -1141,7 +1141,7 @@ export default function DriverAccountScreen({ navigation }) {
           <Text style={{ flex: 1, color: "#333" }}>Verification Status</Text>
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
-
+{/* Sign Out */}
         <Pressable
           style={{
             flexDirection: "row",

@@ -1,3 +1,4 @@
+// screens/driver/DriverWalletScreen.js
 import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -9,6 +10,7 @@ import {
   Alert,
   Modal,
   TextInput,
+  Dimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -16,7 +18,6 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { LineChart } from "react-native-chart-kit";
-import { Dimensions } from "react-native";
 
 export default function DriverWalletScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -25,56 +26,89 @@ export default function DriverWalletScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState(null);
+  const [driverName, setDriverName] = useState("");
+  
+  // Wallet data - initialize with default values
   const [walletData, setWalletData] = useState({
     balance: 0,
     total_deposits: 0,
     total_withdrawals: 0,
+    cash_earnings: 0,
+    gcash_earnings: 0,
+    wallet_earnings: 0,
   });
   
-  // New state for payment tracking
-  const [cashEarnings, setCashEarnings] = useState(0);
-  const [gcashEarnings, setGcashEarnings] = useState(0);
-  const [walletEarnings, setWalletEarnings] = useState(0);
+  // Computed values
+  const [totalEarnings, setTotalEarnings] = useState(0);
+  
   const [recentTransactions, setRecentTransactions] = useState([]);
-  const [weeklyEarnings, setWeeklyEarnings] = useState([]);
-  const [paymentBreakdown, setPaymentBreakdown] = useState({
-    cash: 0,
-    gcash: 0,
-    wallet: 0,
-  });
+  const [weeklyEarnings, setWeeklyEarnings] = useState([0, 0, 0, 0, 0, 0, 0]);
+  const [monthlyEarnings, setMonthlyEarnings] = useState(0);
   
-  // Withdrawal modal state
+  // Withdrawal modal
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
-  const [withdrawMethod, setWithdrawMethod] = useState("gcash"); // gcash or cash
+  const [withdrawMethod, setWithdrawMethod] = useState("gcash");
   const [gcashNumber, setGcashNumber] = useState("");
+  
+  // Statistics
+  const [totalTrips, setTotalTrips] = useState(0);
+  const [averageFare, setAverageFare] = useState(0);
+  const [peakDay, setPeakDay] = useState("");
+  const [peakEarnings, setPeakEarnings] = useState(0);
 
   // Fetch driver ID
   useFocusEffect(
     useCallback(() => {
       const getDriverId = async () => {
-        const id = await AsyncStorage.getItem("user_id");
-        setDriverId(id);
+        try {
+          const id = await AsyncStorage.getItem("user_id");
+          console.log("Driver ID from storage:", id);
+          setDriverId(id);
+          if (id) {
+            await fetchDriverName(id);
+          }
+        } catch (error) {
+          console.log("Error getting driver ID:", error);
+        }
       };
       getDriverId();
     }, [])
   );
 
-  // Fetch wallet data
+  // Fetch all data when driverId changes
   useEffect(() => {
     if (driverId) {
+      console.log("Loading wallet data for driver:", driverId);
       loadWalletData();
     }
   }, [driverId]);
+
+  const fetchDriverName = async (id) => {
+    try {
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("first_name, last_name")
+        .eq("id", id)
+        .single();
+
+      if (error) throw error;
+      if (data) {
+        setDriverName(`${data.first_name} ${data.last_name}`);
+      }
+    } catch (err) {
+      console.log("Error fetching driver name:", err.message);
+    }
+  };
 
   const loadWalletData = async () => {
     try {
       setLoading(true);
       await Promise.all([
         fetchWalletBalance(),
-        fetchPaymentBreakdown(),
         fetchTransactions(),
         fetchWeeklyEarnings(),
+        fetchStatistics(),
       ]);
     } catch (err) {
       console.log("Error loading wallet data:", err);
@@ -91,60 +125,77 @@ export default function DriverWalletScreen({ navigation }) {
 
   const fetchWalletBalance = async () => {
     try {
+      console.log("Fetching wallet for driver:", driverId);
+      
       const { data, error } = await supabase
         .from("driver_wallets")
-        .select("balance, total_deposits, total_withdrawals")
+        .select("*")
         .eq("driver_id", driverId)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
-      if (data) setWalletData(data);
+      
+      console.log("Wallet data received:", data);
+      
+      if (data) {
+        // Ensure all numeric values are properly parsed
+        const wallet = {
+          balance: Number(data.balance) || 0,
+          total_deposits: Number(data.total_deposits) || 0,
+          total_withdrawals: Number(data.total_withdrawals) || 0,
+          cash_earnings: Number(data.cash_earnings) || 0,
+          gcash_earnings: Number(data.gcash_earnings) || 0,
+          wallet_earnings: Number(data.wallet_earnings) || 0,
+        };
+        
+        setWalletData(wallet);
+        
+        // Calculate total earnings
+        const total = wallet.cash_earnings + wallet.gcash_earnings + wallet.wallet_earnings;
+        setTotalEarnings(total);
+        
+        console.log("Wallet state updated:", wallet);
+        console.log("Total earnings:", total);
+      } else {
+        console.log("No wallet found, creating new wallet");
+        // Create wallet if it doesn't exist
+        const { error: insertError } = await supabase
+          .from("driver_wallets")
+          .insert({
+            driver_id: driverId,
+            balance: 0,
+            total_deposits: 0,
+            total_withdrawals: 0,
+            cash_earnings: 0,
+            gcash_earnings: 0,
+            wallet_earnings: 0,
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+
+        if (insertError) throw insertError;
+        
+        // Set default values
+        setWalletData({
+          balance: 0,
+          total_deposits: 0,
+          total_withdrawals: 0,
+          cash_earnings: 0,
+          gcash_earnings: 0,
+          wallet_earnings: 0,
+        });
+        setTotalEarnings(0);
+      }
     } catch (err) {
       console.log("Error fetching wallet:", err.message);
     }
   };
 
-  // New function to fetch payment breakdown
-  const fetchPaymentBreakdown = async () => {
-    try {
-      // Get all completed bookings
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("actual_fare, payment_method, payment_type")
-        .eq("driver_id", driverId)
-        .eq("status", "completed");
-
-      if (error) throw error;
-
-      let cash = 0;
-      let gcash = 0;
-      let wallet = 0;
-
-      data?.forEach(booking => {
-        const paymentMethod = booking.payment_method || booking.payment_type;
-        const amount = booking.actual_fare || 0;
-        
-        if (paymentMethod === "cash") {
-          cash += amount;
-        } else if (paymentMethod === "gcash") {
-          gcash += amount;
-        } else if (paymentMethod === "wallet") {
-          wallet += amount;
-        }
-      });
-
-      setCashEarnings(cash);
-      setGcashEarnings(gcash);
-      setWalletEarnings(wallet);
-      setPaymentBreakdown({ cash, gcash, wallet });
-    } catch (err) {
-      console.log("Error fetching payment breakdown:", err.message);
-    }
-  };
-
   const fetchTransactions = async () => {
     try {
-      // Get recent bookings with payment info
+      console.log("Fetching transactions for driver:", driverId);
+      
+      // Get completed bookings (earnings)
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
         .select(`
@@ -155,64 +206,77 @@ export default function DriverWalletScreen({ navigation }) {
           dropoff_location,
           status,
           payment_method,
-          payment_type
+          payment_type,
+          distance_km
         `)
         .eq("driver_id", driverId)
         .eq("status", "completed")
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(50);
 
       if (bookingsError) throw bookingsError;
-
-      // Get subscription payments
-      const { data: subscriptions, error: subError } = await supabase
-        .from("driver_subscriptions")
-        .select(`
-          id,
-          amount_paid,
-          created_at,
-          payment_method,
-          subscription_plans (plan_name)
-        `)
-        .eq("driver_id", driverId)
-        .order("created_at", { ascending: false })
-        .limit(10);
-
-      if (subError) throw subError;
+      console.log("Bookings found:", bookings?.length || 0);
 
       // Format booking transactions
       const bookingTransactions = (bookings || []).map(b => {
-        const paymentMethod = b.payment_method || b.payment_type || "cash";
+        const paymentMethod = b.payment_type || b.payment_method || "cash";
         return {
           id: `booking-${b.id}`,
           type: "earning",
-          amount: b.actual_fare || 0,
-          description: `Trip: ${b.pickup_location?.split(",")[0] || "Pickup"} → ${b.dropoff_location?.split(",")[0] || "Dropoff"}`,
+          category: "trip",
+          amount: Number(b.actual_fare) || 0,
+          description: `${(b.pickup_location || "Pickup").split(",")[0]} → ${(b.dropoff_location || "Dropoff").split(",")[0]}`,
           date: b.created_at,
           status: "completed",
           paymentMethod: paymentMethod,
           paymentIcon: paymentMethod === "gcash" ? "phone-portrait" : paymentMethod === "cash" ? "cash" : "wallet",
           paymentColor: paymentMethod === "gcash" ? "#00579F" : paymentMethod === "cash" ? "#10B981" : "#183B5C",
+          distance: b.distance_km,
         };
       });
 
-      // Format subscription transactions
-      const subscriptionTransactions = (subscriptions || []).map(s => ({
-        id: `sub-${s.id}`,
-        type: "payment",
-        amount: -s.amount_paid,
-        description: `Subscription: ${s.subscription_plans?.plan_name || "Plan"}`,
-        date: s.created_at,
-        status: "completed",
-        paymentMethod: s.payment_method || "wallet",
-        paymentIcon: s.payment_method === "gcash" ? "phone-portrait" : "card",
-        paymentColor: s.payment_method === "gcash" ? "#00579F" : "#EF4444",
-      }));
+      // Get transactions from transactions table
+      const { data: transactions, error: transError } = await supabase
+        .from("transactions")
+        .select("*")
+        .eq("user_id", driverId)
+        .eq("user_type", "driver")
+        .order("created_at", { ascending: false })
+        .limit(50);
 
-      // Sort by date (newest first)
-      const allTransactions = [...bookingTransactions, ...subscriptionTransactions]
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
+      if (transError) throw transError;
+      console.log("Transactions found:", transactions?.length || 0);
 
+      // Format transaction records
+      const transactionItems = (transactions || []).map(t => {
+        const metadata = t.metadata || {};
+        return {
+          id: `trans-${t.id}`,
+          type: t.type,
+          category: t.type === "topup" ? "balance" : t.type === "withdrawal" ? "balance" : "other",
+          amount: t.type === "withdrawal" ? -Number(t.amount) : Number(t.amount),
+          description: t.type === "topup" ? `Added via ${metadata.method || "GCash"}` :
+                       t.type === "withdrawal" ? `Withdrawn to ${metadata.method || "GCash"}` :
+                       t.type === "mission_bonus" ? "🏆 Weekly Mission Bonus" : t.description || t.type,
+          date: t.created_at,
+          status: t.status || "completed",
+          paymentMethod: metadata.method || "gcash",
+          paymentIcon: t.type === "topup" ? "arrow-up-outline" : 
+                       t.type === "withdrawal" ? "arrow-down-outline" :
+                       t.type === "mission_bonus" ? "trophy" : "card",
+          paymentColor: t.type === "topup" ? "#10B981" : 
+                        t.type === "withdrawal" ? "#EF4444" :
+                        t.type === "mission_bonus" ? "#F59E0B" : "#666",
+        };
+      });
+
+      // Combine and sort all transactions
+      const allTransactions = [
+        ...bookingTransactions, 
+        ...transactionItems
+      ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      console.log("Total transactions:", allTransactions.length);
       setRecentTransactions(allTransactions);
     } catch (err) {
       console.log("Error fetching transactions:", err.message);
@@ -226,52 +290,118 @@ export default function DriverWalletScreen({ navigation }) {
       startOfWeek.setDate(today.getDate() - today.getDay() + 1);
       startOfWeek.setHours(0, 0, 0, 0);
 
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 7);
+
       const { data, error } = await supabase
         .from("bookings")
-        .select("actual_fare, ride_completed_at, payment_method, payment_type")
+        .select("actual_fare, ride_completed_at")
         .eq("driver_id", driverId)
         .eq("status", "completed")
         .gte("ride_completed_at", startOfWeek.toISOString())
+        .lt("ride_completed_at", endOfWeek.toISOString())
         .order("ride_completed_at", { ascending: true });
 
       if (error) throw error;
 
       const dailyEarnings = [0, 0, 0, 0, 0, 0, 0];
+      let total = 0;
+
       data?.forEach(booking => {
         if (booking.ride_completed_at) {
           const date = new Date(booking.ride_completed_at);
           let dayIndex = date.getDay();
           dayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-          dailyEarnings[dayIndex] += booking.actual_fare || 0;
+          const amount = Number(booking.actual_fare) || 0;
+          dailyEarnings[dayIndex] += amount;
+          total += amount;
         }
       });
 
+      console.log("Weekly earnings:", dailyEarnings);
       setWeeklyEarnings(dailyEarnings);
+      
+      // Find peak day
+      const maxEarnings = Math.max(...dailyEarnings);
+      const maxIndex = dailyEarnings.indexOf(maxEarnings);
+      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+      setPeakDay(days[maxIndex] || "");
+      setPeakEarnings(maxEarnings);
     } catch (err) {
       console.log("Error fetching weekly earnings:", err.message);
     }
   };
 
+  const fetchStatistics = async () => {
+    try {
+      // Get monthly earnings
+      const today = new Date();
+      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      
+      const { data: monthlyData, error: monthlyError } = await supabase
+        .from("bookings")
+        .select("actual_fare")
+        .eq("driver_id", driverId)
+        .eq("status", "completed")
+        .gte("ride_completed_at", startOfMonth.toISOString());
+
+      if (monthlyError) throw monthlyError;
+
+      const monthlyTotal = monthlyData?.reduce((sum, b) => sum + (Number(b.actual_fare) || 0), 0) || 0;
+      setMonthlyEarnings(monthlyTotal);
+
+      // Get total trips and average fare
+      const { data: tripsData, error: tripsError } = await supabase
+        .from("bookings")
+        .select("actual_fare")
+        .eq("driver_id", driverId)
+        .eq("status", "completed");
+
+      if (tripsError) throw tripsError;
+
+      const tripCount = tripsData?.length || 0;
+      const totalFare = tripsData?.reduce((sum, b) => sum + (Number(b.actual_fare) || 0), 0) || 0;
+      
+      setTotalTrips(tripCount);
+      setAverageFare(tripCount > 0 ? totalFare / tripCount : 0);
+
+    } catch (err) {
+      console.log("Error fetching statistics:", err.message);
+    }
+  };
+
   const handleWithdraw = () => {
-    if (!withdrawAmount || parseFloat(withdrawAmount) <= 0) {
+    const amount = parseFloat(withdrawAmount);
+    
+    if (!withdrawAmount || isNaN(amount) || amount <= 0) {
       Alert.alert("Error", "Please enter a valid amount");
       return;
     }
 
-    const amount = parseFloat(withdrawAmount);
-    if (amount > walletData.balance) {
-      Alert.alert("Error", "Insufficient balance");
+    if (amount < 100) {
+      Alert.alert("Error", "Minimum withdrawal is ₱100");
       return;
     }
 
-    if (withdrawMethod === "gcash" && !gcashNumber) {
-      Alert.alert("Error", "Please enter your GCash number");
+    if (amount > walletData.balance) {
+      Alert.alert("Error", `Insufficient balance. Available: ₱${walletData.balance.toFixed(2)}`);
       return;
+    }
+
+    if (withdrawMethod === "gcash") {
+      if (!gcashNumber) {
+        Alert.alert("Error", "Please enter your GCash number");
+        return;
+      }
+      if (!/^09\d{9}$/.test(gcashNumber)) {
+        Alert.alert("Error", "Please enter a valid GCash number (11 digits starting with 09)");
+        return;
+      }
     }
 
     Alert.alert(
       "Confirm Withdrawal",
-      `Withdraw ₱${amount} to ${withdrawMethod === "gcash" ? `GCash (${gcashNumber})` : "Cash"}?`,
+      `Withdraw ₱${amount.toFixed(2)} from your balance to ${withdrawMethod === "gcash" ? `GCash (${gcashNumber})` : "Cash (Pick up at branch)"}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -285,68 +415,99 @@ export default function DriverWalletScreen({ navigation }) {
   const processWithdrawal = async (amount) => {
     try {
       // Update wallet balance
-      const { error } = await supabase
+      const { error: updateError } = await supabase
         .from("driver_wallets")
         .update({
           balance: walletData.balance - amount,
           total_withdrawals: (walletData.total_withdrawals || 0) + amount,
-          updated_at: new Date(),
+          updated_at: new Date()
         })
         .eq("driver_id", driverId);
 
-      if (error) throw error;
+      if (updateError) throw updateError;
 
       // Create transaction record
-      await supabase.from("transactions").insert([{
-        user_id: driverId,
-        user_type: "driver",
-        type: "withdrawal",
-        amount: amount,
-        status: "completed",
-        metadata: {
-          method: withdrawMethod,
-          gcash_number: withdrawMethod === "gcash" ? gcashNumber : null,
-        },
-      }]);
+      const { error: transactionError } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: driverId,
+          user_type: "driver",
+          type: "withdrawal",
+          amount: amount,
+          status: "pending",
+          created_at: new Date(),
+          metadata: {
+            method: withdrawMethod,
+            gcash_number: withdrawMethod === "gcash" ? gcashNumber : null,
+            status: "pending"
+          },
+        });
+
+      if (transactionError) throw transactionError;
 
       // Create notification
-      await supabase.from("notifications").insert([{
-        user_id: driverId,
-        user_type: "driver",
-        type: "payment",
-        title: "Withdrawal Successful",
-        message: `₱${amount} has been withdrawn from your wallet`,
-        data: { amount, method: withdrawMethod },
-      }]);
+      const { error: notifError } = await supabase
+        .from("notifications")
+        .insert({
+          user_id: driverId,
+          user_type: "driver",
+          type: "payment",
+          title: "Withdrawal Request Submitted",
+          message: `Your withdrawal request of ₱${amount.toFixed(2)} to ${withdrawMethod === "gcash" ? "GCash" : "Cash"} is being processed.`,
+          data: { 
+            amount, 
+            method: withdrawMethod,
+            gcash_number: withdrawMethod === "gcash" ? gcashNumber : null
+          },
+          created_at: new Date()
+        });
 
-      Alert.alert("Success", "Withdrawal request submitted!");
+      if (notifError) throw notifError;
+
+      // Update local state
+      const newBalance = walletData.balance - amount;
+      
+      Alert.alert(
+        "✅ Withdrawal Request Submitted", 
+        `Amount: ₱${amount.toFixed(2)}\nMethod: ${withdrawMethod === "gcash" ? "GCash" : "Cash"}\n\n` +
+        `Your request is being processed.`
+      );
+      
       setWithdrawModal(false);
       setWithdrawAmount("");
       setGcashNumber("");
       
       // Refresh data
-      loadWalletData();
+      await loadWalletData();
     } catch (err) {
       console.log("Withdrawal error:", err.message);
-      Alert.alert("Error", "Failed to process withdrawal");
+      Alert.alert("Error", "Failed to process withdrawal. Please try again.");
     }
   };
 
   const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+    if (!dateString) return "";
     
-    if (diffDays === 0) return "Today";
-    if (diffDays === 1) return "Yesterday";
-    return date.toLocaleDateString("en-PH", {
-      month: "short",
-      day: "numeric",
-    });
+    try {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+      
+      if (diffDays === 0) return "Today";
+      if (diffDays === 1) return "Yesterday";
+      if (diffDays < 7) return `${diffDays} days ago`;
+      return date.toLocaleDateString("en-PH", {
+        month: "short",
+        day: "numeric",
+        year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+      });
+    } catch (e) {
+      return "";
+    }
   };
 
-  const getTransactionIcon = (type, paymentMethod) => {
-    if (type === "earning") {
+  const getTransactionIcon = (type, paymentMethod, category) => {
+    if (type === "earning" || category === "trip") {
       switch (paymentMethod) {
         case "gcash":
           return { name: "phone-portrait", color: "#00579F", bg: "#E6F0FF" };
@@ -355,6 +516,12 @@ export default function DriverWalletScreen({ navigation }) {
         default:
           return { name: "wallet", color: "#183B5C", bg: "#E6E9F0" };
       }
+    } else if (type === "topup") {
+      return { name: "arrow-up-outline", color: "#10B981", bg: "#D1FAE5" };
+    } else if (type === "withdrawal") {
+      return { name: "arrow-down-outline", color: "#EF4444", bg: "#FEE2E2" };
+    } else if (type === "mission_bonus") {
+      return { name: "trophy", color: "#F59E0B", bg: "#FEF3C7" };
     } else {
       return { name: "card", color: "#EF4444", bg: "#FEE2E2" };
     }
@@ -364,6 +531,7 @@ export default function DriverWalletScreen({ navigation }) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F5F7FA" }}>
         <ActivityIndicator size="large" color="#183B5C" />
+        <Text style={{ marginTop: 10, color: "#666" }}>Loading your wallet...</Text>
       </View>
     );
   }
@@ -398,7 +566,7 @@ export default function DriverWalletScreen({ navigation }) {
           My Wallet
         </Text>
         <Text style={{ fontSize: 14, color: "#FFB37A", marginTop: 5 }}>
-          Track your earnings and withdrawals
+          {driverName || "Driver"}
         </Text>
       </View>
 
@@ -415,94 +583,121 @@ export default function DriverWalletScreen({ navigation }) {
         shadowRadius: 12,
         elevation: 5,
       }}>
-        <Text style={{ fontSize: 14, color: "#666", marginBottom: 5 }}>Available Balance</Text>
-        <Text style={{ fontSize: 36, fontWeight: "bold", color: "#183B5C" }}>
-          ₱{walletData.balance.toFixed(2)}
-        </Text>
-        
-        <View style={{ flexDirection: "row", marginTop: 20 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 12, color: "#666" }}>Total Deposits</Text>
-            <Text style={{ fontSize: 16, fontWeight: "600", color: "#10B981" }}>
-              ₱{walletData.total_deposits.toFixed(2)}
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <View>
+            <Text style={{ fontSize: 14, color: "#666", marginBottom: 5 }}>
+              Available Balance
+            </Text>
+            <Text style={{ fontSize: 36, fontWeight: "bold", color: "#183B5C" }}>
+              ₱{(walletData.balance || 0).toFixed(2)}
             </Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 12, color: "#666" }}>Total Withdrawals</Text>
-            <Text style={{ fontSize: 16, fontWeight: "600", color: "#EF4444" }}>
-              ₱{walletData.total_withdrawals.toFixed(2)}
+          <View style={{
+            backgroundColor: "#E6F7E6",
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 20,
+          }}>
+            <Text style={{ fontSize: 12, color: "#2E7D32", fontWeight: "600" }}>
+              Can Withdraw
+            </Text>
+          </View>
+        </View>
+        
+        {/* Balance Breakdown */}
+        <View style={{
+          marginTop: 10,
+          flexDirection: "row",
+          justifyContent: "space-between",
+        }}>
+          <View>
+            <Text style={{ fontSize: 11, color: "#666" }}>Total Top-ups</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#10B981" }}>
+              ₱{(walletData.total_deposits || 0).toFixed(2)}
+            </Text>
+          </View>
+          <View>
+            <Text style={{ fontSize: 11, color: "#666" }}>Total Withdrawn</Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#EF4444" }}>
+              ₱{(walletData.total_withdrawals || 0).toFixed(2)}
             </Text>
           </View>
         </View>
 
-        {/* Payment Method Breakdown */}
+        {/* Earnings Section */}
         <View style={{
           marginTop: 20,
-          paddingTop: 20,
-          borderTopWidth: 1,
-          borderTopColor: "#F3F4F6",
+          padding: 15,
+          backgroundColor: "#F9FAFB",
+          borderRadius: 16,
         }}>
-          <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 12 }}>
-            Earnings by Payment Method
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
+            <Ionicons name="stats-chart" size={20} color="#183B5C" />
+            <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginLeft: 8 }}>
+              Total Earnings from Trips
+            </Text>
+          </View>
+          
+          <Text style={{ fontSize: 28, fontWeight: "bold", color: "#183B5C", marginBottom: 15 }}>
+            ₱{(totalEarnings || 0).toFixed(2)}
           </Text>
           
           <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-            {/* Cash */}
             <View style={{ alignItems: "center" }}>
-              <View style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: "#D1FAE5",
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: 5,
-              }}>
-                <Ionicons name="cash" size={20} color="#10B981" />
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#10B981", marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: "#666" }}>Cash</Text>
               </View>
-              <Text style={{ fontSize: 16, fontWeight: "bold", color: "#10B981" }}>
-                ₱{cashEarnings.toFixed(0)}
+              <Text style={{ fontSize: 16, fontWeight: "600", color: "#10B981" }}>
+                ₱{(walletData.cash_earnings || 0).toFixed(0)}
               </Text>
-              <Text style={{ fontSize: 11, color: "#666" }}>Cash</Text>
             </View>
 
-            {/* GCash */}
             <View style={{ alignItems: "center" }}>
-              <View style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: "#E6F0FF",
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: 5,
-              }}>
-                <Ionicons name="phone-portrait" size={20} color="#00579F" />
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#00579F", marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: "#666" }}>GCash</Text>
               </View>
-              <Text style={{ fontSize: 16, fontWeight: "bold", color: "#00579F" }}>
-                ₱{gcashEarnings.toFixed(0)}
+              <Text style={{ fontSize: 16, fontWeight: "600", color: "#00579F" }}>
+                ₱{(walletData.gcash_earnings || 0).toFixed(0)}
               </Text>
-              <Text style={{ fontSize: 11, color: "#666" }}>GCash</Text>
             </View>
 
-            {/* Wallet */}
             <View style={{ alignItems: "center" }}>
-              <View style={{
-                width: 40,
-                height: 40,
-                borderRadius: 20,
-                backgroundColor: "#E6E9F0",
-                justifyContent: "center",
-                alignItems: "center",
-                marginBottom: 5,
-              }}>
-                <Ionicons name="wallet" size={20} color="#183B5C" />
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#183B5C", marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: "#666" }}>Wallet</Text>
               </View>
-              <Text style={{ fontSize: 16, fontWeight: "bold", color: "#183B5C" }}>
-                ₱{walletEarnings.toFixed(0)}
+              <Text style={{ fontSize: 16, fontWeight: "600", color: "#183B5C" }}>
+                ₱{(walletData.wallet_earnings || 0).toFixed(0)}
               </Text>
-              <Text style={{ fontSize: 11, color: "#666" }}>Wallet</Text>
             </View>
+          </View>
+        </View>
+
+        {/* Quick Stats */}
+        <View style={{
+          flexDirection: "row",
+          marginTop: 15,
+          paddingTop: 15,
+          borderTopWidth: 1,
+          borderTopColor: "#F3F4F6",
+        }}>
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text style={{ fontSize: 12, color: "#666" }}>Total Trips</Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>{totalTrips || 0}</Text>
+          </View>
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text style={{ fontSize: 12, color: "#666" }}>Avg. Fare</Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
+              ₱{(averageFare || 0).toFixed(0)}
+            </Text>
+          </View>
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text style={{ fontSize: 12, color: "#666" }}>This Month</Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
+              ₱{(monthlyEarnings || 0).toFixed(0)}
+            </Text>
           </View>
         </View>
 
@@ -534,7 +729,11 @@ export default function DriverWalletScreen({ navigation }) {
               flexDirection: "row",
               justifyContent: "center",
             }}
-            onPress={() => navigation.navigate("SubscriptionScreen")} 
+            onPress={() => Alert.alert(
+              "Top-up Feature",
+              "To add funds to your wallet, please visit our office or contact support.",
+              [{ text: "OK" }]
+            )}
           >
             <Ionicons name="arrow-up-outline" size={18} color="#183B5C" />
             <Text style={{ color: "#183B5C", fontWeight: "600", marginLeft: 5 }}>Top Up</Text>
@@ -542,7 +741,161 @@ export default function DriverWalletScreen({ navigation }) {
         </View>
       </View>
 
+      {/* Earnings Chart */}
+      <View style={{
+        marginHorizontal: 20,
+        marginTop: 20,
+        backgroundColor: "#FFF",
+        borderRadius: 24,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+      }}>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
+          <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
+            Weekly Trip Earnings
+          </Text>
+          {peakEarnings > 0 && (
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Ionicons name="trending-up" size={16} color="#10B981" />
+              <Text style={{ fontSize: 12, color: "#666", marginLeft: 4 }}>
+                Peak: {peakDay || ""} (₱{(peakEarnings || 0).toFixed(0)})
+              </Text>
+            </View>
+          )}
+        </View>
 
+        {weeklyEarnings.some(day => day > 0) ? (
+          <LineChart
+            data={{
+              labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+              datasets: [{
+                data: weeklyEarnings,
+                color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
+                strokeWidth: 2,
+              }],
+            }}
+            width={screenWidth}
+            height={180}
+            yAxisLabel="₱"
+            chartConfig={{
+              backgroundColor: "#FFF",
+              backgroundGradientFrom: "#FFF",
+              backgroundGradientTo: "#FFF",
+              decimalPlaces: 0,
+              color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
+              labelColor: (opacity = 1) => `rgba(0,0,0,${opacity})`,
+              style: { borderRadius: 16 },
+              propsForDots: { r: "4", strokeWidth: "2", stroke: "#FFB37A" },
+            }}
+            bezier
+            style={{ marginVertical: 8, borderRadius: 16 }}
+          />
+        ) : (
+          <View style={{ height: 180, justifyContent: "center", alignItems: "center" }}>
+            <Ionicons name="bar-chart-outline" size={40} color="#D1D5DB" />
+            <Text style={{ marginTop: 10, color: "#9CA3AF" }}>No trip earnings this week</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Payment Method Breakdown */}
+      <View style={{
+        marginHorizontal: 20,
+        marginTop: 20,
+        backgroundColor: "#FFF",
+        borderRadius: 24,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+      }}>
+        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>
+          Payment Method Breakdown
+        </Text>
+        
+        <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+          {/* Cash */}
+          <Pressable 
+            style={{ alignItems: "center", flex: 1 }}
+            onPress={() => Alert.alert(
+              "Cash Earnings", 
+              `Total Cash from Trips: ₱${(walletData.cash_earnings || 0).toFixed(2)}\n\nThis includes all cash payments collected directly from passengers.`
+            )}
+          >
+            <View style={{
+              width: 50,
+              height: 50,
+              borderRadius: 25,
+              backgroundColor: "#D1FAE5",
+              justifyContent: "center",
+              alignItems: "center",
+              marginBottom: 8,
+            }}>
+              <Ionicons name="cash" size={24} color="#10B981" />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#10B981" }}>
+              ₱{(walletData.cash_earnings || 0).toFixed(0)}
+            </Text>
+            <Text style={{ fontSize: 12, color: "#666" }}>Cash</Text>
+          </Pressable>
+
+          {/* GCash */}
+          <Pressable 
+            style={{ alignItems: "center", flex: 1 }}
+            onPress={() => Alert.alert(
+              "GCash Earnings", 
+              `Total GCash from Trips: ₱${(walletData.gcash_earnings || 0).toFixed(2)}\n\nThis includes all GCash payments from passengers.`
+            )}
+          >
+            <View style={{
+              width: 50,
+              height: 50,
+              borderRadius: 25,
+              backgroundColor: "#E6F0FF",
+              justifyContent: "center",
+              alignItems: "center",
+              marginBottom: 8,
+            }}>
+              <Ionicons name="phone-portrait" size={24} color="#00579F" />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#00579F" }}>
+              ₱{(walletData.gcash_earnings || 0).toFixed(0)}
+            </Text>
+            <Text style={{ fontSize: 12, color: "#666" }}>GCash</Text>
+          </Pressable>
+
+          {/* Wallet */}
+          <Pressable 
+            style={{ alignItems: "center", flex: 1 }}
+            onPress={() => Alert.alert(
+              "Wallet Payments", 
+              `Total Wallet from Trips: ₱${(walletData.wallet_earnings || 0).toFixed(2)}\n\nThis includes payments made from commuter's wallet balance.`
+            )}
+          >
+            <View style={{
+              width: 50,
+              height: 50,
+              borderRadius: 25,
+              backgroundColor: "#E6E9F0",
+              justifyContent: "center",
+              alignItems: "center",
+              marginBottom: 8,
+            }}>
+              <Ionicons name="wallet" size={24} color="#183B5C" />
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
+              ₱{(walletData.wallet_earnings || 0).toFixed(0)}
+            </Text>
+            <Text style={{ fontSize: 12, color: "#666" }}>Wallet</Text>
+          </Pressable>
+        </View>
+      </View>
 
       {/* Recent Transactions */}
       <View style={{
@@ -559,26 +912,29 @@ export default function DriverWalletScreen({ navigation }) {
       }}>
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
           <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
-            Recent Transactions
+            Recent Activity
           </Text>
           <Pressable onPress={() => {}}>
             <Text style={{ fontSize: 12, color: "#183B5C" }}>See All</Text>
           </Pressable>
         </View>
 
-        {recentTransactions.length === 0 ? (
+        {!recentTransactions || recentTransactions.length === 0 ? (
           <View style={{ padding: 30, alignItems: "center" }}>
             <Ionicons name="receipt-outline" size={40} color="#D1D5DB" />
             <Text style={{ marginTop: 10, color: "#9CA3AF", textAlign: "center" }}>
               No transactions yet
             </Text>
+            <Text style={{ fontSize: 12, color: "#D1D5DB", marginTop: 4 }}>
+              Complete a booking to see your earnings
+            </Text>
           </View>
         ) : (
           recentTransactions.slice(0, 10).map((transaction, index) => {
-            const icon = getTransactionIcon(transaction.type, transaction.paymentMethod);
+            const icon = getTransactionIcon(transaction.type, transaction.paymentMethod, transaction.category);
             return (
               <View
-                key={transaction.id}
+                key={transaction.id || index}
                 style={{
                   flexDirection: "row",
                   alignItems: "center",
@@ -601,22 +957,22 @@ export default function DriverWalletScreen({ navigation }) {
 
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }} numberOfLines={1}>
-                    {transaction.description}
+                    {transaction.description || "Transaction"}
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
                     <Text style={{ fontSize: 11, color: "#9CA3AF" }}>
                       {formatDate(transaction.date)}
                     </Text>
-                    {transaction.paymentMethod && (
+                    {transaction.category && (
                       <>
                         <Text style={{ fontSize: 11, color: "#9CA3AF", marginHorizontal: 4 }}>•</Text>
                         <Text style={{ 
                           fontSize: 11, 
-                          color: transaction.paymentMethod === "gcash" ? "#00579F" : 
-                                 transaction.paymentMethod === "cash" ? "#10B981" : "#183B5C",
+                          color: transaction.category === "balance" ? "#10B981" : 
+                                 transaction.category === "trip" ? "#183B5C" : "#F59E0B",
                           textTransform: "capitalize"
                         }}>
-                          {transaction.paymentMethod}
+                          {transaction.category}
                         </Text>
                       </>
                     )}
@@ -626,10 +982,10 @@ export default function DriverWalletScreen({ navigation }) {
                 <Text style={{
                   fontSize: 16,
                   fontWeight: "bold",
-                  color: transaction.type === "earning" ? "#10B981" : "#EF4444",
+                  color: (transaction.amount || 0) > 0 ? "#10B981" : "#EF4444",
                 }}>
-                  {transaction.type === "earning" ? "+" : ""}
-                  ₱{Math.abs(transaction.amount).toFixed(2)}
+                  {(transaction.amount || 0) > 0 ? "+" : ""}
+                  ₱{Math.abs(transaction.amount || 0).toFixed(2)}
                 </Text>
               </View>
             );
@@ -663,9 +1019,23 @@ export default function DriverWalletScreen({ navigation }) {
             </View>
 
             <Text style={{ fontSize: 14, color: "#666", marginBottom: 5 }}>Available Balance</Text>
-            <Text style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C", marginBottom: 20 }}>
-              ₱{walletData.balance.toFixed(2)}
+            <Text style={{ fontSize: 32, fontWeight: "bold", color: "#183B5C", marginBottom: 20 }}>
+              ₱{(walletData.balance || 0).toFixed(2)}
             </Text>
+
+            {/* Note about earnings */}
+            <View style={{
+              backgroundColor: "#F0F9FF",
+              borderRadius: 12,
+              padding: 12,
+              marginBottom: 20,
+              borderWidth: 1,
+              borderColor: "#B2D9FF",
+            }}>
+              <Text style={{ fontSize: 12, color: "#3B82F6", fontWeight: "600" }}>
+                ℹ️ Note: You can only withdraw from your balance (top-ups).
+              </Text>
+            </View>
 
             {/* Withdrawal Method */}
             <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 10 }}>
@@ -719,7 +1089,7 @@ export default function DriverWalletScreen({ navigation }) {
               </Pressable>
             </View>
 
-            {/* GCash Number (if selected) */}
+            {/* GCash Number */}
             {withdrawMethod === "gcash" && (
               <View style={{ marginBottom: 20 }}>
                 <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>
@@ -737,13 +1107,17 @@ export default function DriverWalletScreen({ navigation }) {
                   keyboardType="phone-pad"
                   value={gcashNumber}
                   onChangeText={setGcashNumber}
+                  maxLength={11}
                 />
+                <Text style={{ fontSize: 10, color: "#9CA3AF", marginTop: 4 }}>
+                  Enter 11-digit GCash number starting with 09
+                </Text>
               </View>
             )}
 
             {/* Amount */}
             <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>
-              Amount
+              Amount (Min. ₱100)
             </Text>
             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 20 }}>
               <Text style={{ fontSize: 24, fontWeight: "bold", color: "#333", marginRight: 8 }}>₱</Text>
@@ -789,13 +1163,21 @@ export default function DriverWalletScreen({ navigation }) {
                 padding: 16,
                 borderRadius: 12,
                 alignItems: "center",
+                opacity: !withdrawAmount || parseFloat(withdrawAmount) < 100 || parseFloat(withdrawAmount) > (walletData.balance || 0) ? 0.5 : 1,
               }}
               onPress={handleWithdraw}
+              disabled={!withdrawAmount || parseFloat(withdrawAmount) < 100 || parseFloat(withdrawAmount) > (walletData.balance || 0)}
             >
               <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
-                Withdraw
+                Withdraw ₱{withdrawAmount ? parseFloat(withdrawAmount).toFixed(2) : "0.00"}
               </Text>
             </Pressable>
+
+            {/* Terms */}
+            <Text style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center", marginTop: 15 }}>
+              Withdrawals to GCash are processed within 24 hours.
+              {"\n"}Cash withdrawals are available for pick up at our office.
+            </Text>
           </View>
         </View>
       </Modal>
@@ -813,22 +1195,28 @@ export default function DriverWalletScreen({ navigation }) {
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
           <Ionicons name="information-circle" size={20} color="#3B82F6" />
           <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginLeft: 8 }}>
-            Wallet Info
+            Understanding Your Wallet
           </Text>
         </View>
         <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • Cash payments: Collect directly from passengers
+          • 💰 **Balance** comes from your top-ups/cash in
         </Text>
         <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • GCash payments: Automatically added to your wallet
+          • 💵 **Cash Earnings** from trips - collect directly
         </Text>
         <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • Minimum withdrawal: ₱100
+          • 📱 **GCash Earnings** from trips - auto-added
+        </Text>
+        <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
+          • 💳 **Wallet Earnings** from commuter wallet payments
         </Text>
         <Text style={{ fontSize: 12, color: "#4B5563" }}>
-          • Withdrawals to GCash are processed within 24 hours
+          • 💰 You can only withdraw from your Balance (top-ups)
         </Text>
       </View>
+
+      {/* Footer Space */}
+      <View style={{ height: 20 }} />
     </ScrollView>
   );
 }

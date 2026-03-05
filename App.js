@@ -12,10 +12,6 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import SplashScreen from './app/SplashScreen.js';
 import UserTypeScreen from './app/UserTypeScreen.js';
 
-/* 🔐 Security (PIN System) */
-import CreatePinScreen from './app/CreatePinScreen.js';
-import ConfirmPinScreen from './app/ConfirmPinScreen.js';
-import PinLockScreen from './app/PinLockScreen.js';
 
 /* ============================= */
 /* Commuter Flow */
@@ -24,14 +20,24 @@ import PinLockScreen from './app/PinLockScreen.js';
 import CommuterLoginScreen from './app/commuter/CommuterLogin.js';
 import OtpScreen from './app/commuter/OtpScreen.js';
 import CommuterDetails from './app/commuter/CommuterDetails.js';
-import HomePage from "./app/commuter/HomePage";
+import HomePage from "./app/commuter/HomePage.js";
 import SelectDriverScreen from "./app/commuter/SelectDriverScreen";
 import TrackRideScreen from "./app/commuter/TrackRideScreen.js";
 import PaymentScreen from "./app/commuter/PaymentScreen.js";
 
-/* Help & FAQ */
-import HelpScreen from './app/commuter/HelpScreen.js';
-import FAQScreen from './app/commuter/FAQScreen.js';
+import MapPickerScreen from "./app/commuter/MapPickerScreen.js";
+import TransactionHistory from "./app/commuter/TransactionHistory.js";
+import PaymentMethods from './app/commuter/PaymentMethods.js';
+import Promos from './app/commuter/Promos.js';
+import PointsRewards from './app/commuter/PointsRewards.js';
+import BookingDetails from './app/commuter/BookingDetails.js';
+import Support from './app/commuter/Support.js';
+import TransactionDetails from './app/commuter/TransactionDetails.js';
+import TicketDetails from './app/commuter/TicketDetails.js';
+import HelpCenter from './app/commuter/HelpCenter.js';
+import RateDriver from './app/commuter/RateDriver.js';
+import RateRide from './app/commuter/RateRide';
+
 
 /* ============================= */
 /* Driver Flow */
@@ -45,6 +51,7 @@ import RankingPage from "./app/Driver/RankingPage";
 import DriverVerificationScreen from './app/Driver/DriverVerificationScreen.js';
 import SubscriptionScreen from './app/Driver/SubscriptionScreen.js';
 import TripDetailsScreen from "./app/Driver/TripDetailsScreen";
+import ActiveRideScreen from './app/Driver/ActiveRideScreen';
 const Stack = createNativeStackNavigator();
 
 export default function App() {
@@ -57,13 +64,6 @@ export default function App() {
           {/* Splash (App Entry Point) */}
           {/* ============================= */}
           <Stack.Screen name="Splash" component={SplashScreen} />
-
-          {/* ============================= */}
-          {/* 🔐 Security Layer */}
-          {/* ============================= */}
-          <Stack.Screen name="CreatePinScreen" component={CreatePinScreen} />
-          <Stack.Screen name="ConfirmPinScreen" component={ConfirmPinScreen} />
-          <Stack.Screen name="PinLockScreen" component={PinLockScreen} />
 
           {/* ============================= */}
           {/* User Type Selection */}
@@ -80,18 +80,21 @@ export default function App() {
           <Stack.Screen name="SelectDriverScreen" component={SelectDriverScreen} />
           <Stack.Screen name="TrackRideScreen" component={TrackRideScreen} />
           <Stack.Screen name="PaymentScreen" component={PaymentScreen} />
+          <Stack.Screen name="MapPicker" component={MapPickerScreen} />
 
-          {/* Help & FAQ (With Header) */}
-          <Stack.Screen
-            name="Help"
-            component={HelpScreen}
-            options={{ headerShown: true, title: "Help & Support" }}
-          />
-          <Stack.Screen
-            name="FAQ"
-            component={FAQScreen}
-            options={{ headerShown: true, title: "FAQ" }}
-          />
+          <Stack.Screen name="TransactionHistory" component={TransactionHistory} />
+          <Stack.Screen name="PaymentMethods" component={PaymentMethods} />
+          <Stack.Screen name="Promos" component={Promos} />
+          <Stack.Screen name="PointsRewards" component={PointsRewards} />
+          <Stack.Screen name="BookingDetails" component={BookingDetails} />
+          <Stack.Screen name="Support" component={Support} />
+          <Stack.Screen name="TransactionDetails" component={TransactionDetails} />
+          <Stack.Screen name="TicketDetails" component={TicketDetails} />
+          <Stack.Screen name="HelpCenter" component={HelpCenter} />
+          <Stack.Screen name="RateDriver" component={RateDriver} />
+          <Stack.Screen name="RateRide" component={RateRide} />
+          
+
 
           {/* ============================= */}
           {/* Driver Flow */}
@@ -104,6 +107,9 @@ export default function App() {
           <Stack.Screen name="DriverVerificationScreen" component={DriverVerificationScreen} />
           <Stack.Screen name="SubscriptionScreen" component={SubscriptionScreen} />
           <Stack.Screen name="TripDetailsScreen" component={TripDetailsScreen} />
+          <Stack.Screen name="ActiveRideScreen" component={ActiveRideScreen} />
+          {/* <Stack.Screen name="DriverHome" component={DriverHomeScreen} />
+          <Stack.Screen name="DriverTrackRide" component={DriverTrackRideScreen} /> */}
 
         </Stack.Navigator>
       </NavigationContainer>

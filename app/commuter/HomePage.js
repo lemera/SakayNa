@@ -1,3 +1,4 @@
+// HomePage.js - Main navigation for commuter with custom TrackRide button
 import React, { useState } from "react";
 import { View, Image, Pressable } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
@@ -8,6 +9,7 @@ import HomeScreen from "./HomeScreen";
 import WalletScreen from "./WalletScreen";
 import AccountScreen from "./AccountScreen";
 import TrackRideScreen from "./TrackRideScreen";
+import BookingDetails from "./BookingDetails";
 import InboxScreen from "./InboxScreen";
 import navStyles from "../styles/NavStyles";
 
@@ -52,7 +54,7 @@ export default function HomePage() {
           </View>
         ),
         headerRight: () => (
-          <Pressable onPress={() => navigation.navigate("Help")} style={{ marginRight: 15 }}>
+          <Pressable onPress={() => navigation.navigate("Support")} style={{ marginRight: 15 }}>
             <Ionicons name="help-circle-outline" size={28} color="#183B5C" />
           </Pressable>
         ),

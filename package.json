@@ -20,9 +20,12 @@
     "@supabase/supabase-js": "^2.98.0",
     "bcryptjs": "^3.0.3",
     "expo": "~54.0.33",
+    "expo-audio": "~1.1.1",
+    "expo-av": "~16.0.8",
     "expo-blur": "^15.0.8",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
+    "expo-haptics": "~15.0.8",
     "expo-image-picker": "~17.0.10",
     "expo-linear-gradient": "~15.0.8",
     "expo-local-authentication": "~17.0.8",
@@ -30,6 +33,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "expo-task-manager": "~14.0.9",
     "firebase": "^12.9.0",
     "react": "19.1.0",
     "react-native": "0.81.5",
@@ -46,10 +50,7 @@
     "react-native-url-polyfill": "^3.0.0",
     "react-native-vector-icons": "^10.3.0",
     "react-native-webview": "13.15.0",
-    "twilio": "^5.12.2",
-    "expo-av": "~16.0.8",
-    "expo-haptics": "~15.0.8",
-    "expo-audio": "~1.1.1"
+    "twilio": "^5.12.2"
   },
   "private": true,
   "devDependencies": {

@@ -1,3 +1,4 @@
+// screens/driver/DriverTrackRideScreen.js
 import React, { useState, useEffect, useRef } from "react";
 import {
   View,
@@ -25,7 +26,6 @@ export default function DriverTrackRideScreen({ navigation }) {
   const mapRef = useRef(null);
 
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState(null);
   
   // For active ride
@@ -40,19 +40,36 @@ export default function DriverTrackRideScreen({ navigation }) {
   
   // For pending requests
   const [pendingRequests, setPendingRequests] = useState([]);
-  const [showRequests, setShowRequests] = useState(false);
+  
+  // For request map
+  const [selectedRequest, setSelectedRequest] = useState(null);
+  const [requestRouteCoordinates, setRequestRouteCoordinates] = useState([]);
+  const [requestDistance, setRequestDistance] = useState(null);
+  const [requestDuration, setRequestDuration] = useState(null);
 
-  // Get Google API Key
+  // Navigation state
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [navigationDestination, setNavigationDestination] = useState('pickup');
+  const [hasArrivedAtPickup, setHasArrivedAtPickup] = useState(false);
+  const [rideStarted, setRideStarted] = useState(false);
+  
+  // UI state
+  const [showPendingRequests, setShowPendingRequests] = useState(true);
+
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
-  // Fare calculation (₱15 per km, minimum ₱15)
-  const calculateFare = (distanceKm) => {
-    const baseFare = 15;
-    if (!distanceKm || distanceKm <= 1) return baseFare;
-    return Math.ceil(distanceKm) * baseFare;
-  };
+  useEffect(() => {
+    if (pendingRequests.length > 0 && !selectedRequest && !activeBooking) {
+      setSelectedRequest(pendingRequests[0]);
+    }
+  }, [pendingRequests, activeBooking]);
 
-  // Fetch driver ID and all data
+  useEffect(() => {
+    if (selectedRequest && !activeBooking) {
+      calculateRequestRoute(selectedRequest);
+    }
+  }, [selectedRequest, activeBooking]);
+
   useFocusEffect(
     React.useCallback(() => {
       const initialize = async () => {
@@ -64,6 +81,7 @@ export default function DriverTrackRideScreen({ navigation }) {
             fetchPendingRequests(id),
             startLocationTracking()
           ]);
+          setLoading(false);
         }
       };
       initialize();
@@ -80,8 +98,25 @@ export default function DriverTrackRideScreen({ navigation }) {
   useEffect(() => {
     if (!driverId) return;
 
-    const subscription = supabase
-      .channel('driver-all-bookings')
+    const bookingRequestsSubscription = supabase
+      .channel('driver-booking-requests')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'booking_requests',
+          filter: `driver_id=eq.${driverId}`,
+        },
+        (payload) => {
+          console.log("🔔 New booking request:", payload);
+          fetchPendingRequests(driverId);
+        }
+      )
+      .subscribe();
+
+    const bookingsSubscription = supabase
+      .channel('driver-bookings')
       .on(
         'postgres_changes',
         {
@@ -90,8 +125,8 @@ export default function DriverTrackRideScreen({ navigation }) {
           table: 'bookings',
           filter: `driver_id=eq.${driverId}`,
         },
-        () => {
-          // Refresh both active and pending
+        (payload) => {
+          console.log("📅 Booking updated:", payload);
           fetchActiveBooking(driverId);
           fetchPendingRequests(driverId);
         }
@@ -99,22 +134,42 @@ export default function DriverTrackRideScreen({ navigation }) {
       .subscribe();
 
     return () => {
-      subscription.unsubscribe();
+      bookingRequestsSubscription.unsubscribe();
+      bookingsSubscription.unsubscribe();
     };
   }, [driverId]);
 
-  // Fetch pending requests
   const fetchPendingRequests = async (id) => {
     try {
       const { data, error } = await supabase
-        .from("bookings")
+        .from("booking_requests")
         .select(`
-          *,
-          commuter:commuters (
-            first_name,
-            last_name,
-            phone,
-            profile_picture
+          id,
+          status,
+          distance_km,
+          created_at,
+          booking:bookings (
+            id,
+            commuter_id,
+            pickup_location,
+            pickup_latitude,
+            pickup_longitude,
+            pickup_details,
+            dropoff_location,
+            dropoff_latitude,
+            dropoff_longitude,
+            dropoff_details,
+            passenger_count,
+            fare,
+            distance_km,
+            duration_minutes,
+            created_at,
+            commuter:commuters (
+              first_name,
+              last_name,
+              phone,
+              profile_picture
+            )
           )
         `)
         .eq("driver_id", id)
@@ -122,19 +177,30 @@ export default function DriverTrackRideScreen({ navigation }) {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setPendingRequests(data || []);
+
+      const requests = data
+        .filter(item => item.booking)
+        .map(item => ({
+          request_id: item.id,
+          ...item.booking,
+          request_status: item.status,
+          request_distance: item.distance_km,
+          request_created_at: item.created_at
+        }));
+
+      setPendingRequests(requests || []);
     } catch (err) {
       console.log("❌ Error fetching pending requests:", err);
     }
   };
 
-  // Fetch active booking
   const fetchActiveBooking = async (id) => {
     try {
+      console.log("🔍 Fetching active booking for driver:", id);
+      
       const { data, error } = await supabase
         .from("bookings")
-        .select(
-          `
+        .select(`
           *,
           commuter:commuters (
             id,
@@ -144,187 +210,52 @@ export default function DriverTrackRideScreen({ navigation }) {
             email,
             profile_picture
           )
-        `
-        )
+        `)
         .eq("driver_id", id)
-        .eq("status", "accepted")
+        .in("status", ["accepted"])
         .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== "PGRST116") throw error;
 
+      console.log("📊 Fetched active booking:", data);
+
       if (data) {
+        console.log("✅ Active booking found:", data.id);
         setActiveBooking(data);
         setCommuter(data.commuter);
         setBookingStatus(data.status);
-        setShowRequests(false); // Hide requests when there's an active ride
-
-        if (data.pickup_latitude && data.pickup_longitude && 
-            data.dropoff_latitude && data.dropoff_longitude) {
-          calculateRouteWithGoogle(
-            { latitude: data.pickup_latitude, longitude: data.pickup_longitude },
-            { latitude: data.dropoff_latitude, longitude: data.dropoff_longitude }
-          );
+        setShowPendingRequests(false);
+        
+        if (data.status === "accepted") {
+          setNavigationDestination('pickup');
+          setIsNavigating(true);
+          setHasArrivedAtPickup(false);
+          setRideStarted(false);
+          
+          if (driverLocation) {
+            calculateRouteToPickup(driverLocation, {
+              latitude: data.pickup_latitude,
+              longitude: data.pickup_longitude
+            });
+          }
         }
       } else {
+        console.log("❌ No active booking found");
         setActiveBooking(null);
         setCommuter(null);
-        setShowRequests(true); // Show requests when no active ride
+        setIsNavigating(false);
+        setShowPendingRequests(true);
       }
     } catch (err) {
       console.log("❌ Error fetching booking:", err);
-    } finally {
-      setLoading(false);
     }
   };
 
-  // Accept booking
-  const handleAcceptRequest = async (bookingId) => {
-    Alert.alert(
-      "Accept Booking",
-      "Are you sure you want to accept this booking?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Accept",
-          onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from("bookings")
-                .update({ 
-                  status: "accepted",
-                  updated_at: new Date()
-                })
-                .eq("id", bookingId);
-
-              if (error) throw error;
-              
-              Alert.alert("Success", "Booking accepted!");
-              // Refresh data
-              await fetchActiveBooking(driverId);
-              await fetchPendingRequests(driverId);
-            } catch (err) {
-              Alert.alert("Error", "Failed to accept booking");
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  // Decline booking
-  const handleDeclineRequest = async (bookingId) => {
-    Alert.alert(
-      "Decline Booking",
-      "Are you sure you want to decline this booking?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Decline",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from("bookings")
-                .update({ 
-                  status: "cancelled",
-                  cancellation_reason: "Declined by driver",
-                  cancelled_by: "driver",
-                  updated_at: new Date()
-                })
-                .eq("id", bookingId);
-
-              if (error) throw error;
-              
-              Alert.alert("Success", "Booking declined");
-              await fetchPendingRequests(driverId);
-            } catch (err) {
-              Alert.alert("Error", "Failed to decline booking");
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  // Format time for requests
-  const formatRequestTime = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMinutes = Math.floor((now - date) / (1000 * 60));
-    
-    if (diffMinutes < 1) return "Just now";
-    if (diffMinutes < 60) return `${diffMinutes} min ago`;
-    if (diffMinutes < 1440) return `${Math.floor(diffMinutes / 60)} hours ago`;
-    return date.toLocaleDateString();
-  };
-
-  // ... (keep all your existing functions: startLocationTracking, updateDriverLocation, 
-  // calculateRouteWithGoogle, calculateRouteWithOSRM, decodePolyline, 
-  // handleBookingUpdate, updateBookingStatus, handleCompleteTrip, 
-  // handleCancelTrip, openMaps, callCommuter, messageCommuter, fitMapToMarkers,
-  // getStatusColor, getStatusText)
-
-  // I'll paste the rest of the functions here but keep them the same as your original code
-  // ... [Your existing functions remain exactly the same]
-
-  const startLocationTracking = async () => {
+  const calculateRouteToPickup = async (driverLoc, pickupLoc) => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission Required", "Location permission is needed to track rides");
-        return;
-      }
-
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-
-      setDriverLocation({
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      });
-
-      const subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10,
-        },
-        (newLocation) => {
-          setDriverLocation({
-            latitude: newLocation.coords.latitude,
-            longitude: newLocation.coords.longitude,
-          });
-          updateDriverLocation(newLocation.coords);
-        }
-      );
-
-      setLocationSubscription(subscription);
-    } catch (err) {
-      console.log("❌ Location tracking error:", err);
-    }
-  };
-
-  const updateDriverLocation = async (coords) => {
-    try {
-      if (!driverId || !activeBooking?.id) return;
-      await supabase.from("driver_locations").upsert({
-        driver_id: driverId,
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        updated_at: new Date(),
-        booking_id: activeBooking.id,
-      });
-    } catch (err) {
-      console.log("❌ Error updating location:", err);
-    }
-  };
-
-  const calculateRouteWithGoogle = async (startCoords, endCoords) => {
-    try {
-      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${startCoords.latitude},${startCoords.longitude}&destination=${endCoords.latitude},${endCoords.longitude}&key=${googleApiKey}&mode=driving`;
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${driverLoc.latitude},${driverLoc.longitude}&destination=${pickupLoc.latitude},${pickupLoc.longitude}&key=${googleApiKey}&mode=driving`;
       
       const response = await fetch(url);
       const data = await response.json();
@@ -341,75 +272,764 @@ export default function DriverTrackRideScreen({ navigation }) {
         setEstimatedDistance(distanceKm.toFixed(1));
         setEstimatedTime(timeMins);
         
-        const calculatedFare = calculateFare(distanceKm);
-        if (activeBooking?.id) {
-          await supabase
-            .from("bookings")
-            .update({ 
-              fare: calculatedFare,
-              distance_km: distanceKm,
-              duration_minutes: timeMins
-            })
-            .eq("id", activeBooking.id);
-            
-          setActiveBooking(prev => ({
-            ...prev,
-            fare: calculatedFare,
-            distance_km: distanceKm,
-            duration_minutes: timeMins
-          }));
+        if (mapRef.current) {
+          mapRef.current.fitToCoordinates(points, {
+            edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+            animated: true,
+          });
         }
-      } else {
-        calculateRouteWithOSRM(startCoords, endCoords);
       }
     } catch (err) {
-      calculateRouteWithOSRM(startCoords, endCoords);
+      console.log("❌ Error calculating route to pickup:", err);
     }
   };
 
-  const calculateRouteWithOSRM = async (startCoords, endCoords) => {
+  const calculateRouteToDropoff = async (pickupLoc, dropoffLoc) => {
     try {
-      const url = `https://router.project-osrm.org/route/v1/driving/${startCoords.longitude},${startCoords.latitude};${endCoords.longitude},${endCoords.latitude}?overview=full&geometries=geojson`;
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${pickupLoc.latitude},${pickupLoc.longitude}&destination=${dropoffLoc.latitude},${dropoffLoc.longitude}&key=${googleApiKey}&mode=driving`;
       
       const response = await fetch(url);
       const data = await response.json();
 
-      if (data.routes?.[0]) {
+      if (data.status === "OK" && data.routes[0]) {
         const route = data.routes[0];
-        const coordinates = route.geometry.coordinates.map(coord => ({
-          latitude: coord[1],
-          longitude: coord[0],
-        }));
-
-        setRouteCoordinates(coordinates);
+        const points = decodePolyline(route.overview_polyline.points);
+        setRouteCoordinates(points);
         
-        const distanceKm = route.distance / 1000;
-        const timeMins = Math.round(route.duration / 60);
+        const leg = route.legs[0];
+        const distanceKm = leg.distance.value / 1000;
+        const timeMins = Math.round(leg.duration.value / 60);
         
         setEstimatedDistance(distanceKm.toFixed(1));
         setEstimatedTime(timeMins);
         
-        const calculatedFare = calculateFare(distanceKm);
-        if (activeBooking?.id) {
-          await supabase
-            .from("bookings")
-            .update({ 
-              fare: calculatedFare,
-              distance_km: distanceKm,
-              duration_minutes: timeMins
-            })
-            .eq("id", activeBooking.id);
-            
-          setActiveBooking(prev => ({
-            ...prev,
-            fare: calculatedFare,
-            distance_km: distanceKm,
-            duration_minutes: timeMins
-          }));
+        if (mapRef.current) {
+          mapRef.current.fitToCoordinates(points, {
+            edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+            animated: true,
+          });
         }
       }
     } catch (err) {
-      console.log("❌ Route calculation error:", err);
+      console.log("❌ Error calculating route to dropoff:", err);
+    }
+  };
+
+  // ================= FIXED: HANDLE ACCEPT REQUEST =================
+  const handleAcceptRequest = async (bookingId, requestId) => {
+    Alert.alert(
+      "Accept Booking",
+      "Are you sure you want to accept this booking?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Accept",
+          onPress: async () => {
+            try {
+              setLoading(true);
+              
+              const { error: bookingError } = await supabase
+                .from("bookings")
+                .update({ 
+                  status: "accepted",
+                  driver_id: driverId,
+                  accepted_at: new Date(),
+                  updated_at: new Date()
+                })
+                .eq("id", bookingId);
+
+              if (bookingError) throw bookingError;
+
+              const { error: requestError } = await supabase
+                .from("booking_requests")
+                .update({ 
+                  status: "accepted",
+                  responded_at: new Date()
+                })
+                .eq("id", requestId);
+
+              if (requestError) throw requestError;
+
+              await supabase
+                .from("booking_requests")
+                .update({ 
+                  status: "rejected",
+                  responded_at: new Date()
+                })
+                .eq("booking_id", bookingId)
+                .neq("id", requestId);
+
+              await fetchActiveBooking(driverId);
+              await fetchPendingRequests(driverId);
+
+              Alert.alert("Success", "Booking accepted! Head to pickup location.");
+            } catch (err) {
+              console.log("❌ Error accepting booking:", err);
+              Alert.alert("Error", "Failed to accept booking");
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleDeclineRequest = async (bookingId, requestId) => {
+    Alert.alert(
+      "Decline Booking",
+      "Are you sure you want to decline this booking?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Decline",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from("booking_requests")
+                .update({ 
+                  status: "rejected",
+                  responded_at: new Date()
+                })
+                .eq("id", requestId);
+
+              if (error) throw error;
+
+              Alert.alert("Success", "Booking declined");
+              await fetchPendingRequests(driverId);
+            } catch (err) {
+              console.log("❌ Error declining booking:", err);
+              Alert.alert("Error", "Failed to decline booking");
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleArrivedAtPickup = async () => {
+    Alert.alert(
+      "Arrived at Pickup",
+      "Have you arrived at the pickup location?",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, I'm Here",
+          onPress: async () => {
+            try {
+              setLoading(true);
+              
+              const { error } = await supabase
+                .from("bookings")
+                .update({ 
+                  driver_arrived_at: new Date(),
+                  updated_at: new Date()
+                })
+                .eq("id", activeBooking.id);
+
+              if (error) throw error;
+
+              await supabase
+                .from("booking_updates")
+                .insert({
+                  booking_id: activeBooking.id,
+                  type: "driver_arrived",
+                  message: "Driver has arrived at pickup location",
+                  created_at: new Date()
+                });
+
+              setHasArrivedAtPickup(true);
+              setNavigationDestination('dropoff');
+              
+              if (driverLocation && activeBooking) {
+                calculateRouteToDropoff(
+                  { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+                  { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+                );
+              }
+
+              Alert.alert("Success", "Commuter notified! Proceed to destination.");
+            } catch (err) {
+              console.log("❌ Error:", err);
+              Alert.alert("Error", "Failed to update status");
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleStartRide = async () => {
+    Alert.alert(
+      "Start Ride",
+      "Have you picked up the passenger?",
+      [
+        { text: "Not Yet", style: "cancel" },
+        {
+          text: "Yes, Start Ride",
+          onPress: async () => {
+            try {
+              setLoading(true);
+              
+              const { error } = await supabase
+                .from("bookings")
+                .update({ 
+                  ride_started_at: new Date(),
+                  updated_at: new Date()
+                })
+                .eq("id", activeBooking.id);
+
+              if (error) throw error;
+
+              setRideStarted(true);
+              
+              Alert.alert("Success", "Ride started! Head to destination.");
+            } catch (err) {
+              console.log("❌ Error:", err);
+              Alert.alert("Error", "Failed to start ride");
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+// ================= SIMPLIFIED: HANDLE COMPLETE TRIP (CASH ONLY) =================
+const handleCompleteTrip = async () => {
+  Alert.alert(
+    "Complete Trip",
+    "Have you reached the destination and dropped off the passenger?",
+    [
+      { text: "No", style: "cancel" },
+      {
+        text: "Yes, Complete",
+        onPress: async () => {
+          try {
+            setLoading(true);
+            
+            // All earnings go to cash_earnings for now
+            const actualFare = activeBooking.fare || 0;
+
+            console.log("💰 Completing trip:", {
+              actualFare,
+              bookingId: activeBooking.id
+            });
+
+            // Check if wallet exists, create if not
+            const { data: wallet, error: walletError } = await supabase
+              .from("driver_wallets")
+              .select("*")
+              .eq("driver_id", driverId)
+              .maybeSingle();
+
+            if (walletError) {
+              console.log("❌ Error fetching wallet:", walletError);
+              throw walletError;
+            }
+
+            // Create wallet if it doesn't exist
+            if (!wallet) {
+              console.log("📝 Creating wallet for driver:", driverId);
+              const { error: insertError } = await supabase
+                .from("driver_wallets")
+                .insert({
+                  driver_id: driverId,
+                  balance: 0,                    // From top-ups
+                  total_deposits: 0,              // Total top-ups
+                  total_withdrawals: 0,           // Total withdrawals
+                  cash_earnings: 0,               // All earnings go here for now
+                  created_at: new Date(),
+                  updated_at: new Date()
+                });
+
+              if (insertError) throw insertError;
+            }
+
+            // Get current cash_earnings
+            const { data: currentWallet, error: currentError } = await supabase
+              .from("driver_wallets")
+              .select("cash_earnings")
+              .eq("driver_id", driverId)
+              .single();
+
+            if (currentError) throw currentError;
+
+            console.log("📊 Current cash earnings:", currentWallet.cash_earnings);
+
+            // Calculate new cash earnings
+            const newCashEarnings = (currentWallet.cash_earnings || 0) + actualFare;
+
+            // Update cash_earnings only
+            const { error: earningsError } = await supabase
+              .from("driver_wallets")
+              .update({
+                cash_earnings: newCashEarnings,
+                updated_at: new Date()
+              })
+              .eq("driver_id", driverId);
+
+            if (earningsError) {
+              console.log("❌ Error updating earnings:", earningsError);
+              throw earningsError;
+            }
+
+            console.log(`💵 Added ₱${actualFare} to cash_earnings. New total: ₱${newCashEarnings}`);
+
+            // Update the booking with actual_fare
+            const { error: bookingError } = await supabase
+              .from("bookings")
+              .update({ 
+                status: "completed",
+                actual_fare: actualFare,
+                ride_completed_at: new Date(),
+                updated_at: new Date()
+              })
+              .eq("id", activeBooking.id);
+
+            if (bookingError) throw bookingError;
+
+            // Get updated wallet data for display
+            const { data: updatedWallet, error: fetchError } = await supabase
+              .from("driver_wallets")
+              .select("balance, cash_earnings, total_deposits, total_withdrawals")
+              .eq("driver_id", driverId)
+              .single();
+
+            if (fetchError) throw fetchError;
+
+            console.log("💰 Updated wallet:", {
+              cash_earnings: updatedWallet.cash_earnings,
+              balance: updatedWallet.balance
+            });
+
+            // Create transaction record
+            const { error: transactionError } = await supabase
+              .from("transactions")
+              .insert({
+                user_id: driverId,
+                user_type: "driver",
+                type: "earning",
+                amount: actualFare,
+                status: "completed",
+                created_at: new Date(),
+                metadata: {
+                  booking_id: activeBooking.id,
+                  commuter_id: activeBooking.commuter_id,
+                  pickup: activeBooking.pickup_location,
+                  dropoff: activeBooking.dropoff_location,
+                  payment_method: "cash",
+                  fare: actualFare,
+                  category: "trip"
+                }
+              });
+
+            if (transactionError) {
+              console.log("❌ Transaction error:", transactionError);
+            }
+
+            // Update ride missions if exists
+            try {
+              const today = new Date();
+              const startOfWeek = new Date(today);
+              startOfWeek.setDate(today.getDate() - today.getDay() + 1);
+              startOfWeek.setHours(0, 0, 0, 0);
+
+              const endOfWeek = new Date(startOfWeek);
+              endOfWeek.setDate(startOfWeek.getDate() + 6);
+              endOfWeek.setHours(23, 59, 59, 999);
+
+              const { data: mission, error: missionError } = await supabase
+                .from("ride_missions")
+                .select("*")
+                .eq("driver_id", driverId)
+                .gte("week_start", startOfWeek.toISOString().split("T")[0])
+                .lte("week_end", endOfWeek.toISOString().split("T")[0])
+                .maybeSingle();
+
+              if (!missionError && mission) {
+                const newActualRides = (mission.actual_rides || 0) + 1;
+                let status = mission.status;
+                let achievedAt = mission.achieved_at;
+                
+                if (newActualRides >= mission.target_rides && mission.status === "active") {
+                  status = "achieved";
+                  achievedAt = new Date();
+                  
+                  // Get current cash_earnings for bonus
+                  const { data: bonusWallet } = await supabase
+                    .from("driver_wallets")
+                    .select("cash_earnings")
+                    .eq("driver_id", driverId)
+                    .single();
+
+                  if (bonusWallet) {
+                    // Add bonus to cash_earnings
+                    await supabase
+                      .from("driver_wallets")
+                      .update({
+                        cash_earnings: (bonusWallet.cash_earnings || 0) + (mission.bonus_amount || 0),
+                        updated_at: new Date()
+                      })
+                      .eq("driver_id", driverId);
+
+                    console.log(`🏆 Added bonus ₱${mission.bonus_amount} to cash_earnings`);
+                  }
+
+                  // Create transaction for bonus
+                  await supabase
+                    .from("transactions")
+                    .insert({
+                      user_id: driverId,
+                      user_type: "driver",
+                      type: "earning",
+                      amount: mission.bonus_amount || 0,
+                      status: "completed",
+                      created_at: new Date(),
+                      metadata: {
+                        mission_id: mission.id,
+                        rides: mission.target_rides,
+                        bonus: mission.bonus_amount,
+                        category: "bonus"
+                      }
+                    });
+                }
+
+                await supabase
+                  .from("ride_missions")
+                  .update({
+                    actual_rides: newActualRides,
+                    status: status,
+                    achieved_at: achievedAt,
+                    updated_at: new Date()
+                  })
+                  .eq("id", mission.id);
+              }
+            } catch (missionErr) {
+              console.log("❌ Error updating mission:", missionErr);
+            }
+
+            // Create notification for commuter
+            try {
+              await supabase
+                .from("notifications")
+                .insert({
+                  user_id: activeBooking.commuter_id,
+                  user_type: "commuter",
+                  type: "booking",
+                  title: "Trip Completed",
+                  message: `Your trip has been completed. Fare: ₱${actualFare.toFixed(2)}`,
+                  reference_id: activeBooking.id,
+                  reference_type: "booking",
+                  data: { 
+                    fare: actualFare,
+                    booking_id: activeBooking.id
+                  },
+                  created_at: new Date()
+                });
+            } catch (notifErr) {
+              console.log("❌ Commuter notification error:", notifErr);
+            }
+
+            // Create notification for driver
+            try {
+              await supabase
+                .from("notifications")
+                .insert({
+                  user_id: driverId,
+                  user_type: "driver",
+                  type: "payment",
+                  title: "Trip Earnings Added",
+                  message: `You earned ₱${actualFare.toFixed(2)} from this trip.`,
+                  reference_id: activeBooking.id,
+                  reference_type: "booking",
+                  data: { 
+                    fare: actualFare,
+                    cash_earnings: updatedWallet?.cash_earnings || 0,
+                    total_earnings: updatedWallet?.cash_earnings || 0,
+                    balance: updatedWallet?.balance || 0,
+                    booking_id: activeBooking.id
+                  },
+                  created_at: new Date()
+                });
+            } catch (notifErr) {
+              console.log("❌ Driver notification error:", notifErr);
+            }
+
+            // Prepare success message
+            const successMessage = `
+━━━━━━━━━━━━━━━━━━━━━
+✅ TRIP COMPLETED
+━━━━━━━━━━━━━━━━━━━━━
+
+📍 From: ${activeBooking.pickup_location?.split(",")[0] || "Pickup"}
+📍 To: ${activeBooking.dropoff_location?.split(",")[0] || "Dropoff"}
+
+💰 THIS TRIP:
+   Fare Earned: ₱${actualFare.toFixed(2)}
+
+📊 YOUR EARNINGS:
+   💵 Total Cash Earnings: ₱${(updatedWallet?.cash_earnings || 0).toFixed(2)}
+
+💳 WALLET BALANCE (from top-ups):
+   Available: ₱${(updatedWallet?.balance || 0).toFixed(2)}
+
+━━━━━━━━━━━━━━━━━━━━━
+Thank you for driving with SakayNA!
+━━━━━━━━━━━━━━━━━━━━━`;
+
+            // Reset state
+            setActiveBooking(null);
+            setCommuter(null);
+            setBookingStatus("pending");
+            setIsNavigating(false);
+            setShowPendingRequests(true);
+            setHasArrivedAtPickup(false);
+            setRideStarted(false);
+            setRouteCoordinates([]);
+            setEstimatedDistance(null);
+            setEstimatedTime(null);
+
+            Alert.alert(
+              "🎉 Trip Completed!",
+              successMessage,
+              [{ text: "OK" }]
+            );
+
+          } catch (err) {
+            console.log("❌ Error completing trip:", err);
+            Alert.alert("Error", "Failed to complete trip: " + err.message);
+          } finally {
+            setLoading(false);
+          }
+        }
+      }
+    ]
+  );
+};
+
+  const handleCancelTrip = () => {
+    if (bookingStatus !== "accepted") {
+      Alert.alert("Cannot Cancel", "This trip cannot be cancelled at this stage");
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Trip",
+      "Are you sure you want to cancel this trip? This may affect your acceptance rate.",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setLoading(true);
+              
+              const { error } = await supabase
+                .from("bookings")
+                .update({ 
+                  status: "cancelled",
+                  cancelled_at: new Date(),
+                  cancellation_reason: "Cancelled by driver",
+                  cancelled_by: "driver",
+                  updated_at: new Date()
+                })
+                .eq("id", activeBooking.id);
+
+              if (error) throw error;
+
+              setActiveBooking(null);
+              setCommuter(null);
+              setBookingStatus("pending");
+              setIsNavigating(false);
+              setShowPendingRequests(true);
+
+              Alert.alert(
+                "❌ Trip Cancelled",
+                "The trip has been cancelled."
+              );
+            } catch (err) {
+              console.log("❌ Error cancelling trip:", err);
+              Alert.alert("Error", "Failed to cancel trip");
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const formatRequestTime = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffSeconds = Math.floor((now - date) / 1000);
+    
+    if (diffSeconds < 60) return `${diffSeconds} seconds ago`;
+    if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)} minutes ago`;
+    if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)} hours ago`;
+    return date.toLocaleDateString();
+  };
+
+  const updateDriverLocation = async (coords) => {
+    try {
+      if (!driverId) return;
+      
+      const { data: existingLocation, error: checkError } = await supabase
+        .from("driver_locations")
+        .select("id")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (checkError) {
+        console.log("Error checking location:", checkError);
+        return;
+      }
+
+      if (existingLocation) {
+        const { error } = await supabase
+          .from("driver_locations")
+          .update({
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            is_online: true,
+            last_updated: new Date(),
+          })
+          .eq("driver_id", driverId);
+
+        if (error) console.log("Update error:", error);
+      } else {
+        const { error } = await supabase
+          .from("driver_locations")
+          .insert({
+            driver_id: driverId,
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            is_online: true,
+            last_updated: new Date(),
+          });
+
+        if (error) console.log("Insert error:", error);
+      }
+    } catch (err) {
+      console.log("❌ Error updating location:", err);
+    }
+  };
+
+  const startLocationTracking = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission Required", "Location permission is needed to track rides");
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const newLocation = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+
+      setDriverLocation(newLocation);
+      
+      if (driverId) {
+        const { data: existing } = await supabase
+          .from("driver_locations")
+          .select("id")
+          .eq("driver_id", driverId)
+          .maybeSingle();
+
+        if (existing) {
+          await supabase
+            .from("driver_locations")
+            .update({
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              is_online: true,
+              last_updated: new Date(),
+            })
+            .eq("driver_id", driverId);
+        } else {
+          await supabase
+            .from("driver_locations")
+            .insert({
+              driver_id: driverId,
+              latitude: location.coords.latitude,
+              longitude: location.coords.longitude,
+              is_online: true,
+              last_updated: new Date(),
+            });
+        }
+      }
+
+      const subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        async (newLocation) => {
+          const updatedLocation = {
+            latitude: newLocation.coords.latitude,
+            longitude: newLocation.coords.longitude,
+          };
+          setDriverLocation(updatedLocation);
+          await updateDriverLocation(updatedLocation);
+
+          if (isNavigating && activeBooking) {
+            if (navigationDestination === 'pickup' && !hasArrivedAtPickup) {
+              calculateRouteToPickup(updatedLocation, {
+                latitude: activeBooking.pickup_latitude,
+                longitude: activeBooking.pickup_longitude
+              });
+            } else if (navigationDestination === 'dropoff') {
+              calculateRouteToDropoff(
+                { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+                { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+              );
+            }
+          }
+        }
+      );
+
+      setLocationSubscription(subscription);
+    } catch (err) {
+      console.log("❌ Location tracking error:", err);
+    }
+  };
+
+  const calculateRequestRoute = async (request) => {
+    if (!request.pickup_latitude || !request.pickup_longitude || 
+        !request.dropoff_latitude || !request.dropoff_longitude) return;
+
+    try {
+      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${request.pickup_latitude},${request.pickup_longitude}&destination=${request.dropoff_latitude},${request.dropoff_longitude}&key=${googleApiKey}&mode=driving`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.status === "OK" && data.routes[0]) {
+        const route = data.routes[0];
+        const points = decodePolyline(route.overview_polyline.points);
+        setRequestRouteCoordinates(points);
+        
+        const leg = route.legs[0];
+        const distanceKm = leg.distance.value / 1000;
+        const timeMins = Math.round(leg.duration.value / 60);
+        
+        setRequestDistance(distanceKm.toFixed(1));
+        setRequestDuration(timeMins);
+      }
+    } catch (err) {
+      console.log("❌ Error calculating route for request:", err);
     }
   };
 
@@ -442,135 +1062,30 @@ export default function DriverTrackRideScreen({ navigation }) {
     return points;
   };
 
-  const handleBookingUpdate = (updatedBooking) => {
-    setActiveBooking(updatedBooking);
-    setBookingStatus(updatedBooking.status);
-  };
-
-  const updateBookingStatus = async (newStatus) => {
-    if (!activeBooking) {
-      Alert.alert("Error", "No active booking found");
-      return;
-    }
-
-    if (newStatus === "cancelled" && bookingStatus === "completed") {
-      Alert.alert("Cannot Cancel", "This trip is already completed");
-      return;
-    }
-
-    if (["completed", "cancelled"].includes(bookingStatus)) {
-      Alert.alert("Cannot Update", "This trip is already finished");
-      return;
-    }
-
-    try {
-      const updates = {
-        status: newStatus,
-        updated_at: new Date(),
-      };
-
-      switch (newStatus) {
-        case "completed":
-          updates.ride_completed_at = new Date();
-          updates.actual_fare = activeBooking.fare;
-          updates.payment_status = "paid";
-          break;
-        case "cancelled":
-          updates.cancelled_at = new Date();
-          updates.cancellation_reason = "Cancelled by driver";
-          updates.cancelled_by = "driver";
-          break;
+  const fitRequestMapToMarkers = () => {
+    if (mapRef.current && selectedRequest && !activeBooking) {
+      const markers = [];
+      if (selectedRequest.pickup_latitude && selectedRequest.pickup_longitude) {
+        markers.push({
+          latitude: selectedRequest.pickup_latitude,
+          longitude: selectedRequest.pickup_longitude,
+        });
       }
-
-      const { error } = await supabase
-        .from("bookings")
-        .update(updates)
-        .eq("id", activeBooking.id);
-
-      if (error) throw error;
-
-      setBookingStatus(newStatus);
-
-      if (newStatus === "completed") {
-        Alert.alert(
-          "🎉 Trip Completed!",
-          "You have successfully completed the trip. Thank you for driving!",
-          [{ text: "OK", onPress: () => navigation.goBack() }]
-        );
-      } else if (newStatus === "cancelled") {
-        Alert.alert(
-          "❌ Trip Cancelled",
-          "The trip has been cancelled.",
-          [{ text: "OK", onPress: () => navigation.goBack() }]
-        );
+      if (selectedRequest.dropoff_latitude && selectedRequest.dropoff_longitude) {
+        markers.push({
+          latitude: selectedRequest.dropoff_latitude,
+          longitude: selectedRequest.dropoff_longitude,
+        });
       }
-    } catch (err) {
-      console.log("❌ Error updating status:", err);
-      Alert.alert("Error", "Failed to update trip status");
+      if (driverLocation) markers.push(driverLocation);
+
+      if (markers.length > 0) {
+        mapRef.current.fitToCoordinates(markers, {
+          edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+          animated: true,
+        });
+      }
     }
-  };
-
-  const handleCompleteTrip = () => {
-    if (bookingStatus !== "accepted") {
-      Alert.alert("Cannot Complete", "This trip cannot be completed at this stage");
-      return;
-    }
-
-    Alert.alert(
-      "Complete Trip",
-      "Have you reached the destination?",
-      [
-        { text: "No", style: "cancel" },
-        { 
-          text: "Yes, Complete", 
-          onPress: () => updateBookingStatus("completed") 
-        },
-      ]
-    );
-  };
-
-  const handleCancelTrip = () => {
-    if (bookingStatus !== "accepted") {
-      Alert.alert("Cannot Cancel", "This trip cannot be cancelled at this stage");
-      return;
-    }
-
-    Alert.alert(
-      "Cancel Trip",
-      "Are you sure you want to cancel this trip?",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: () => updateBookingStatus("cancelled"),
-        },
-      ]
-    );
-  };
-
-  const openMaps = (lat, lng, label) => {
-    const scheme = Platform.select({
-      ios: `maps://?q=${label}&ll=${lat},${lng}`,
-      android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
-    });
-    Linking.openURL(scheme);
-  };
-
-  const callCommuter = () => {
-    if (!commuter?.phone) {
-      Alert.alert("Error", "No phone number available");
-      return;
-    }
-    Linking.openURL(`tel:${commuter.phone}`);
-  };
-
-  const messageCommuter = () => {
-    if (!commuter?.phone) {
-      Alert.alert("Error", "No phone number available");
-      return;
-    }
-    Linking.openURL(`sms:${commuter.phone}`);
   };
 
   const fitMapToMarkers = () => {
@@ -599,26 +1114,47 @@ export default function DriverTrackRideScreen({ navigation }) {
     }
   };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case "accepted": return "#3B82F6";
-      case "completed": return "#10B981";
-      case "cancelled": return "#EF4444";
-      default: return "#6B7280";
+  const openMaps = (lat, lng, label) => {
+    const scheme = Platform.select({
+      ios: `maps://0?q=${label}&ll=${lat},${lng}`,
+      android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+    });
+    Linking.openURL(scheme);
+  };
+
+  const callCommuter = () => {
+    if (!commuter?.phone) {
+      Alert.alert("Error", "No phone number available");
+      return;
+    }
+    Linking.openURL(`tel:${commuter.phone}`);
+  };
+
+  const messageCommuter = () => {
+    if (!commuter?.phone) {
+      Alert.alert("Error", "No phone number available");
+      return;
+    }
+    Linking.openURL(`sms:${commuter.phone}`);
+  };
+
+  const getStatusText = () => {
+    if (!hasArrivedAtPickup) {
+      return "🚗 Heading to Pickup";
+    } else if (hasArrivedAtPickup && !rideStarted) {
+      return "📍 Waiting for Passenger";
+    } else {
+      return "🚗 On the way to Destination";
     }
   };
 
-  const getStatusText = (status) => {
-    switch (status) {
-      case "accepted": return "🚗 Heading to Pickup";
-      case "completed": return "✅ Trip Completed";
-      case "cancelled": return "❌ Trip Cancelled";
-      default: return "Unknown";
+  const getNavigationInstruction = () => {
+    if (!hasArrivedAtPickup) {
+      return "Navigate to pickup location";
+    } else {
+      return "Navigate to destination";
     }
   };
-
-  const canCancel = bookingStatus === "accepted";
-  const canComplete = bookingStatus === "accepted";
 
   if (loading) {
     return (
@@ -628,18 +1164,354 @@ export default function DriverTrackRideScreen({ navigation }) {
     );
   }
 
-  // SHOW PENDING REQUESTS IF NO ACTIVE RIDE
-  if (!activeBooking && pendingRequests.length > 0) {
+  // SHOW ACTIVE RIDE
+  if (activeBooking) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        {/* Header */}
         <View style={styles.header}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#183B5C" />
+            <Ionicons name="arrow-back" size={24} color="#FFF" />
           </Pressable>
-          <Text style={styles.headerTitle}>Booking Requests ({pendingRequests.length})</Text>
-          <View style={{ width: 40 }} />
+          <View style={styles.headerContent}>
+            <Text style={styles.headerSubtitle}>Active Ride</Text>
+            <Text style={styles.headerTitle}>{getStatusText()}</Text>
+          </View>
+          {pendingRequests.length > 0 && (
+            <Pressable 
+              style={styles.requestBadge}
+              onPress={() => {
+                Alert.alert(
+                  "Pending Requests",
+                  `You have ${pendingRequests.length} pending request${pendingRequests.length > 1 ? 's' : ''}.`,
+                  [{ text: "OK" }]
+                );
+              }}
+            >
+              <Text style={styles.requestBadgeText}>{pendingRequests.length}</Text>
+            </Pressable>
+          )}
+          <View style={[styles.statusBadge, { backgroundColor: "#3B82F620" }]}>
+            <Text style={[styles.statusText, { color: "#3B82F6" }]}>ACTIVE</Text>
+          </View>
         </View>
+
+        <View style={styles.mapContainer}>
+          <MapView
+            ref={mapRef}
+            style={{ flex: 1 }}
+            provider={PROVIDER_GOOGLE}
+            initialRegion={{
+              latitude: activeBooking.pickup_latitude || 14.5995,
+              longitude: activeBooking.pickup_longitude || 120.9842,
+              latitudeDelta: 0.0922,
+              longitudeDelta: 0.0421,
+            }}
+            onMapReady={fitMapToMarkers}
+            showsUserLocation={true}
+            showsMyLocationButton={true}
+            showsCompass={true}
+          >
+            {activeBooking.pickup_latitude && (
+              <Marker
+                coordinate={{
+                  latitude: activeBooking.pickup_latitude,
+                  longitude: activeBooking.pickup_longitude,
+                }}
+                title="Pickup"
+              >
+                <View style={styles.pickupMarker}>
+                  <Ionicons name="location" size={16} color="#FFF" />
+                </View>
+              </Marker>
+            )}
+
+            {activeBooking.dropoff_latitude && (
+              <Marker
+                coordinate={{
+                  latitude: activeBooking.dropoff_latitude,
+                  longitude: activeBooking.dropoff_longitude,
+                }}
+                title="Dropoff"
+              >
+                <View style={styles.dropoffMarker}>
+                  <Ionicons name="flag" size={16} color="#FFF" />
+                </View>
+              </Marker>
+            )}
+
+            {driverLocation && (
+              <Marker coordinate={driverLocation} title="You" flat>
+                <View style={styles.driverMarker}>
+                  <Ionicons name="car" size={16} color="#FFF" />
+                </View>
+              </Marker>
+            )}
+
+            {routeCoordinates.length > 0 && (
+              <Polyline
+                coordinates={routeCoordinates}
+                strokeColor="#3B82F6"
+                strokeWidth={4}
+              />
+            )}
+          </MapView>
+
+          <Pressable style={styles.locateButton} onPress={fitMapToMarkers}>
+            <Ionicons name="locate" size={24} color="#183B5C" />
+          </Pressable>
+
+          {isNavigating && (
+            <View style={styles.navigationInstruction}>
+              <Ionicons name="navigate" size={20} color="#FFF" />
+              <Text style={styles.navigationInstructionText}>
+                {getNavigationInstruction()} • {estimatedDistance || "?"} km • {estimatedTime || "?"} min
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.bottomSheet}>
+          <View style={styles.commuterContainer}>
+            <View style={styles.commuterAvatar}>
+              {commuter?.profile_picture ? (
+                <Image source={{ uri: commuter.profile_picture }} style={styles.commuterImage} />
+              ) : (
+                <Ionicons name="person-circle" size={50} color="#9CA3AF" />
+              )}
+            </View>
+            <View style={styles.commuterInfo}>
+              <Text style={styles.commuterName}>
+                {commuter?.first_name} {commuter?.last_name}
+              </Text>
+              <Text style={styles.commuterLabel}>
+                {activeBooking.passenger_count || 1} passenger{activeBooking.passenger_count > 1 ? 's' : ''}
+              </Text>
+            </View>
+            <View style={styles.commuterActions}>
+              <Pressable style={styles.callButton} onPress={callCommuter}>
+                <Ionicons name="call" size={20} color="#FFF" />
+              </Pressable>
+              <Pressable style={styles.messageButton} onPress={messageCommuter}>
+                <Ionicons name="chatbubble" size={20} color="#183B5C" />
+              </Pressable>
+            </View>
+          </View>
+
+          <View style={styles.locationsContainer}>
+            <View style={styles.locationRow}>
+              <Ionicons name="location" size={16} color="#10B981" />
+              <Text style={styles.locationText} numberOfLines={1}>
+                {activeBooking.pickup_location}
+                {activeBooking.pickup_details ? ` (${activeBooking.pickup_details})` : ''}
+              </Text>
+            </View>
+            <View style={styles.locationRow}>
+              <Ionicons name="flag" size={16} color="#EF4444" />
+              <Text style={styles.locationText} numberOfLines={1}>
+                {activeBooking.dropoff_location}
+                {activeBooking.dropoff_details ? ` (${activeBooking.dropoff_details})` : ''}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.statsContainer}>
+            <View style={styles.statBox}>
+              <Text style={styles.statLabel}>Distance</Text>
+              <Text style={styles.statValue}>
+                {estimatedDistance || activeBooking.distance_km || "?"} km
+              </Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statLabel}>Est. Time</Text>
+              <Text style={styles.statValue}>
+                {estimatedTime || activeBooking.duration_minutes || "?"} min
+              </Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statLabel}>Fare</Text>
+              <Text style={styles.statValue}>
+                ₱{activeBooking.fare?.toFixed(2) || "0.00"}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.actionContainer}>
+            {!hasArrivedAtPickup && (
+              <>
+                <Pressable style={styles.arrivedButton} onPress={handleArrivedAtPickup}>
+                  <Ionicons name="location" size={20} color="#FFF" />
+                  <Text style={styles.arrivedButtonText}>I've Arrived at Pickup</Text>
+                </Pressable>
+                <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
+                  <Ionicons name="close-circle" size={20} color="#EF4444" />
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </Pressable>
+              </>
+            )}
+
+            {hasArrivedAtPickup && !rideStarted && (
+              <>
+                <Pressable style={styles.startRideButton} onPress={handleStartRide}>
+                  <Ionicons name="play" size={20} color="#FFF" />
+                  <Text style={styles.startRideButtonText}>Start Ride</Text>
+                </Pressable>
+                <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
+                  <Ionicons name="close-circle" size={20} color="#EF4444" />
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </Pressable>
+              </>
+            )}
+
+            {hasArrivedAtPickup && rideStarted && (
+              <>
+                <Pressable style={styles.completeButton} onPress={handleCompleteTrip}>
+                  <Ionicons name="checkmark-circle" size={20} color="#FFF" />
+                  <Text style={styles.completeButtonText}>Complete Trip</Text>
+                </Pressable>
+                <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
+                  <Ionicons name="close-circle" size={20} color="#EF4444" />
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+
+          {!hasArrivedAtPickup && (
+            <Pressable
+              style={styles.navigationButton}
+              onPress={() => openMaps(
+                activeBooking.pickup_latitude,
+                activeBooking.pickup_longitude,
+                "Pickup Location"
+              )}
+            >
+              <Ionicons name="navigate" size={20} color="#FFF" />
+              <Text style={styles.navigationButtonText}>Open in Google Maps</Text>
+            </Pressable>
+          )}
+
+          {hasArrivedAtPickup && (
+            <Pressable
+              style={styles.navigationButton}
+              onPress={() => openMaps(
+                activeBooking.dropoff_latitude,
+                activeBooking.dropoff_longitude,
+                "Dropoff Location"
+              )}
+            >
+              <Ionicons name="navigate" size={20} color="#FFF" />
+              <Text style={styles.navigationButtonText}>Open in Google Maps</Text>
+            </Pressable>
+          )}
+        </View>
+      </View>
+    );
+  }
+
+  // SHOW PENDING REQUESTS IF NO ACTIVE RIDE
+  if (pendingRequests.length > 0) {
+    return (
+      <View style={[styles.container, { paddingTop: insets.top }]}>
+        <View style={styles.header}>
+          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#FFF" />
+          </Pressable>
+          <View style={styles.headerContent}>
+            <Text style={styles.headerSubtitle}>New Bookings</Text>
+            <Text style={styles.headerTitle}>{pendingRequests.length} Request{pendingRequests.length > 1 ? 's' : ''}</Text>
+          </View>
+          <View style={styles.statusBadge}>
+            <Text style={styles.statusText}>ONLINE</Text>
+          </View>
+        </View>
+
+        <View style={styles.mapPreview}>
+          <MapView
+            ref={mapRef}
+            style={{ flex: 1 }}
+            provider={PROVIDER_GOOGLE}
+            initialRegion={{
+              latitude: selectedRequest?.pickup_latitude || 14.5995,
+              longitude: selectedRequest?.pickup_longitude || 120.9842,
+              latitudeDelta: 0.0922,
+              longitudeDelta: 0.0421,
+            }}
+            onMapReady={fitRequestMapToMarkers}
+            showsUserLocation={true}
+            showsMyLocationButton={true}
+            showsCompass={true}
+          >
+            {selectedRequest?.pickup_latitude && (
+              <Marker
+                coordinate={{
+                  latitude: selectedRequest.pickup_latitude,
+                  longitude: selectedRequest.pickup_longitude,
+                }}
+                title="Pickup Location"
+              >
+                <View style={styles.pickupMarker}>
+                  <Ionicons name="location" size={16} color="#FFF" />
+                </View>
+              </Marker>
+            )}
+
+            {selectedRequest?.dropoff_latitude && (
+              <Marker
+                coordinate={{
+                  latitude: selectedRequest.dropoff_latitude,
+                  longitude: selectedRequest.dropoff_longitude,
+                }}
+                title="Dropoff Location"
+              >
+                <View style={styles.dropoffMarker}>
+                  <Ionicons name="flag" size={16} color="#FFF" />
+                </View>
+              </Marker>
+            )}
+
+            {driverLocation && (
+              <Marker coordinate={driverLocation} title="Your Location" flat>
+                <View style={styles.driverMarker}>
+                  <Ionicons name="car" size={16} color="#FFF" />
+                </View>
+              </Marker>
+            )}
+
+            {requestRouteCoordinates.length > 0 && (
+              <Polyline
+                coordinates={requestRouteCoordinates}
+                strokeColor="#3B82F6"
+                strokeWidth={4}
+              />
+            )}
+          </MapView>
+
+          <Pressable style={styles.locateButton} onPress={fitRequestMapToMarkers}>
+            <Ionicons name="locate" size={24} color="#183B5C" />
+          </Pressable>
+        </View>
+
+        {selectedRequest && requestDistance && requestDuration && (
+          <View style={styles.requestSummary}>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryItem}>
+                <Ionicons name="map-outline" size={16} color="#666" />
+                <Text style={styles.summaryLabel}>Distance</Text>
+                <Text style={styles.summaryValue}>{requestDistance} km</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Ionicons name="time-outline" size={16} color="#666" />
+                <Text style={styles.summaryLabel}>Est. Time</Text>
+                <Text style={styles.summaryValue}>{requestDuration} min</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Ionicons name="people-outline" size={16} color="#666" />
+                <Text style={styles.summaryLabel}>Passengers</Text>
+                <Text style={styles.summaryValue}>{selectedRequest.passenger_count || 1}</Text>
+              </View>
+            </View>
+          </View>
+        )}
 
         <ScrollView 
           style={styles.scrollView}
@@ -647,19 +1519,24 @@ export default function DriverTrackRideScreen({ navigation }) {
           showsVerticalScrollIndicator={false}
         >
           {pendingRequests.map((request) => (
-            <View key={request.id} style={styles.requestCard}>
-              {/* Header with time */}
+            <Pressable 
+              key={request.request_id} 
+              style={[
+                styles.requestCard,
+                selectedRequest?.id === request.id && styles.selectedRequestCard
+              ]}
+              onPress={() => setSelectedRequest(request)}
+            >
               <View style={styles.cardHeader}>
                 <View style={styles.timeBadge}>
                   <Ionicons name="time-outline" size={14} color="#FFB37A" />
-                  <Text style={styles.timeText}>{formatRequestTime(request.created_at)}</Text>
+                  <Text style={styles.timeText}>{formatRequestTime(request.request_created_at)}</Text>
                 </View>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusText}>PENDING</Text>
+                <View style={[styles.statusBadge, { backgroundColor: "#FEF3C7" }]}>
+                  <Text style={[styles.statusText, { color: "#D97706" }]}>PENDING</Text>
                 </View>
               </View>
 
-              {/* Commuter Info */}
               <View style={styles.commuterSection}>
                 <View style={styles.commuterAvatar}>
                   {request.commuter?.profile_picture ? (
@@ -668,7 +1545,7 @@ export default function DriverTrackRideScreen({ navigation }) {
                       style={styles.commuterImage} 
                     />
                   ) : (
-                    <Ionicons name="person" size={30} color="#9CA3AF" />
+                    <Ionicons name="person-circle" size={40} color="#9CA3AF" />
                   )}
                 </View>
                 <View style={styles.commuterInfo}>
@@ -679,7 +1556,6 @@ export default function DriverTrackRideScreen({ navigation }) {
                 </View>
               </View>
 
-              {/* Trip Details */}
               <View style={styles.tripDetails}>
                 <View style={styles.locationRow}>
                   <View style={styles.locationIcon}>
@@ -687,7 +1563,10 @@ export default function DriverTrackRideScreen({ navigation }) {
                   </View>
                   <View style={styles.locationTextContainer}>
                     <Text style={styles.locationLabel}>PICKUP</Text>
-                    <Text style={styles.locationAddress}>{request.pickup_location}</Text>
+                    <Text style={styles.locationAddress} numberOfLines={1}>
+                      {request.pickup_location}
+                      {request.pickup_details ? ` (${request.pickup_details})` : ''}
+                    </Text>
                   </View>
                 </View>
 
@@ -697,22 +1576,23 @@ export default function DriverTrackRideScreen({ navigation }) {
                   </View>
                   <View style={styles.locationTextContainer}>
                     <Text style={styles.locationLabel}>DROPOFF</Text>
-                    <Text style={styles.locationAddress}>{request.dropoff_location}</Text>
+                    <Text style={styles.locationAddress} numberOfLines={1}>
+                      {request.dropoff_location}
+                      {request.dropoff_details ? ` (${request.dropoff_details})` : ''}
+                    </Text>
                   </View>
                 </View>
               </View>
 
-              {/* Fare */}
               <View style={styles.fareContainer}>
                 <Text style={styles.fareLabel}>Estimated Fare</Text>
                 <Text style={styles.fareAmount}>₱{request.fare?.toFixed(2) || "0.00"}</Text>
               </View>
 
-              {/* Action Buttons */}
               <View style={styles.actionButtons}>
                 <Pressable 
                   style={styles.declineButton}
-                  onPress={() => handleDeclineRequest(request.id)}
+                  onPress={() => handleDeclineRequest(request.id, request.request_id)}
                 >
                   <Ionicons name="close-circle" size={20} color="#EF4444" />
                   <Text style={styles.declineButtonText}>Decline</Text>
@@ -720,239 +1600,58 @@ export default function DriverTrackRideScreen({ navigation }) {
 
                 <Pressable 
                   style={styles.acceptButton}
-                  onPress={() => handleAcceptRequest(request.id)}
+                  onPress={() => handleAcceptRequest(request.id, request.request_id)}
                 >
                   <Ionicons name="checkmark-circle" size={20} color="#FFF" />
                   <Text style={styles.acceptButtonText}>Accept</Text>
                 </Pressable>
               </View>
-            </View>
+            </Pressable>
           ))}
         </ScrollView>
       </View>
     );
   }
 
-  // SHOW NO RIDES MESSAGE IF NO ACTIVE AND NO REQUESTS
-  if (!activeBooking && pendingRequests.length === 0) {
-    return (
-      <View style={{ flex: 1, backgroundColor: "#F5F7FA" }}>
-        <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#183B5C" />
-          </Pressable>
-          <Text style={styles.headerTitle}>Track Ride</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={styles.emptyContainer}>
-          <Ionicons name="bicycle-outline" size={80} color="#D1D5DB" />
-          <Text style={styles.emptyTitle}>No Active Ride</Text>
-          <Text style={styles.emptyText}>You don't have any ongoing rides at the moment.</Text>
-          <Pressable style={styles.goBackButton} onPress={() => navigation.goBack()}>
-            <Text style={styles.goBackText}>Go Back</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  // SHOW ACTIVE RIDE (your existing UI)
+  // SHOW NO RIDES MESSAGE
   return (
-    <View style={{ flex: 1, backgroundColor: "#F5F7FA" }}>
-      {/* Header with request count badge */}
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </Pressable>
         <View style={styles.headerContent}>
-          <Text style={styles.headerSubtitle}>Active Ride</Text>
-          <Text style={styles.headerTitle}>{getStatusText(bookingStatus)}</Text>
+          <Text style={styles.headerSubtitle}>No Active Ride</Text>
+          <Text style={styles.headerTitle}>Available</Text>
         </View>
-        {pendingRequests.length > 0 && (
-          <Pressable 
-            style={styles.requestBadge}
-            onPress={() => setShowRequests(!showRequests)}
-          >
-            <Text style={styles.requestBadgeText}>{pendingRequests.length}</Text>
-          </Pressable>
-        )}
-        <View style={[styles.statusBadge, { backgroundColor: getStatusColor(bookingStatus) + "20" }]}>
-          <Text style={[styles.statusText, { color: getStatusColor(bookingStatus) }]}>
-            {bookingStatus.toUpperCase()}
-          </Text>
+        <View style={styles.statusBadge}>
+          <Text style={styles.statusText}>ONLINE</Text>
         </View>
       </View>
 
-      {/* Map (your existing map) */}
-      <View style={{ flex: 1 }}>
-        <MapView
-          ref={mapRef}
-          style={{ flex: 1 }}
-          provider={PROVIDER_GOOGLE}
-          initialRegion={{
-            latitude: activeBooking.pickup_latitude || 14.5995,
-            longitude: activeBooking.pickup_longitude || 120.9842,
-            latitudeDelta: 0.0922,
-            longitudeDelta: 0.0421,
+      <View style={styles.emptyContainer}>
+        <Ionicons name="car-outline" size={80} color="#D1D5DB" />
+        <Text style={styles.emptyTitle}>No Booking Requests</Text>
+        <Text style={styles.emptyText}>
+          You don't have any booking requests at the moment.{'\n'}
+          Stay online to receive requests.
+        </Text>
+        <Pressable 
+          style={styles.goOnlineButton} 
+          onPress={async () => {
+            if (driverLocation) {
+              await updateDriverLocation(driverLocation);
+            }
+            Alert.alert("Online", "You are now online and ready to receive bookings!");
           }}
-          onMapReady={fitMapToMarkers}
-          showsUserLocation={true}
-          showsMyLocationButton={true}
-          showsCompass={true}
         >
-          {activeBooking.pickup_latitude && (
-            <Marker coordinate={{
-              latitude: activeBooking.pickup_latitude,
-              longitude: activeBooking.pickup_longitude,
-            }} title="Pickup">
-              <View style={styles.pickupMarker}>
-                <Ionicons name="location" size={16} color="#FFF" />
-              </View>
-            </Marker>
-          )}
-
-          {activeBooking.dropoff_latitude && (
-            <Marker coordinate={{
-              latitude: activeBooking.dropoff_latitude,
-              longitude: activeBooking.dropoff_longitude,
-            }} title="Dropoff">
-              <View style={styles.dropoffMarker}>
-                <Ionicons name="flag" size={16} color="#FFF" />
-              </View>
-            </Marker>
-          )}
-
-          {driverLocation && (
-            <Marker coordinate={driverLocation} title="You" flat>
-              <View style={styles.driverMarker}>
-                <Ionicons name="bicycle" size={16} color="#FFF" />
-              </View>
-            </Marker>
-          )}
-
-          {routeCoordinates.length > 0 && (
-            <Polyline
-              coordinates={routeCoordinates}
-              strokeColor="#3B82F6"
-              strokeWidth={4}
-            />
-          )}
-        </MapView>
-
-        <Pressable style={styles.locateButton} onPress={fitMapToMarkers}>
-          <Ionicons name="locate" size={24} color="#183B5C" />
+          <Text style={styles.goOnlineText}>I'm Online</Text>
         </Pressable>
-      </View>
-
-      {/* Bottom Sheet (your existing bottom sheet) */}
-      <View style={styles.bottomSheet}>
-        {/* Commuter Info */}
-        <View style={styles.commuterContainer}>
-          <View style={styles.commuterAvatar}>
-            {commuter?.profile_picture ? (
-              <Image source={{ uri: commuter.profile_picture }} style={styles.commuterImage} />
-            ) : (
-              <Ionicons name="person" size={30} color="#9CA3AF" />
-            )}
-          </View>
-          <View style={styles.commuterInfo}>
-            <Text style={styles.commuterName}>
-              {commuter?.first_name} {commuter?.last_name}
-            </Text>
-            <Text style={styles.commuterLabel}>Passenger</Text>
-          </View>
-          <View style={styles.commuterActions}>
-            <Pressable style={styles.callButton} onPress={callCommuter}>
-              <Ionicons name="call" size={20} color="#FFF" />
-            </Pressable>
-            <Pressable style={styles.messageButton} onPress={messageCommuter}>
-              <Ionicons name="chatbubble" size={20} color="#183B5C" />
-            </Pressable>
-          </View>
-        </View>
-
-        {/* Locations */}
-        <View style={styles.locationsContainer}>
-          <View style={styles.locationRow}>
-            <Ionicons name="location" size={16} color="#10B981" />
-            <Text style={styles.locationText} numberOfLines={1}>
-              {activeBooking.pickup_location}
-            </Text>
-          </View>
-          <View style={styles.locationRow}>
-            <Ionicons name="flag" size={16} color="#EF4444" />
-            <Text style={styles.locationText} numberOfLines={1}>
-              {activeBooking.dropoff_location}
-            </Text>
-          </View>
-        </View>
-
-        {/* Trip Stats */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Distance</Text>
-            <Text style={styles.statValue}>
-              {estimatedDistance || activeBooking.distance_km || "?"} km
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Est. Time</Text>
-            <Text style={styles.statValue}>
-              {estimatedTime || activeBooking.duration_minutes || "?"} min
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Fare</Text>
-            <Text style={styles.statValue}>
-              ₱{activeBooking.fare?.toFixed(2) || "0.00"}
-            </Text>
-          </View>
-        </View>
-
-        {/* Action Buttons */}
-        <View style={styles.actionContainer}>
-          {canComplete && (
-            <Pressable style={styles.completeButton} onPress={handleCompleteTrip}>
-              <Text style={styles.completeButtonText}>Complete Trip</Text>
-            </Pressable>
-          )}
-
-          {canCancel && (
-            <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
-              <Ionicons name="close-circle" size={20} color="#EF4444" />
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </Pressable>
-          )}
-
-          {!canCancel && !canComplete && (
-            <View style={styles.disabledMessage}>
-              <Text style={styles.disabledText}>
-                {bookingStatus === "completed" ? "Trip Completed" : "Trip Cancelled"}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {/* Navigation Button */}
-        {bookingStatus === "accepted" && (
-          <Pressable
-            style={styles.navigationButton}
-            onPress={() => openMaps(
-              activeBooking.pickup_latitude,
-              activeBooking.pickup_longitude,
-              "Pickup Location"
-            )}
-          >
-            <Ionicons name="map" size={20} color="#183B5C" />
-            <Text style={styles.navigationButtonText}>Open in Maps</Text>
-          </Pressable>
-        )}
       </View>
     </View>
   );
 }
 
-// Add new styles for requests
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -966,7 +1665,7 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: "#183B5C",
-    paddingTop: 60,
+    paddingTop: 20,
     paddingBottom: 20,
     paddingHorizontal: 20,
     flexDirection: "row",
@@ -979,36 +1678,47 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerSubtitle: {
-    fontSize: 16,
+    fontSize: 14,
     color: "#FFB37A",
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: "bold",
     color: "#FFF",
   },
   requestBadge: {
     backgroundColor: "#FF3B30",
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 10,
   },
   requestBadgeText: {
     color: "#FFF",
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: "bold",
   },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+    backgroundColor: "#FFF",
   },
   statusText: {
     fontWeight: "600",
     fontSize: 12,
+  },
+  mapContainer: {
+    flex: 1,
+    position: 'relative',
+  },
+  mapPreview: {
+    height: 250,
+    margin: 20,
+    borderRadius: 16,
+    overflow: 'hidden',
   },
   pickupMarker: {
     backgroundColor: "#10B981",
@@ -1046,6 +1756,29 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 5,
+  },
+  navigationInstruction: {
+    position: "absolute",
+    top: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: "#183B5C",
+    padding: 12,
+    borderRadius: 30,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  navigationInstructionText: {
+    color: "#FFF",
+    fontSize: 14,
+    fontWeight: "600",
+    marginLeft: 8,
   },
   bottomSheet: {
     backgroundColor: "#FFF",
@@ -1149,17 +1882,50 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 10,
   },
+  arrivedButton: {
+    flex: 2,
+    backgroundColor: "#3B82F6",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+  },
+  arrivedButtonText: {
+    color: "#FFF",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+  startRideButton: {
+    flex: 2,
+    backgroundColor: "#F59E0B",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
+  },
+  startRideButtonText: {
+    color: "#FFF",
+    fontWeight: "600",
+    fontSize: 14,
+  },
   completeButton: {
     flex: 2,
     backgroundColor: "#10B981",
     padding: 14,
     borderRadius: 12,
     alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
   },
   completeButtonText: {
     color: "#FFF",
     fontWeight: "600",
-    fontSize: 16,
+    fontSize: 14,
   },
   cancelButton: {
     flex: 1,
@@ -1175,64 +1941,58 @@ const styles = StyleSheet.create({
     color: "#EF4444",
     fontWeight: "600",
   },
-  disabledMessage: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    padding: 14,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  disabledText: {
-    color: "#666",
-    fontWeight: "600",
-  },
   navigationButton: {
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#183B5C",
     padding: 14,
     borderRadius: 12,
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "center",
-    gap: 5,
+    gap: 8,
   },
   navigationButtonText: {
-    color: "#183B5C",
+    color: "#FFF",
     fontWeight: "600",
+    fontSize: 14,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 20,
+    backgroundColor: "#F5F7FA",
   },
   emptyTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "bold",
     color: "#333",
     marginTop: 20,
+    marginBottom: 10,
   },
   emptyText: {
     fontSize: 14,
     color: "#666",
-    marginTop: 10,
     textAlign: "center",
+    lineHeight: 20,
   },
-  goBackButton: {
+  goOnlineButton: {
     backgroundColor: "#183B5C",
     paddingHorizontal: 30,
     paddingVertical: 12,
     borderRadius: 12,
     marginTop: 20,
   },
-  goBackText: {
+  goOnlineText: {
     color: "#FFF",
     fontWeight: "600",
+    fontSize: 16,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     padding: 20,
+    paddingTop: 0,
   },
   requestCard: {
     backgroundColor: "#FFF",
@@ -1244,6 +2004,40 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.05,
     shadowRadius: 8,
     elevation: 2,
+  },
+  selectedRequestCard: {
+    borderWidth: 2,
+    borderColor: "#183B5C",
+  },
+  requestSummary: {
+    backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 15,
+    borderRadius: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  summaryItem: {
+    alignItems: "center",
+    gap: 4,
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: "#666",
+    marginTop: 2,
+  },
+  summaryValue: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#183B5C",
   },
   cardHeader: {
     flexDirection: "row",
@@ -1283,10 +2077,10 @@ const styles = StyleSheet.create({
   locationIcon: {
     width: 24,
     alignItems: "center",
-    marginRight: 8,
   },
   locationTextContainer: {
     flex: 1,
+    marginLeft: 8,
   },
   locationLabel: {
     fontSize: 10,
@@ -1309,7 +2103,7 @@ const styles = StyleSheet.create({
     color: "#666",
   },
   fareAmount: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "bold",
     color: "#183B5C",
   },

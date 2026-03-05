@@ -1,3 +1,4 @@
+// screens/driver/DriverHomeScreen.js
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
@@ -9,6 +10,10 @@ import {
   Dimensions,
   Animated,
   Easing,
+  Alert,
+  AppState,
+  RefreshControl,
+  ActivityIndicator,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,6 +23,7 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { LineChart } from "react-native-chart-kit";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from "expo-location";
 
 export default function DriverHomeScreen() {
   const insets = useSafeAreaInsets();
@@ -25,15 +31,25 @@ export default function DriverHomeScreen() {
   const [activeTab, setActiveTab] = useState("earnings");
   const [driver, setDriver] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
+  const [locationSubscription, setLocationSubscription] = useState(null);
+  const [locationPermission, setLocationPermission] = useState(false);
+  const appState = useRef(AppState.currentState);
 
-  // * ================= NEW STATE FOR REAL DATA ================= */
+  // * ================= WALLET DATA WITH SEPARATE BALANCE AND EARNINGS ================= */
   const [walletData, setWalletData] = useState({
-    balance: 0,
-    total_deposits: 0,
-    total_withdrawals: 0,
+    balance: 0,                    // From top-ups minus withdrawals
+    total_deposits: 0,              // Total top-ups made
+    total_withdrawals: 0,           // Total withdrawals made
+    cash_earnings: 0,               // Earnings from cash trips
+    gcash_earnings: 0,              // Earnings from GCash trips
+    wallet_earnings: 0,              // Earnings from wallet payments
   });
+  
+  const [totalEarnings, setTotalEarnings] = useState(0); // Combined earnings from all trips
   const [todayEarnings, setTodayEarnings] = useState(0);
+  const [todayTrips, setTodayTrips] = useState(0);
   const [recentTrips, setRecentTrips] = useState([]);
   const [weeklyData, setWeeklyData] = useState({
     labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -43,6 +59,193 @@ export default function DriverHomeScreen() {
   const [activeSubscription, setActiveSubscription] = useState(null);
   const [missionProgress, setMissionProgress] = useState(null);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [driverRank, setDriverRank] = useState({
+    currentRank: 1,
+    level: "Bronze",
+    points: 0,
+  });
+
+  // * ================= LOCATION TRACKING SETUP ================= */
+  const setupLocationPermission = async () => {
+    try {
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== 'granted') {
+        Alert.alert("Permission Denied", "Location permission is needed to go online");
+        setLocationPermission(false);
+        return false;
+      }
+
+      setLocationPermission(true);
+      return true;
+    } catch (err) {
+      console.log("Location permission error:", err);
+      return false;
+    }
+  };
+
+  const startLocationUpdates = async (driverId) => {
+    try {
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const { data: existingLocation, error: checkError } = await supabase
+        .from("driver_locations")
+        .select("id")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (checkError) {
+        console.log("Error checking existing location:", checkError);
+      }
+
+      if (existingLocation) {
+        const { error } = await supabase
+          .from("driver_locations")
+          .update({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            is_online: true,
+            last_updated: new Date(),
+            accuracy: location.coords.accuracy,
+            speed: location.coords.speed,
+            heading: location.coords.heading,
+          })
+          .eq("driver_id", driverId);
+        
+        if (error) console.log("Location update error:", error);
+      } else {
+        const { error } = await supabase
+          .from("driver_locations")
+          .insert({
+            driver_id: driverId,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            is_online: true,
+            last_updated: new Date(),
+            accuracy: location.coords.accuracy,
+            speed: location.coords.speed,
+            heading: location.coords.heading,
+          });
+        
+        if (error) console.log("Location insert error:", error);
+      }
+
+      const subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        async (newLocation) => {
+          try {
+            const { error } = await supabase
+              .from("driver_locations")
+              .update({
+                latitude: newLocation.coords.latitude,
+                longitude: newLocation.coords.longitude,
+                is_online: true,
+                last_updated: new Date(),
+                accuracy: newLocation.coords.accuracy,
+                speed: newLocation.coords.speed,
+                heading: newLocation.coords.heading,
+              })
+              .eq("driver_id", driverId);
+
+            if (error) {
+              console.log("Location update error:", error);
+            }
+          } catch (err) {
+            console.log("Location update error:", err);
+          }
+        }
+      );
+
+      setLocationSubscription(subscription);
+    } catch (err) {
+      console.log("Start location updates error:", err);
+    }
+  };
+
+  const stopLocationUpdates = async (driverId) => {
+    try {
+      if (locationSubscription) {
+        locationSubscription.remove();
+        setLocationSubscription(null);
+      }
+
+      const { error } = await supabase
+        .from("driver_locations")
+        .update({
+          is_online: false,
+          last_updated: new Date()
+        })
+        .eq("driver_id", driverId);
+
+      if (error) {
+        console.log("Stop location updates error:", error);
+      }
+    } catch (err) {
+      console.log("Stop location updates error:", err);
+    }
+  };
+
+  // * ================= CLEANUP ON UNMOUNT ================= */
+  useEffect(() => {
+    return () => {
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
+  }, []);
+
+  // * ================= HANDLE APP STATE CHANGES ================= */
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      if (appState.current.match(/inactive|background/) && nextAppState === "active") {
+        console.log("App has come to foreground!");
+        
+        if (isOnline && driver?.id && locationSubscription) {
+          try {
+            const location = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.High,
+            });
+            
+            await supabase
+              .from("driver_locations")
+              .upsert({
+                driver_id: driver.id,
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                is_online: true,
+                last_updated: new Date(),
+              });
+          } catch (err) {
+            console.log("Error refreshing location:", err);
+          }
+        }
+      } else if (nextAppState === "background") {
+        console.log("App has gone to background!");
+        
+        if (isOnline) {
+          Alert.alert(
+            "App in Background",
+            "Location updates will pause when the app is in background. Please keep the app open to receive bookings.",
+            [{ text: "OK" }]
+          );
+        }
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [isOnline, driver?.id]);
 
   // * ================= FETCH DRIVER ================= */
   useFocusEffect(
@@ -54,7 +257,6 @@ export default function DriverHomeScreen() {
           const storedUserId = await AsyncStorage.getItem("user_id");
           if (!storedUserId) return;
 
-          // Fetch driver data
           const { data, error } = await supabase
             .from("drivers")
             .select(
@@ -81,7 +283,12 @@ export default function DriverHomeScreen() {
           setDriver(data);
           setIsOnline(data?.is_active ?? false);
 
-          // Fetch all related data after getting driver
+          await setupLocationPermission();
+
+          if (data?.status === "approved" && data?.is_active) {
+            await startLocationUpdates(data.id);
+          }
+
           if (data) {
             await Promise.all([
               fetchWalletData(data.id),
@@ -91,6 +298,7 @@ export default function DriverHomeScreen() {
               fetchActiveSubscription(data.id),
               fetchMissionProgress(data.id),
               fetchUnreadNotifications(storedUserId),
+              fetchDriverRank(data.id),
             ]);
           }
         } catch (err) {
@@ -104,14 +312,32 @@ export default function DriverHomeScreen() {
     }, []),
   );
 
+  // * ================= REFRESH HANDLER ================= */
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (driver?.id) {
+      await Promise.all([
+        fetchWalletData(driver.id),
+        fetchTodayEarnings(driver.id),
+        fetchRecentTrips(driver.id),
+        fetchWeeklyData(driver.id),
+        fetchActiveSubscription(driver.id),
+        fetchMissionProgress(driver.id),
+        fetchUnreadNotifications(driver.id),
+        fetchDriverRank(driver.id),
+      ]);
+    }
+    setRefreshing(false);
+  }, [driver?.id]);
+
   // * ================= FETCH WALLET DATA ================= */
   const fetchWalletData = async (driverId) => {
     try {
       const { data, error } = await supabase
         .from("driver_wallets")
-        .select("balance, total_deposits, total_withdrawals")
+        .select("balance, total_deposits, total_withdrawals, cash_earnings, gcash_earnings, wallet_earnings")
         .eq("driver_id", driverId)
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.log("Wallet error:", error.message);
@@ -120,6 +346,34 @@ export default function DriverHomeScreen() {
 
       if (data) {
         setWalletData(data);
+        // Calculate total earnings from all trips
+        const total = (data.cash_earnings || 0) + (data.gcash_earnings || 0) + (data.wallet_earnings || 0);
+        setTotalEarnings(total);
+      } else {
+        // Create wallet if it doesn't exist
+        const { error: insertError } = await supabase
+          .from("driver_wallets")
+          .insert({
+            driver_id: driverId,
+            balance: 0,
+            total_deposits: 0,
+            total_withdrawals: 0,
+            cash_earnings: 0,
+            gcash_earnings: 0,
+            wallet_earnings: 0,
+          });
+
+        if (insertError) console.log("Wallet creation error:", insertError);
+        
+        setWalletData({
+          balance: 0,
+          total_deposits: 0,
+          total_withdrawals: 0,
+          cash_earnings: 0,
+          gcash_earnings: 0,
+          wallet_earnings: 0,
+        });
+        setTotalEarnings(0);
       }
     } catch (err) {
       console.log("Fetch wallet error:", err.message);
@@ -136,7 +390,7 @@ export default function DriverHomeScreen() {
 
       const { data, error } = await supabase
         .from("bookings")
-        .select("actual_fare")
+        .select("actual_fare, payment_method, payment_type")
         .eq("driver_id", driverId)
         .eq("status", "completed")
         .gte("ride_completed_at", today.toISOString())
@@ -147,10 +401,11 @@ export default function DriverHomeScreen() {
         return;
       }
 
-      const total =
-        data?.reduce((sum, booking) => sum + (booking.actual_fare || 0), 0) ||
-        0;
+      const total = data?.reduce((sum, booking) => sum + (booking.actual_fare || 0), 0) || 0;
+      const tripsCount = data?.length || 0;
+      
       setTodayEarnings(total);
+      setTodayTrips(tripsCount);
     } catch (err) {
       console.log("Fetch today earnings error:", err.message);
     }
@@ -165,46 +420,38 @@ export default function DriverHomeScreen() {
         .from("bookings")
         .select(
           `
-        id,
-        pickup_location,
-        dropoff_location,
-        actual_fare,
-        distance_km,
-        ride_completed_at,
-        status
-      `,
+          id,
+          pickup_location,
+          dropoff_location,
+          actual_fare,
+          distance_km,
+          ride_completed_at,
+          status,
+          payment_method,
+          payment_type
+        `,
         )
         .eq("driver_id", driverId)
         .eq("status", "completed")
         .order("ride_completed_at", { ascending: false })
-        .limit(5);
+        .limit(10);
 
       if (error) {
         console.log("❌ Recent trips error:", error.message);
         return;
       }
 
-      console.log("✅ Raw trips data:", data);
-      console.log("📊 Number of trips found:", data?.length);
-
-      // Check each trip's data
-      data?.forEach((trip, index) => {
-        console.log(`Trip ${index + 1}:`, {
-          id: trip.id,
-          pickup: trip.pickup_location,
-          dropoff: trip.dropoff_location,
-          fare: trip.actual_fare,
-          distance: trip.distance_km,
-          date: trip.ride_completed_at,
-        });
-      });
-
-      const formattedTrips =
-        data?.map((trip) => ({
+      const formattedTrips = data?.map((trip) => {
+        const paymentMethod = trip.payment_method || trip.payment_type || "cash";
+        const paymentColor = 
+          paymentMethod === "gcash" ? "#00579F" :
+          paymentMethod === "cash" ? "#10B981" : "#183B5C";
+        
+        return {
           id: trip.id,
           from: trip.pickup_location?.split(",")[0] || "Pickup",
           to: trip.dropoff_location?.split(",")[0] || "Dropoff",
-          distance: trip.distance_km ? `${trip.distance_km} km` : "? km",
+          distance: trip.distance_km ? `${trip.distance_km.toFixed(1)} km` : "? km",
           earnings: `₱${trip.actual_fare?.toFixed(2) || "0.00"}`,
           time: trip.ride_completed_at
             ? new Date(trip.ride_completed_at).toLocaleTimeString([], {
@@ -212,10 +459,10 @@ export default function DriverHomeScreen() {
                 minute: "2-digit",
               })
             : "Unknown",
-        })) || [];
-
-      console.log("✅ Formatted trips:", formattedTrips);
-      console.log("📊 Formatted trips count:", formattedTrips.length);
+          paymentMethod,
+          paymentColor,
+        };
+      }) || [];
 
       setRecentTrips(formattedTrips);
     } catch (err) {
@@ -229,20 +476,16 @@ export default function DriverHomeScreen() {
       console.log("🔍 Fetching weekly data for driver:", driverId);
 
       const today = new Date();
-      const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      const dayOfWeek = today.getDay();
 
-      // Get start of week (Monday)
       const startOfWeek = new Date(today);
       startOfWeek.setDate(
         today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1),
       );
       startOfWeek.setHours(0, 0, 0, 0);
-      console.log("📅 Start of week:", startOfWeek.toISOString());
 
-      // Get end of week (Sunday)
       const endOfWeek = new Date(startOfWeek);
       endOfWeek.setDate(startOfWeek.getDate() + 7);
-      console.log("📅 End of week:", endOfWeek.toISOString());
 
       const { data, error } = await supabase
         .from("bookings")
@@ -258,44 +501,25 @@ export default function DriverHomeScreen() {
         return;
       }
 
-      console.log("✅ Raw weekly data:", data);
-      console.log("📊 Number of weekly bookings:", data?.length);
-
-      // Initialize weekly arrays
       const earnings = [0, 0, 0, 0, 0, 0, 0];
       const trips = [0, 0, 0, 0, 0, 0, 0];
 
       data?.forEach((booking) => {
         if (booking.ride_completed_at) {
           const date = new Date(booking.ride_completed_at);
-          let dayIndex = date.getDay(); // 0-6, Sunday = 0
-
-          // Convert to Monday = 0, Sunday = 6
+          let dayIndex = date.getDay();
           dayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-
-          console.log(`📆 Booking on day ${dayIndex}:`, {
-            date: date.toISOString(),
-            fare: booking.actual_fare,
-            dayName: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
-              dayIndex
-            ],
-          });
 
           earnings[dayIndex] += booking.actual_fare || 0;
           trips[dayIndex] += 1;
         }
       });
 
-      console.log("📊 Calculated earnings:", earnings);
-      console.log("📊 Calculated trips:", trips);
-
       setWeeklyData({
         labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
         earnings: earnings,
         trips: trips,
       });
-
-      console.log("✅ Weekly data updated:", { earnings, trips });
     } catch (err) {
       console.log("❌ Fetch weekly data error:", err.message);
     }
@@ -325,16 +549,17 @@ export default function DriverHomeScreen() {
         .gte("end_date", new Date().toISOString())
         .order("end_date", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== "PGRST116") {
-        // PGRST116 = no rows returned
         console.log("Subscription error:", error.message);
         return;
       }
 
       if (data) {
         setActiveSubscription(data);
+      } else {
+        setActiveSubscription(null);
       }
     } catch (err) {
       console.log("Fetch subscription error:", err.message);
@@ -346,7 +571,7 @@ export default function DriverHomeScreen() {
     try {
       const today = new Date();
       const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - today.getDay() + 1); // Monday
+      startOfWeek.setDate(today.getDate() - today.getDay() + 1);
       startOfWeek.setHours(0, 0, 0, 0);
 
       const endOfWeek = new Date(startOfWeek);
@@ -359,7 +584,7 @@ export default function DriverHomeScreen() {
         .eq("driver_id", driverId)
         .gte("week_start", startOfWeek.toISOString().split("T")[0])
         .lte("week_end", endOfWeek.toISOString().split("T")[0])
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== "PGRST116") {
         console.log("Mission error:", error.message);
@@ -368,99 +593,93 @@ export default function DriverHomeScreen() {
 
       if (data) {
         setMissionProgress(data);
+      } else {
+        setMissionProgress(null);
       }
     } catch (err) {
       console.log("Fetch mission error:", err.message);
     }
   };
 
- // Add this state with your other states
-const [driverRank, setDriverRank] = useState({
-  currentRank: 1,
-  level: "Bronze",
-  points: 0,
-});
+  // * ================= FETCH UNREAD NOTIFICATIONS ================= */
+  const fetchUnreadNotifications = async (userId) => {
+    try {
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_read", false);
 
-// Add this function to fetch rank (using driver.id instead of driverId)
-const fetchDriverRank = async () => {
-  try {
-    if (!driver?.id) return; // Use driver.id from existing state
-    
-    // Get all drivers with completed trips count
-    const { data: drivers, error } = await supabase
-      .from("drivers")
-      .select(`
-        id,
-        first_name,
-        last_name
-      `)
-      .eq("status", "approved");
+      if (error) throw error;
+      setUnreadNotifications(count || 0);
+    } catch (err) {
+      console.log("Error fetching notifications:", err);
+    }
+  };
 
-    if (error) throw error;
+  // * ================= FETCH DRIVER RANK ================= */
+  const fetchDriverRank = async (driverId) => {
+    try {
+      const { data: drivers, error } = await supabase
+        .from("drivers")
+        .select(`
+          id,
+          first_name,
+          last_name
+        `)
+        .eq("status", "approved");
 
-    // Get trip counts for each driver
-    const driverStats = await Promise.all(
-      drivers.map(async (d) => {
-        const { count, error: countError } = await supabase
-          .from("bookings")
-          .select("*", { count: "exact", head: true })
-          .eq("driver_id", d.id)
-          .eq("status", "completed");
+      if (error) throw error;
 
-        if (countError) throw countError;
+      const driverStats = await Promise.all(
+        drivers.map(async (d) => {
+          const { count, error: countError } = await supabase
+            .from("bookings")
+            .select("*", { count: "exact", head: true })
+            .eq("driver_id", d.id)
+            .eq("status", "completed");
 
-        return {
-          ...d,
-          trips: count || 0,
-          points: (count || 0) * 10, // 10 points per trip
-        };
-      })
-    );
+          if (countError) throw countError;
 
-    // Sort by points
-    const sortedDrivers = driverStats.sort((a, b) => b.points - a.points);
-    
-    // Find current driver's rank using driver.id
-    const currentDriverIndex = sortedDrivers.findIndex(d => d.id === driver.id);
-    const currentRank = currentDriverIndex + 1;
-    const currentDriverPoints = sortedDrivers[currentDriverIndex]?.points || 0;
+          return {
+            ...d,
+            trips: count || 0,
+            points: (count || 0) * 10,
+          };
+        })
+      );
 
-    // Determine level
-    let level = "Bronze";
-    if (currentDriverPoints >= 2000) level = "Diamond";
-    else if (currentDriverPoints >= 1000) level = "Gold";
-    else if (currentDriverPoints >= 500) level = "Silver";
+      const sortedDrivers = driverStats.sort((a, b) => b.points - a.points);
+      const currentDriverIndex = sortedDrivers.findIndex(d => d.id === driverId);
+      const currentRank = currentDriverIndex + 1;
+      const currentDriverPoints = sortedDrivers[currentDriverIndex]?.points || 0;
 
-    setDriverRank({
-      currentRank,
-      level,
-      points: currentDriverPoints,
-    });
+      let level = "Bronze";
+      if (currentDriverPoints >= 2000) level = "Diamond";
+      else if (currentDriverPoints >= 1000) level = "Gold";
+      else if (currentDriverPoints >= 500) level = "Silver";
 
-  } catch (err) {
-    console.log("Error fetching rank:", err.message);
-  }
-};
-
-// Call it after driver is loaded
-useEffect(() => {
-  if (driver?.id) {
-    fetchDriverRank();
-  }
-}, [driver?.id]); // Depend on driver.id
+      setDriverRank({
+        currentRank,
+        level,
+        points: currentDriverPoints,
+      });
+    } catch (err) {
+      console.log("Error fetching rank:", err.message);
+    }
+  };
 
   /* ================= ANIMATED TOGGLE ================= */
   const toggleAnim = useRef(new Animated.Value(0)).current;
 
-  // Baliktarin ang outputRange
   const translateY = toggleAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [30, 0], // <- Pinalitan: 0 = online (top), 30 = offline (bottom)
+    outputRange: [30, 0],
   });
 
   useEffect(() => {
     Animated.timing(toggleAnim, {
-      toValue: isOnline ? 1 : 0, // 1 = online, 0 = offline
+      toValue: isOnline ? 1 : 0,
       duration: 250,
       easing: Easing.out(Easing.ease),
       useNativeDriver: false,
@@ -471,36 +690,50 @@ useEffect(() => {
   const toggleAvailability = async () => {
     if (!driver || driver.status !== "approved") return;
 
-    // Check if driver has active subscription
     if (!activeSubscription) {
-      alert(
+      Alert.alert(
+        "No Active Subscription",
         "You need an active subscription to go online. Please subscribe first.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Subscribe", onPress: () => navigation.navigate("SubscriptionScreen") }
+        ]
       );
-      navigation.navigate("SubscriptionScreen");
       return;
     }
 
+    if (!locationPermission) {
+      const granted = await setupLocationPermission();
+      if (!granted) {
+        Alert.alert("Permission Required", "Location permission is needed to go online");
+        return;
+      }
+    }
+
     try {
-      // I-set muna ang UI bago mag-database update
       const newOnlineStatus = !isOnline;
-      setIsOnline(newOnlineStatus); // <- I-set agad para mag-render agad ang UI
+      setIsOnline(newOnlineStatus);
+
+      if (newOnlineStatus) {
+        await startLocationUpdates(driver.id);
+      } else {
+        await stopLocationUpdates(driver.id);
+      }
 
       const { error } = await supabase
         .from("drivers")
         .update({
-          is_active: newOnlineStatus, // <- Gamitin ang new value
+          is_active: newOnlineStatus,
           updated_at: new Date(),
         })
         .eq("id", driver.id);
 
       if (error) {
-        // If error, revert back
-        setIsOnline(isOnline);
+        setIsOnline(!newOnlineStatus);
         console.log(error.message);
         return;
       }
 
-      // Log the status change
       await supabase.from("audit_logs").insert([
         {
           user_id: driver.id,
@@ -510,74 +743,89 @@ useEffect(() => {
           record_id: driver.id,
           metadata: {
             field: "is_active",
-            old_value: isOnline,
+            old_value: !newOnlineStatus,
             new_value: newOnlineStatus,
           },
         },
       ]);
+
+      Alert.alert(
+        newOnlineStatus ? "You're Online!" : "You're Offline",
+        newOnlineStatus 
+          ? "You can now receive booking requests. Your location is being tracked while the app is open."
+          : "You will no longer receive booking requests.",
+        [{ text: "OK" }]
+      );
     } catch (err) {
-      // If error, revert back
-      setIsOnline(isOnline);
+      setIsOnline(!isOnline);
       console.log(err.message);
+      Alert.alert("Error", "Failed to update status. Please try again.");
     }
   };
 
-const renderTrip = ({ item }) => (
-  <Pressable
-    style={({ pressed }) => ({
-      backgroundColor: pressed ? "#F3F4F6" : "#F9FAFB",
-      borderRadius: 16,
-      padding: 15,
-      marginBottom: 10,
-      flexDirection: "row",
-      alignItems: "center",
-      borderWidth: 1,
-      borderColor: "#E5E7EB",
-    })}
-    onPress={() =>
-      navigation.navigate("TripDetailsScreen", { tripId: item.id })
-    }
-  >
-    <View style={{
-      width: 45,
-      height: 45,
-      borderRadius: 12,
-      backgroundColor: "#183B5C",
-      justifyContent: "center",
-      alignItems: "center",
-      marginRight: 12,
-    }}>
-      <Ionicons name="bicycle" size={24} color="#FFB37A" />
-    </View>
+  const renderTrip = ({ item }) => (
+    <Pressable
+      style={({ pressed }) => ({
+        backgroundColor: pressed ? "#F3F4F6" : "#F9FAFB",
+        borderRadius: 16,
+        padding: 15,
+        marginBottom: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: "#E5E7EB",
+      })}
+      onPress={() =>
+        navigation.navigate("TripDetailsScreen", { tripId: item.id })
+      }
+    >
+      <View style={{
+        width: 45,
+        height: 45,
+        borderRadius: 12,
+        backgroundColor: item.paymentColor || "#183B5C",
+        justifyContent: "center",
+        alignItems: "center",
+        marginRight: 12,
+      }}>
+        <Ionicons 
+          name={
+            item.paymentMethod === "gcash" ? "phone-portrait" :
+            item.paymentMethod === "cash" ? "cash" : "wallet"
+          } 
+          size={24} 
+          color="#FFF" 
+        />
+      </View>
 
-    <View style={{ flex: 1 }}>
-      <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-        <Ionicons name="location" size={12} color="#10B981" />
-        <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
-          {item.from}
-        </Text>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+          <Ionicons name="location" size={12} color="#10B981" />
+          <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
+            {item.from}
+          </Text>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Ionicons name="flag" size={12} color="#EF4444" />
+          <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
+            {item.to}
+          </Text>
+        </View>
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Ionicons name="flag" size={12} color="#EF4444" />
-        <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
-          {item.to}
-        </Text>
-      </View>
-    </View>
 
-    <View style={{ alignItems: "flex-end" }}>
-      <Text style={{ fontSize: 16, fontWeight: "bold", color: "#183B5C" }}>
-        {item.earnings}
-      </Text>
-      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-        <Ionicons name="time-outline" size={10} color="#9CA3AF" />
-        <Text style={{ fontSize: 10, color: "#9CA3AF", marginLeft: 2 }}>
-          {item.distance} • {item.time}
+      <View style={{ alignItems: "flex-end" }}>
+        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#183B5C" }}>
+          {item.earnings}
         </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+          <Ionicons name="time-outline" size={10} color="#9CA3AF" />
+          <Text style={{ fontSize: 10, color: "#9CA3AF", marginLeft: 2 }}>
+            {item.distance} • {item.time}
+          </Text>
+        </View>
       </View>
-    </View>
-  </Pressable>
-);
+    </Pressable>
+  );
 
   const screenWidth = Dimensions.get("window").width - 40;
 
@@ -585,8 +833,7 @@ const renderTrip = ({ item }) => (
   const MissionProgress = () => {
     if (!missionProgress) return null;
 
-    const progress =
-      (missionProgress.actual_rides / missionProgress.target_rides) * 100;
+    const progress = (missionProgress.actual_rides / missionProgress.target_rides) * 100;
 
     return (
       <View
@@ -635,8 +882,7 @@ const renderTrip = ({ item }) => (
 
         {progress >= 100 ? (
           <Text style={{ marginTop: 8, color: "#10B981", fontWeight: "600" }}>
-            🎉 Congrats! You've hit the target! ₱{missionProgress.bonus_amount}{" "}
-            bonus coming soon!
+            🎉 Congrats! You've hit the target! ₱{missionProgress.bonus_amount} bonus coming soon!
           </Text>
         ) : (
           <Text style={{ marginTop: 8, color: "#6B7280" }}>
@@ -648,12 +894,24 @@ const renderTrip = ({ item }) => (
     );
   };
 
+  if (loading && !refreshing) {
+    return (
+      <View style={[styles.container, { paddingTop: insets.top, justifyContent: "center", alignItems: "center" }]}>
+        <ActivityIndicator size="large" color="#183B5C" />
+        <Text style={{ marginTop: 10, color: "#666" }}>Loading your dashboard...</Text>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={[styles.container, { paddingTop: insets.top }]}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
     >
-      {/* HEADER  */}
+      {/* HEADER */}
       <LinearGradient
         colors={["#FFB37A", "#183B5C"]}
         start={{ x: 0, y: 0 }}
@@ -704,128 +962,122 @@ const renderTrip = ({ item }) => (
             </Text>
           </View>
 
-          {/* Ranking Icon - Clickable */}
-{/* RANKING ICON - ENHANCED VERSION */}
-{/* RANKING ICON - ENHANCED VERSION */}
-<Pressable
-  style={styles.rankingIconBadge}
-  onPress={() => navigation.navigate("RankingPage")}
->
-  <View
-    style={{
-      width: "100%",
-      height: "100%",
-      justifyContent: "center",
-      alignItems: "center",
-    }}
-  >
-    {/* Outer Ring - Changes color based on rank */}
-    <View
-      style={{
-        position: "absolute",
-        width: 50,
-        height: 50,
-        borderRadius: 25,
-        borderWidth: 2,
-        borderColor: 
-          driverRank?.level === "Diamond" ? "#B9F2FF" :
-          driverRank?.level === "Gold" ? "#FFD700" :
-          driverRank?.level === "Silver" ? "#C0C0C0" :
-          "#CD7F32",
-        opacity: 0.5,
-      }}
-    />
-    
-    {/* Inner Icon with Level Badge */}
-    <View
-      style={{
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: "#FFF",
-        justifyContent: "center",
-        alignItems: "center",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 5,
-      }}
-    >
-      {/* FIXED: Correct icon names for Ionicons */}
-      <Ionicons 
-        name={
-          driverRank?.level === "Diamond" ? "diamond" : // or "diamond-outline"
-          driverRank?.level === "Gold" ? "trophy" : // or "trophy-outline"
-          driverRank?.level === "Silver" ? "medal" : // or "medal-outline"
-          "ribbon" // or "ribbon-outline"
-        } 
-        size={24} 
-        color={
-          driverRank?.level === "Diamond" ? "#B9F2FF" :
-          driverRank?.level === "Gold" ? "#FFD700" :
-          driverRank?.level === "Silver" ? "#C0C0C0" :
-          "#CD7F32"
-        } 
-      />
-    </View>
+          {/* Ranking Icon */}
+          <Pressable
+            style={styles.rankingIconBadge}
+            onPress={() => navigation.navigate("RankingPage")}
+          >
+            <View
+              style={{
+                width: "100%",
+                height: "100%",
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <View
+                style={{
+                  position: "absolute",
+                  width: 50,
+                  height: 50,
+                  borderRadius: 25,
+                  borderWidth: 2,
+                  borderColor: 
+                    driverRank?.level === "Diamond" ? "#B9F2FF" :
+                    driverRank?.level === "Gold" ? "#FFD700" :
+                    driverRank?.level === "Silver" ? "#C0C0C0" :
+                    "#CD7F32",
+                  opacity: 0.5,
+                }}
+              />
+              
+              <View
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 22,
+                  backgroundColor: "#FFF",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 4,
+                  elevation: 5,
+                }}
+              >
+                <Ionicons 
+                  name={
+                    driverRank?.level === "Diamond" ? "diamond" :
+                    driverRank?.level === "Gold" ? "trophy" :
+                    driverRank?.level === "Silver" ? "medal" :
+                    "ribbon"
+                  } 
+                  size={24} 
+                  color={
+                    driverRank?.level === "Diamond" ? "#B9F2FF" :
+                    driverRank?.level === "Gold" ? "#FFD700" :
+                    driverRank?.level === "Silver" ? "#C0C0C0" :
+                    "#CD7F32"
+                  } 
+                />
+              </View>
 
-    {/* Rank Number Badge */}
-    <View
-      style={{
-        position: "absolute",
-        bottom: -2,
-        right: -2,
-        backgroundColor: "#183B5C",
-        borderRadius: 10,
-        width: 20,
-        height: 20,
-        justifyContent: "center",
-        alignItems: "center",
-        borderWidth: 2,
-        borderColor: "#FFF",
-      }}
-    >
-      <Text style={{ color: "#FFF", fontSize: 10, fontWeight: "bold" }}>
-        #{driverRank?.currentRank || "?"}
-      </Text>
-    </View>
-  </View>
+              <View
+                style={{
+                  position: "absolute",
+                  bottom: -2,
+                  right: -2,
+                  backgroundColor: "#183B5C",
+                  borderRadius: 10,
+                  width: 20,
+                  height: 20,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  borderWidth: 2,
+                  borderColor: "#FFF",
+                }}
+              >
+                <Text style={{ color: "#FFF", fontSize: 10, fontWeight: "bold" }}>
+                  #{driverRank?.currentRank || "?"}
+                </Text>
+              </View>
+            </View>
 
-  {/* Notification Badge */}
-  {unreadNotifications > 0 && (
-    <View
-      style={{
-        position: "absolute",
-        top: -5,
-        right: -5,
-        backgroundColor: "#FF3B30",
-        borderRadius: 12,
-        minWidth: 22,
-        height: 22,
-        justifyContent: "center",
-        alignItems: "center",
-        borderWidth: 2,
-        borderColor: "#FFF",
-        paddingHorizontal: 4,
-      }}
-    >
-      <Text style={{ color: "#FFF", fontSize: 11, fontWeight: "bold" }}>
-        {unreadNotifications > 9 ? "9+" : unreadNotifications}
-      </Text>
-    </View>
-  )}
-</Pressable>
+            {unreadNotifications > 0 && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: -5,
+                  right: -5,
+                  backgroundColor: "#FF3B30",
+                  borderRadius: 12,
+                  minWidth: 22,
+                  height: 22,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  borderWidth: 2,
+                  borderColor: "#FFF",
+                  paddingHorizontal: 4,
+                }}
+              >
+                <Text style={{ color: "#FFF", fontSize: 11, fontWeight: "bold" }}>
+                  {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                </Text>
+              </View>
+            )}
+          </Pressable>
         </View>
       </LinearGradient>
+
       {/* DRIVER STATUS WARNING */}
       {!loading && driver && driver.status !== "approved" && (
         <View
           style={{
-            marginHorizontal: 1,
+            marginHorizontal: 20,
             marginTop: 15,
             marginBottom: 10,
-            padding: 10,
+            padding: 15,
             borderRadius: 12,
             borderLeftWidth: 5,
             backgroundColor:
@@ -842,25 +1094,22 @@ const renderTrip = ({ item }) => (
                   : "#FF8C00",
           }}
         >
-          <Text style={{ fontWeight: "600", marginBottom: 5 }}>
-            {driver.status === "pending" && "⏳ Teka, di ka pa verified!"}
-            {driver.status === "under_review" && "🔍 Chini-check pa ni admin"}
-            {driver.status === "rejected" && "❌ Ayun, bagsak docs mo"}
-            {driver.status === "suspended" && "⛔ Temporaryong suspendido"}
+          <Text style={{ fontWeight: "600", marginBottom: 5, fontSize: 16 }}>
+            {driver.status === "pending" && "⏳ Not yet verified!"}
+            {driver.status === "under_review" && "🔍 Under review"}
+            {driver.status === "rejected" && "❌ Documents rejected"}
+            {driver.status === "suspended" && "⛔ Account suspended"}
           </Text>
 
-          <Text style={{ marginBottom: 10 }}>
+          <Text style={{ marginBottom: 10, color: "#333" }}>
             {driver.status === "pending" &&
-              "Kumpletuhin mo muna verification para makapag-booking na!"}
-
+              "Complete verification to start accepting bookings."}
             {driver.status === "under_review" &&
-              "Ini-examine pa documents mo. Balikan mo lang mamaya."}
-
+              "Your documents are being reviewed. Please check back later."}
             {driver.status === "rejected" &&
-              "Hindi pumasa. Need mo mag-resubmit ulit."}
-
+              "Your documents did not pass. Please resubmit."}
             {driver.status === "suspended" &&
-              "May issue account mo. Kausapin mo support para maayos."}
+              "Your account is suspended. Contact support for assistance."}
           </Text>
 
           {(driver.status === "pending" || driver.status === "rejected") && (
@@ -868,259 +1117,295 @@ const renderTrip = ({ item }) => (
               onPress={() => navigation.navigate("DriverVerificationScreen")}
               style={{
                 backgroundColor: "#183B5C",
-                paddingVertical: 8,
+                paddingVertical: 12,
                 borderRadius: 8,
                 alignItems: "center",
               }}
             >
-              <Text style={{ color: "#FFF", fontWeight: "600" }}>
+              <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
                 {driver.status === "pending"
-                  ? "✅ I-verify na!"
-                  : "🔄 Mag-resubmit na"}
+                  ? "✅ Complete Verification"
+                  : "🔄 Resubmit Documents"}
               </Text>
             </Pressable>
           )}
         </View>
       )}
-{/* SUBSCRIPTION & MISSION SIDE BY SIDE */}
-{activeSubscription && missionProgress && (
-  <View
-    style={{
-      marginHorizontal: 1,
-      marginTop: 15,
-      flexDirection: "row",
-      gap: 10, // Space between left and right
-    }}
-  >
-    {/* LEFT SIDE - SUBSCRIPTION BANNER (40%) */}
-    <Pressable
-      onPress={() => navigation.navigate("SubscriptionScreen")}
-      style={{
-        flex: 0.6, // Takes 40% of width
-        padding: 15,
-        borderRadius: 12,
-        backgroundColor: "#E6F7E6",
-        borderWidth: 1,
-        borderColor: "#A0D9A0",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-        justifyContent: "space-between",
-      }}
-    >
-      {/* Icon */}
-      <View
-        style={{
-          width: 32,
-          height: 32,
-          borderRadius: 16,
-          backgroundColor: "#4CAF50",
-          justifyContent: "center",
-          alignItems: "center",
-          marginBottom: 8,
-        }}
-      >
-        <Ionicons name="card" size={16} color="#FFF" />
-      </View>
 
-      {/* Plan Name */}
-      <Text
-        style={{
-          fontWeight: "bold",
-          color: "#2E7D32",
-          fontSize: 14,
-          marginBottom: 2,
-        }}
-        numberOfLines={1}
-      >
-        {activeSubscription.subscription_plans?.plan_name}
-      </Text>
-
-      {/* Expiry */}
-      <Text style={{ fontSize: 10, color: "#4CAF50", marginBottom: 8 }}>
-        Exp: {new Date(activeSubscription.end_date).toLocaleDateString()}
-      </Text>
-
-      {/* Manage Link */}
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Text
-          style={{
-            color: "#183B5C",
-            fontWeight: "600",
-            fontSize: 10,
-            marginRight: 2,
-          }}
-        >
-          Manage
-        </Text>
-        <Ionicons name="arrow-forward" size={10} color="#183B5C" />
-      </View>
-    </Pressable>
-
-    {/* RIGHT SIDE - MISSION PROGRESS (60%) */}
-    <View
-      style={{
-        flex: 0.6, // Takes 60% of width
-        padding: 12,
-        borderRadius: 12,
-        backgroundColor: "#F0F9FF",
-        borderWidth: 1,
-        borderColor: "#B2D9FF",
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-      }}
-    >
-      {/* Header */}
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 8,
-        }}
-      >
-        <Text style={{ fontWeight: "bold", fontSize: 12 }}>🎯 Mission</Text>
-        <Text style={{ color: "#183B5C", fontWeight: "bold", fontSize: 11 }}>
-          {missionProgress.actual_rides}/{missionProgress.target_rides}
-        </Text>
-      </View>
-
-      {/* Progress Bar */}
-      <View
-        style={{
-          height: 6,
-          backgroundColor: "#E5E7EB",
-          borderRadius: 3,
-          overflow: "hidden",
-          marginBottom: 6,
-        }}
-      >
+      {/* SUBSCRIPTION & MISSION SIDE BY SIDE */}
+      {activeSubscription && missionProgress && (
         <View
           style={{
-            width: `${(missionProgress.actual_rides / missionProgress.target_rides) * 100}%`,
-            height: "100%",
-            backgroundColor:
-              missionProgress.actual_rides >= missionProgress.target_rides
-                ? "#10B981"
-                : "#3B82F6",
+            marginHorizontal: 20,
+            marginTop: 15,
+            flexDirection: "row",
+            gap: 10,
           }}
-        />
-      </View>
+        >
+          {/* LEFT SIDE - SUBSCRIPTION */}
+          <Pressable
+            onPress={() => navigation.navigate("SubscriptionScreen")}
+            style={{
+              flex: 0.6,
+              padding: 15,
+              borderRadius: 12,
+              backgroundColor: "#E6F7E6",
+              borderWidth: 1,
+              borderColor: "#A0D9A0",
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.05,
+              shadowRadius: 4,
+              elevation: 2,
+              justifyContent: "space-between",
+            }}
+          >
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                backgroundColor: "#4CAF50",
+                justifyContent: "center",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <Ionicons name="card" size={16} color="#FFF" />
+            </View>
 
-      {/* Bonus Text */}
-      <Text style={{ fontSize: 9, color: "#6B7280" }} numberOfLines={2}>
-        {missionProgress.actual_rides >= missionProgress.target_rides
-          ? `🎉 ₱${missionProgress.bonus_amount} bonus!`
-          : `${missionProgress.target_rides - missionProgress.actual_rides} more rides = ₱${missionProgress.bonus_amount}`}
-      </Text>
-    </View>
-  </View>
-)}
+            <Text
+              style={{
+                fontWeight: "bold",
+                color: "#2E7D32",
+                fontSize: 14,
+                marginBottom: 2,
+              }}
+              numberOfLines={1}
+            >
+              {activeSubscription.subscription_plans?.plan_name}
+            </Text>
 
-{/* If only subscription exists */}
-{activeSubscription && !missionProgress && (
-  <Pressable
-    onPress={() => navigation.navigate("SubscriptionScreen")}
-    style={{
-      marginHorizontal: 20,
-      marginTop: 15,
-      padding: 15,
-      borderRadius: 12,
-      backgroundColor: "#E6F7E6",
-      flexDirection: "row",
-      justifyContent: "space-between",
-      alignItems: "center",
-      borderWidth: 1,
-      borderColor: "#A0D9A0",
-    }}
-  >
-    <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-      <View
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 20,
-          backgroundColor: "#4CAF50",
-          justifyContent: "center",
-          alignItems: "center",
-          marginRight: 12,
-        }}
-      >
-        <Ionicons name="card" size={20} color="#FFF" />
-      </View>
-      <View>
-        <Text style={{ fontWeight: "bold", color: "#2E7D32", fontSize: 16 }}>
-          {activeSubscription.subscription_plans?.plan_name}
-        </Text>
-        <Text style={{ fontSize: 12, color: "#4CAF50" }}>
-          Expires: {new Date(activeSubscription.end_date).toLocaleDateString()}
-        </Text>
-      </View>
-    </View>
-    <View
-      style={{
-        backgroundColor: "#183B5C",
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 20,
-        flexDirection: "row",
-        alignItems: "center",
-      }}
-    >
-      <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 12, marginRight: 4 }}>
-        Manage
-      </Text>
-      <Ionicons name="arrow-forward" size={12} color="#FFF" />
-    </View>
-  </Pressable>
-)}
+            <Text style={{ fontSize: 10, color: "#4CAF50", marginBottom: 8 }}>
+              Exp: {new Date(activeSubscription.end_date).toLocaleDateString()}
+            </Text>
 
-{/* If only mission exists */}
-{!activeSubscription && missionProgress && (
-  <View style={{ marginHorizontal: 20, marginTop: 15 }}>
-    <MissionProgress />
-  </View>
-)}
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text
+                style={{
+                  color: "#183B5C",
+                  fontWeight: "600",
+                  fontSize: 10,
+                  marginRight: 2,
+                }}
+              >
+                Manage
+              </Text>
+              <Ionicons name="arrow-forward" size={10} color="#183B5C" />
+            </View>
+          </Pressable>
 
+          {/* RIGHT SIDE - MISSION */}
+          <View
+            style={{
+              flex: 0.6,
+              padding: 12,
+              borderRadius: 12,
+              backgroundColor: "#F0F9FF",
+              borderWidth: 1,
+              borderColor: "#B2D9FF",
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.05,
+              shadowRadius: 4,
+              elevation: 2,
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <Text style={{ fontWeight: "bold", fontSize: 12 }}>🎯 Mission</Text>
+              <Text style={{ color: "#183B5C", fontWeight: "bold", fontSize: 11 }}>
+                {missionProgress.actual_rides}/{missionProgress.target_rides}
+              </Text>
+            </View>
 
+            <View
+              style={{
+                height: 6,
+                backgroundColor: "#E5E7EB",
+                borderRadius: 3,
+                overflow: "hidden",
+                marginBottom: 6,
+              }}
+            >
+              <View
+                style={{
+                  width: `${(missionProgress.actual_rides / missionProgress.target_rides) * 100}%`,
+                  height: "100%",
+                  backgroundColor:
+                    missionProgress.actual_rides >= missionProgress.target_rides
+                      ? "#10B981"
+                      : "#3B82F6",
+                }}
+              />
+            </View>
 
+            <Text style={{ fontSize: 9, color: "#6B7280" }} numberOfLines={2}>
+              {missionProgress.actual_rides >= missionProgress.target_rides
+                ? `🎉 ₱${missionProgress.bonus_amount} bonus!`
+                : `${missionProgress.target_rides - missionProgress.actual_rides} more rides = ₱${missionProgress.bonus_amount}`}
+            </Text>
+          </View>
+        </View>
+      )}
 
-      {/* BALANCE CARD */}
-      <View
-        style={[styles.balanceCard, { position: "relative", marginTop: 10 }]}
-      >
+      {/* If only subscription exists */}
+      {activeSubscription && !missionProgress && (
+        <Pressable
+          onPress={() => navigation.navigate("SubscriptionScreen")}
+          style={{
+            marginHorizontal: 20,
+            marginTop: 15,
+            padding: 15,
+            borderRadius: 12,
+            backgroundColor: "#E6F7E6",
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            borderWidth: 1,
+            borderColor: "#A0D9A0",
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: "#4CAF50",
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: 12,
+              }}
+            >
+              <Ionicons name="card" size={20} color="#FFF" />
+            </View>
+            <View>
+              <Text style={{ fontWeight: "bold", color: "#2E7D32", fontSize: 16 }}>
+                {activeSubscription.subscription_plans?.plan_name}
+              </Text>
+              <Text style={{ fontSize: 12, color: "#4CAF50" }}>
+                Expires: {new Date(activeSubscription.end_date).toLocaleDateString()}
+              </Text>
+            </View>
+          </View>
+          <View
+            style={{
+              backgroundColor: "#183B5C",
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 20,
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 12, marginRight: 4 }}>
+              Manage
+            </Text>
+            <Ionicons name="arrow-forward" size={12} color="#FFF" />
+          </View>
+        </Pressable>
+      )}
+
+      {/* If only mission exists */}
+      {!activeSubscription && missionProgress && (
+        <View style={{ marginHorizontal: 20, marginTop: 15 }}>
+          <MissionProgress />
+        </View>
+      )}
+
+      {/* BALANCE CARD - UPDATED WITH CLEAR SEPARATION */}
+      <View style={[styles.balanceCard, { position: "relative", marginTop: 10 }]}>
         <View style={styles.balanceRow}>
           <Pressable
-      onPress={() => navigation.navigate("Wallet")}
-      style={{ flex: 1 }}
-    >
-      <Text style={styles.balanceLabel}>Wallet Balance</Text>
-      <View style={{ flexDirection: "row", alignItems: "center" }}>
-        <Text style={styles.balanceValue}>
-          ₱{walletData.balance.toFixed(2)}
-        </Text>
-        <Ionicons 
-          name="chevron-forward" 
-          size={16} 
-          color="#183B5C" 
-          style={{ marginLeft: 4 }}
-        />
-      </View>
-      <Text style={{ fontSize: 10, color: "#6B7280", marginTop: 2 }}>
-        Lifetime: ₱{walletData.total_deposits.toFixed(2)}
-      </Text>
-    </Pressable>
-
-          {/* <View style={styles.verticalDivider} /> */}
+            onPress={() => navigation.navigate("Wallet")}
+            style={{ flex: 1 }}
+          >
+            <Text style={styles.balanceLabel}>Wallet Balance (From Top-ups)</Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={styles.balanceValue}>
+                ₱{walletData.balance.toFixed(2)}
+              </Text>
+              <Ionicons 
+                name="chevron-forward" 
+                size={16} 
+                color="#183B5C" 
+                style={{ marginLeft: 4 }}
+              />
+            </View>
+            <Text style={{ fontSize: 10, color: "#6B7280", marginTop: 2 }}>
+              Total Top-ups: ₱{walletData.total_deposits.toFixed(2)} • Withdrawn: ₱{walletData.total_withdrawals.toFixed(2)}
+            </Text>
+          </Pressable>
 
           <View>
             <Text style={styles.balanceLabel}>Today's Earnings</Text>
             <Text style={styles.balanceValue}>₱{todayEarnings.toFixed(2)}</Text>
+            <Text style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+              {todayTrips} trips
+            </Text>
+          </View>
+        </View>
+
+        {/* EARNINGS BREAKDOWN - FROM TRIPS */}
+        <View style={{
+          marginTop: 15,
+          padding: 12,
+          backgroundColor: "#F9FAFB",
+          borderRadius: 12,
+        }}>
+          <Text style={{ fontSize: 12, fontWeight: "600", color: "#333", marginBottom: 8 }}>
+            Total Earnings from Trips: ₱{totalEarnings.toFixed(2)}
+          </Text>
+          <View style={{
+            flexDirection: "row",
+            justifyContent: "space-around",
+          }}>
+            <View style={{ alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#10B981", marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: "#666" }}>Cash</Text>
+              </View>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#10B981" }}>
+                ₱{walletData.cash_earnings.toFixed(0)}
+              </Text>
+            </View>
+
+            <View style={{ alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#00579F", marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: "#666" }}>GCash</Text>
+              </View>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#00579F" }}>
+                ₱{walletData.gcash_earnings.toFixed(0)}
+              </Text>
+            </View>
+
+            <View style={{ alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#183B5C", marginRight: 4 }} />
+                <Text style={{ fontSize: 11, color: "#666" }}>Wallet</Text>
+              </View>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C" }}>
+                ₱{walletData.wallet_earnings.toFixed(0)}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -1146,8 +1431,8 @@ const renderTrip = ({ item }) => (
                 driver?.status !== "approved"
                   ? "#D0D5DD"
                   : isOnline
-                    ? "#12B76A" // Green kapag online (nasa itaas)
-                    : "#F2F4F7", // Gray kapag offline (nasa ibaba)
+                    ? "#12B76A"
+                    : "#F2F4F7",
               shadowColor: "#000",
               shadowOffset: { width: 0, height: 4 },
               shadowOpacity: 0.15,
@@ -1171,7 +1456,6 @@ const renderTrip = ({ item }) => (
             />
           </Pressable>
 
-          {/* STATUS TEXT */}
           <Text
             style={{
               marginTop: 5,
@@ -1186,13 +1470,12 @@ const renderTrip = ({ item }) => (
             }}
           >
             {driver?.status !== "approved"
-              ? "🚫 DI PA APPROVED"
+              ? "🚫 NOT APPROVED"
               : isOnline
-                ? "✅ ONLINE NA"
-                : "😴 TULOG PA"}
+                ? "✅ ONLINE"
+                : "😴 OFFLINE"}
           </Text>
 
-          {/* BOOKING STATUS TEXT */}
           <Text
             style={{
               marginTop: 6,
@@ -1208,309 +1491,328 @@ const renderTrip = ({ item }) => (
             }}
           >
             {driver?.status !== "approved"
-              ? "Wait lang, approve muna"
+              ? "Waiting for approval"
               : isOnline
-                ? "Bukas na booking, pre!"
-                : "Sarado muna, walang booking"}
+                ? "Ready to accept bookings"
+                : "Not accepting bookings"}
           </Text>
         </View>
       </View>
 
       {/* EARNINGS / TRIPS SECTION */}
-{/* EARNINGS / TRIPS SECTION */}
-<View style={[styles.earningsCard, { 
-  marginHorizontal: 1, 
-  marginTop: 5,
-  backgroundColor: "#FFF",
-  borderRadius: 24,
-  padding: 20,
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 4 },
-  shadowOpacity: 0.1,
-  shadowRadius: 12,
-  elevation: 5,
-}]}>
-  
-  {/* Header with icon */}
-  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 20 }}>
-    <View style={{
-      backgroundColor: "#183B5C",
-      width: 40,
-      height: 40,
-      borderRadius: 12,
-      justifyContent: "center",
-      alignItems: "center",
-      marginRight: 12,
-    }}>
-      <Ionicons name="stats-chart" size={22} color="#FFB37A" />
-    </View>
-    <View>
-      <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
-        Performance
-      </Text>
-      <Text style={{ fontSize: 12, color: "#666" }}>
-        Your earnings and trips this week
-      </Text>
-    </View>
-  </View>
-
-  {/* Quick Stats Cards */}
-  <View style={{ 
-    flexDirection: "row", 
-    justifyContent: "space-between",
-    marginBottom: 20,
-  }}>
-    <View style={{
-      flex: 1,
-      backgroundColor: "#F0F9FF",
-      padding: 12,
-      borderRadius: 16,
-      marginRight: 8,
-      borderWidth: 1,
-      borderColor: "#B2D9FF",
-    }}>
-      <Text style={{ fontSize: 12, color: "#3B82F6", marginBottom: 4 }}>Week Total</Text>
-      <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
-        ₱{weeklyData.earnings.reduce((a, b) => a + b, 0).toFixed(0)}
-      </Text>
-      <Text style={{ fontSize: 10, color: "#666" }}>earnings</Text>
-    </View>
-
-    <View style={{
-      flex: 1,
-      backgroundColor: "#FEF9E7",
-      padding: 12,
-      borderRadius: 16,
-      marginLeft: 8,
-      borderWidth: 1,
-      borderColor: "#FFE5A3",
-    }}>
-      <Text style={{ fontSize: 12, color: "#F59E0B", marginBottom: 4 }}>Today</Text>
-      <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
-        ₱{todayEarnings.toFixed(0)}
-      </Text>
-      <Text style={{ fontSize: 10, color: "#666" }}>earnings</Text>
-    </View>
-  </View>
-
-  {/* Tabs - Redesigned */}
-  <View style={{ 
-    flexDirection: "row", 
-    backgroundColor: "#F3F4F6",
-    padding: 4,
-    borderRadius: 12,
-    marginBottom: 20,
-  }}>
-    <Pressable
-      style={[
-        {
-          flex: 1,
-          paddingVertical: 10,
-          paddingHorizontal: 16,
-          borderRadius: 10,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-        },
-        activeTab === "earnings" && {
-          backgroundColor: "#FFF",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 4,
-          elevation: 2,
-        },
-      ]}
-      onPress={() => setActiveTab("earnings")}
-    >
-      <Ionicons 
-        name="cash-outline" 
-        size={18} 
-        color={activeTab === "earnings" ? "#183B5C" : "#9CA3AF"} 
-        style={{ marginRight: 6 }}
-      />
-      <Text
-        style={[
-          { fontSize: 14, fontWeight: "600" },
-          activeTab === "earnings" ? { color: "#183B5C" } : { color: "#9CA3AF" },
-        ]}
-      >
-        Earnings
-      </Text>
-    </Pressable>
-
-    <Pressable
-      style={[
-        {
-          flex: 1,
-          paddingVertical: 10,
-          paddingHorizontal: 16,
-          borderRadius: 10,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-        },
-        activeTab === "trips" && {
-          backgroundColor: "#FFF",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 4,
-          elevation: 2,
-        },
-      ]}
-      onPress={() => setActiveTab("trips")}
-    >
-      <Ionicons 
-        name="bicycle-outline" 
-        size={18} 
-        color={activeTab === "trips" ? "#183B5C" : "#9CA3AF"} 
-        style={{ marginRight: 6 }}
-      />
-      <Text
-        style={[
-          { fontSize: 14, fontWeight: "600" },
-          activeTab === "trips" ? { color: "#183B5C" } : { color: "#9CA3AF" },
-        ]}
-      >
-        Trips
-      </Text>
-    </Pressable>
-  </View>
-
-  {/* Content based on active tab */}
-  {activeTab === "earnings" ? (
-    <View>
-      {/* Legend */}
-      <View style={{ 
-        flexDirection: "row", 
-        justifyContent: "flex-end",
-        marginBottom: 10,
-      }}>
-        <View style={{ flexDirection: "row", alignItems: "center", marginRight: 12 }}>
-          <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: "#FFB37A", marginRight: 4 }} />
-          <Text style={{ fontSize: 10, color: "#666" }}>Earnings</Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: "#183B5C", marginRight: 4 }} />
-          <Text style={{ fontSize: 10, color: "#666" }}>Trips (x50)</Text>
-        </View>
-      </View>
-
-      {/* Chart */}
-      <View style={{ 
-        backgroundColor: "#F9FAFB",
-        borderRadius: 16,
-        padding: 12,
-        marginBottom: 10,
-      }}>
-        <LineChart
-          data={{
-            labels: weeklyData.labels,
-            datasets: [
-              {
-                data: weeklyData.earnings,
-                color: () => "#FFB37A",
-                strokeWidth: 2,
-              },
-              {
-                data: weeklyData.trips.map((t) => t * 50),
-                color: () => "#183B5C",
-                strokeWidth: 2,
-              },
-            ],
-          }}
-          width={screenWidth - 80}
-          height={180}
-          yAxisLabel="₱"
-          chartConfig={{
-            backgroundGradientFrom: "#F9FAFB",
-            backgroundGradientTo: "#F9FAFB",
-            decimalPlaces: 0,
-            color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
-            labelColor: (opacity = 1) => `rgba(0,0,0,${opacity})`,
-            style: { borderRadius: 16 },
-            propsForDots: { r: "4", strokeWidth: "2", stroke: "#FFA500" },
-          }}
-          style={{ marginVertical: 8, borderRadius: 16 }}
-          fromZero={true}
-        />
-      </View>
-
-      {/* Daily breakdown */}
-      <View style={{ marginTop: 10 }}>
-        <Text style={{ fontSize: 12, fontWeight: "600", color: "#333", marginBottom: 8 }}>
-          Daily Breakdown
-        </Text>
-        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-          {weeklyData.labels.map((day, index) => (
-            <View key={day} style={{ alignItems: "center" }}>
-              <Text style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>{day}</Text>
-              <Text style={{ fontSize: 13, fontWeight: "bold", color: "#183B5C" }}>
-                ₱{weeklyData.earnings[index]}
-              </Text>
-              <Text style={{ fontSize: 10, color: "#999" }}>
-                {weeklyData.trips[index]} trips
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    </View>
-  ) : (
-    <View>
-      {/* Trips Summary */}
-      <View style={{
-        backgroundColor: "#F9FAFB",
-        borderRadius: 16,
-        padding: 15,
-        marginBottom: 15,
-        flexDirection: "row",
-        justifyContent: "space-between",
-      }}>
-        <View>
-          <Text style={{ fontSize: 12, color: "#666" }}>Total Trips (Week)</Text>
-          <Text style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}>
-            {weeklyData.trips.reduce((a, b) => a + b, 0)}
-          </Text>
-        </View>
-        <View>
-          <Text style={{ fontSize: 12, color: "#666" }}>Today's Trips</Text>
-          <Text style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}>
-            {weeklyData.trips[new Date().getDay() === 0 ? 6 : new Date().getDay() - 1]}
-          </Text>
-        </View>
-      </View>
-
-      {/* Recent Trips List */}
-      <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 10 }}>
-        Recent Trips
-      </Text>
-      <FlatList
-        data={recentTrips}
-        renderItem={renderTrip}
-        keyExtractor={(item) => item.id.toString()}
-        scrollEnabled={false}
-        ListEmptyComponent={
-          <View style={{ 
-            padding: 30, 
+      <View style={[styles.earningsCard, { 
+        marginHorizontal: 20, 
+        marginTop: 30,
+        backgroundColor: "#FFF",
+        borderRadius: 24,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 12,
+        elevation: 5,
+      }]}>
+        
+        {/* Header with icon */}
+        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 20 }}>
+          <View style={{
+            backgroundColor: "#183B5C",
+            width: 40,
+            height: 40,
+            borderRadius: 12,
+            justifyContent: "center",
             alignItems: "center",
-            backgroundColor: "#F9FAFB",
-            borderRadius: 16,
+            marginRight: 12,
           }}>
-            <Ionicons name="bicycle-outline" size={40} color="#D1D5DB" />
-            <Text style={{ marginTop: 10, color: "#9CA3AF", textAlign: "center" }}>
-              No trips yet today
+            <Ionicons name="stats-chart" size={22} color="#FFB37A" />
+          </View>
+          <View>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
+              Performance
             </Text>
-            <Text style={{ fontSize: 12, color: "#D1D5DB", marginTop: 4 }}>
-              Complete a booking to see it here
+            <Text style={{ fontSize: 12, color: "#666" }}>
+              Your earnings and trips this week
             </Text>
           </View>
-        }
-      />
-    </View>
-  )}
-</View>
+        </View>
+
+        {/* Quick Stats Cards */}
+        <View style={{ 
+          flexDirection: "row", 
+          justifyContent: "space-between",
+          marginBottom: 20,
+        }}>
+          <View style={{
+            flex: 1,
+            backgroundColor: "#F0F9FF",
+            padding: 12,
+            borderRadius: 16,
+            marginRight: 8,
+            borderWidth: 1,
+            borderColor: "#B2D9FF",
+          }}>
+            <Text style={{ fontSize: 12, color: "#3B82F6", marginBottom: 4 }}>Week Total</Text>
+            <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+              ₱{weeklyData.earnings.reduce((a, b) => a + b, 0).toFixed(0)}
+            </Text>
+            <Text style={{ fontSize: 10, color: "#666" }}>earnings</Text>
+          </View>
+
+          <View style={{
+            flex: 1,
+            backgroundColor: "#FEF9E7",
+            padding: 12,
+            borderRadius: 16,
+            marginLeft: 8,
+            borderWidth: 1,
+            borderColor: "#FFE5A3",
+          }}>
+            <Text style={{ fontSize: 12, color: "#F59E0B", marginBottom: 4 }}>Today</Text>
+            <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+              ₱{todayEarnings.toFixed(0)}
+            </Text>
+            <Text style={{ fontSize: 10, color: "#666" }}>{todayTrips} trips</Text>
+          </View>
+        </View>
+
+        {/* Tabs */}
+        <View style={{ 
+          flexDirection: "row", 
+          backgroundColor: "#F3F4F6",
+          padding: 4,
+          borderRadius: 12,
+          marginBottom: 20,
+        }}>
+          <Pressable
+            style={[
+              {
+                flex: 1,
+                paddingVertical: 10,
+                paddingHorizontal: 16,
+                borderRadius: 10,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+              },
+              activeTab === "earnings" && {
+                backgroundColor: "#FFF",
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.05,
+                shadowRadius: 4,
+                elevation: 2,
+              },
+            ]}
+            onPress={() => setActiveTab("earnings")}
+          >
+            <Ionicons 
+              name="cash-outline" 
+              size={18} 
+              color={activeTab === "earnings" ? "#183B5C" : "#9CA3AF"} 
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[
+                { fontSize: 14, fontWeight: "600" },
+                activeTab === "earnings" ? { color: "#183B5C" } : { color: "#9CA3AF" },
+              ]}
+            >
+              Earnings
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={[
+              {
+                flex: 1,
+                paddingVertical: 10,
+                paddingHorizontal: 16,
+                borderRadius: 10,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+              },
+              activeTab === "trips" && {
+                backgroundColor: "#FFF",
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.05,
+                shadowRadius: 4,
+                elevation: 2,
+              },
+            ]}
+            onPress={() => setActiveTab("trips")}
+          >
+            <Ionicons 
+              name="bicycle-outline" 
+              size={18} 
+              color={activeTab === "trips" ? "#183B5C" : "#9CA3AF"} 
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[
+                { fontSize: 14, fontWeight: "600" },
+                activeTab === "trips" ? { color: "#183B5C" } : { color: "#9CA3AF" },
+              ]}
+            >
+              Trips
+            </Text>
+          </Pressable>
+        </View>
+
+        {/* Content based on active tab */}
+        {activeTab === "earnings" ? (
+          <View>
+            {/* Legend */}
+            <View style={{ 
+              flexDirection: "row", 
+              justifyContent: "flex-end",
+              marginBottom: 10,
+            }}>
+              <View style={{ flexDirection: "row", alignItems: "center", marginRight: 12 }}>
+                <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: "#FFB37A", marginRight: 4 }} />
+                <Text style={{ fontSize: 10, color: "#666" }}>Earnings (₱)</Text>
+              </View>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: "#183B5C", marginRight: 4 }} />
+                <Text style={{ fontSize: 10, color: "#666" }}>Trips (x50)</Text>
+              </View>
+            </View>
+
+            {/* Chart */}
+            {weeklyData.earnings.some(day => day > 0) ? (
+              <View style={{ 
+                backgroundColor: "#F9FAFB",
+                borderRadius: 16,
+                padding: 12,
+                marginBottom: 10,
+              }}>
+                <LineChart
+                  data={{
+                    labels: weeklyData.labels,
+                    datasets: [
+                      {
+                        data: weeklyData.earnings,
+                        color: () => "#FFB37A",
+                        strokeWidth: 2,
+                      },
+                      {
+                        data: weeklyData.trips.map((t) => t * 50),
+                        color: () => "#183B5C",
+                        strokeWidth: 2,
+                      },
+                    ],
+                  }}
+                  width={screenWidth - 80}
+                  height={180}
+                  yAxisLabel="₱"
+                  chartConfig={{
+                    backgroundGradientFrom: "#F9FAFB",
+                    backgroundGradientTo: "#F9FAFB",
+                    decimalPlaces: 0,
+                    color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
+                    labelColor: (opacity = 1) => `rgba(0,0,0,${opacity})`,
+                    style: { borderRadius: 16 },
+                    propsForDots: { r: "4", strokeWidth: "2", stroke: "#FFA500" },
+                  }}
+                  style={{ marginVertical: 8, borderRadius: 16 }}
+                  fromZero={true}
+                />
+              </View>
+            ) : (
+              <View style={{ 
+                backgroundColor: "#F9FAFB",
+                borderRadius: 16,
+                padding: 30,
+                marginBottom: 10,
+                alignItems: "center",
+              }}>
+                <Ionicons name="bar-chart-outline" size={40} color="#D1D5DB" />
+                <Text style={{ marginTop: 10, color: "#9CA3AF" }}>No earnings data this week</Text>
+              </View>
+            )}
+
+            {/* Daily breakdown */}
+            <View style={{ marginTop: 10 }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#333", marginBottom: 8 }}>
+                Daily Breakdown
+              </Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                {weeklyData.labels.map((day, index) => {
+                  const isToday = index === (new Date().getDay() === 0 ? 6 : new Date().getDay() - 1);
+                  return (
+                    <View key={day} style={{ alignItems: "center" }}>
+                      <Text style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>{day}</Text>
+                      <Text style={{ 
+                        fontSize: 13, 
+                        fontWeight: "bold", 
+                        color: isToday ? "#183B5C" : "#333" 
+                      }}>
+                        ₱{weeklyData.earnings[index]}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: "#999" }}>
+                        {weeklyData.trips[index]} trips
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View>
+            {/* Trips Summary */}
+            <View style={{
+              backgroundColor: "#F9FAFB",
+              borderRadius: 16,
+              padding: 15,
+              marginBottom: 15,
+              flexDirection: "row",
+              justifyContent: "space-between",
+            }}>
+              <View>
+                <Text style={{ fontSize: 12, color: "#666" }}>Total Trips (Week)</Text>
+                <Text style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}>
+                  {weeklyData.trips.reduce((a, b) => a + b, 0)}
+                </Text>
+              </View>
+              <View>
+                <Text style={{ fontSize: 12, color: "#666" }}>Today's Trips</Text>
+                <Text style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}>
+                  {todayTrips}
+                </Text>
+              </View>
+            </View>
+
+            {/* Recent Trips List */}
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 10 }}>
+              Recent Trips
+            </Text>
+            <FlatList
+              data={recentTrips}
+              renderItem={renderTrip}
+              keyExtractor={(item) => item.id.toString()}
+              scrollEnabled={false}
+              ListEmptyComponent={
+                <View style={{ 
+                  padding: 30, 
+                  alignItems: "center",
+                  backgroundColor: "#F9FAFB",
+                  borderRadius: 16,
+                }}>
+                  <Ionicons name="bicycle-outline" size={40} color="#D1D5DB" />
+                  <Text style={{ marginTop: 10, color: "#9CA3AF", textAlign: "center" }}>
+                    No trips yet
+                  </Text>
+                  <Text style={{ fontSize: 12, color: "#D1D5DB", marginTop: 4 }}>
+                    Complete a booking to see it here
+                  </Text>
+                </View>
+              }
+            />
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }

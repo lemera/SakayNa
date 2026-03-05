@@ -21,7 +21,7 @@ import HomeScreen from "./DriverHomeScreen";
 import WalletScreen from "./DriverWalletScreen";
 import InboxScreen from "./DriverInboxScreen";
 import AccountScreen from "./DriverAccountScreen";
-import TrackRideScreen from "./DriverTrackRideScreen";
+import DriverTrackRideScreen from "./DriverTrackRideScreen";
 
 import { navStyles } from "../styles/Driver/NavStyles";
 
@@ -89,7 +89,7 @@ export default function HomePage() {
         {
           event: '*',
           schema: 'public',
-          table: 'bookings',
+          table: 'booking_requests',
           filter: `driver_id=eq.${driverId}`,
         },
         (payload) => {
@@ -389,8 +389,8 @@ export default function HomePage() {
 
       {/* TRACK RIDE BUTTON WITH GLOW EFFECT - Glows for BOTH active AND pending */}
       <Tab.Screen
-        name="TrackRide"
-        component={TrackRideScreen}
+        name="DriverTrackRideScreen"
+        component={DriverTrackRideScreen}
         options={{
           tabBarLabel: "",
           tabBarIcon: () => (
