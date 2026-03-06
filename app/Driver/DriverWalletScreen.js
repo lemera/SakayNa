@@ -653,7 +653,7 @@ export default function DriverWalletScreen({ navigation }) {
               </Text>
             </View>
 
-            <View style={{ alignItems: "center" }}>
+            {/* <View style={{ alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#00579F", marginRight: 4 }} />
                 <Text style={{ fontSize: 11, color: "#666" }}>GCash</Text>
@@ -661,7 +661,7 @@ export default function DriverWalletScreen({ navigation }) {
               <Text style={{ fontSize: 16, fontWeight: "600", color: "#00579F" }}>
                 ₱{(walletData.gcash_earnings || 0).toFixed(0)}
               </Text>
-            </View>
+            </View> */}
 
             <View style={{ alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -845,7 +845,7 @@ export default function DriverWalletScreen({ navigation }) {
             <Text style={{ fontSize: 12, color: "#666" }}>Cash</Text>
           </Pressable>
 
-          {/* GCash */}
+          {/* GCash
           <Pressable 
             style={{ alignItems: "center", flex: 1 }}
             onPress={() => Alert.alert(
@@ -868,7 +868,7 @@ export default function DriverWalletScreen({ navigation }) {
               ₱{(walletData.gcash_earnings || 0).toFixed(0)}
             </Text>
             <Text style={{ fontSize: 12, color: "#666" }}>GCash</Text>
-          </Pressable>
+          </Pressable> */}
 
           {/* Wallet */}
           <Pressable 
@@ -1220,3 +1220,5 @@ export default function DriverWalletScreen({ navigation }) {
     </ScrollView>
   );
 }
+
+// Gcash

@@ -67,6 +67,12 @@ export default function CommuterHomeScreen() {
   const [recentLocations, setRecentLocations] = useState([]);
   const [savedPlaces, setSavedPlaces] = useState([]);
 
+  // Refs for cleanup and tracking
+  const bookingSubscription = useRef(null);
+  const pollingInterval = useRef(null);
+  const currentBookingId = useRef(null);
+  const isMounted = useRef(true);
+
   // Common location details phrases
   const commonDetails = [
     "near the corner",
@@ -83,13 +89,39 @@ export default function CommuterHomeScreen() {
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
+  // Cleanup on unmount
+  useEffect(() => {
+    isMounted.current = true;
+    
+    return () => {
+      isMounted.current = false;
+      cleanupBookingTracking();
+    };
+  }, []);
+
+  const cleanupBookingTracking = () => {
+    console.log("🧹 Cleaning up booking tracking");
+    
+    if (bookingSubscription.current) {
+      bookingSubscription.current.unsubscribe();
+      bookingSubscription.current = null;
+    }
+    
+    if (pollingInterval.current) {
+      clearInterval(pollingInterval.current);
+      pollingInterval.current = null;
+    }
+    
+    currentBookingId.current = null;
+  };
+
   // Use focus effect with cleanup and proper data fetching
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
       
       const loadInitialData = async () => {
-        if (isActive) {
+        if (isActive && isMounted.current) {
           setLoading(true);
           await Promise.all([
             checkActiveBooking(),
@@ -107,6 +139,8 @@ export default function CommuterHomeScreen() {
 
       return () => {
         isActive = false;
+        // Don't cleanup booking tracking on blur if we're finding driver
+        // Only cleanup when component unmounts or when explicitly cancelled
       };
     }, [])
   );
@@ -219,12 +253,24 @@ export default function CommuterHomeScreen() {
         .in("status", ["pending", "accepted", "started"])
         .order("created_at", { ascending: false })
         .limit(1)
-        .maybeSingle(); // Use maybeSingle instead of single to avoid errors
+        .maybeSingle();
 
       if (data) {
         setActiveBooking(data);
-        // Navigate to track ride if there's an active booking
-        navigation.navigate("TrackRide");
+        
+        // If there's an accepted booking, go to TrackRide
+        if (data.status === 'accepted' || data.status === 'started') {
+          navigation.navigate("TrackRide", { 
+            bookingId: data.id, 
+            driverId: data.driver_id 
+          });
+        } 
+        // If there's a pending booking, show finding driver screen
+        else if (data.status === 'pending') {
+          setFindingDriver(true);
+          currentBookingId.current = data.id;
+          setupBookingTracking(data.id);
+        }
       } else {
         setActiveBooking(null);
       }
@@ -567,6 +613,257 @@ export default function CommuterHomeScreen() {
     );
   };
 
+  const setupBookingTracking = (bookingId) => {
+    console.log(`🔴 Setting up tracking for booking: ${bookingId}`);
+    
+    // Clean up any existing tracking
+    cleanupBookingTracking();
+    
+    currentBookingId.current = bookingId;
+
+    // 1. REAL-TIME SUBSCRIPTION (Fastest - updates instantly)
+    bookingSubscription.current = supabase
+      .channel(`booking-${bookingId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bookings',
+          filter: `id=eq.${bookingId}`
+        },
+        (payload) => {
+          console.log('🔄 REAL-TIME UPDATE:', payload.new);
+          
+          if (!isMounted.current) return;
+          
+          if (payload.new.status === 'accepted') {
+            console.log(`✅ Driver ACCEPTED! Driver ID: ${payload.new.driver_id}`);
+            
+            // Navigate immediately
+            handleDriverAccepted(bookingId, payload.new.driver_id);
+          } 
+          else if (payload.new.status === 'cancelled') {
+            console.log('❌ Booking cancelled');
+            
+            // Check who cancelled
+            const cancelledBy = payload.new.cancelled_by || 'unknown';
+            const reason = payload.new.cancellation_reason || 'No reason provided';
+            
+            handleBookingCancelled(cancelledBy, reason);
+          }
+          else if (payload.new.status === 'started') {
+            console.log('🚗 Trip started');
+            // Already in TrackRide, will update there
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log(`📡 Subscription status: ${status}`);
+      });
+
+    // 2. POLLING (Backup - checks every 3 seconds)
+    let attempts = 0;
+    const maxAttempts = 30; // 90 seconds (3s × 30)
+    
+    pollingInterval.current = setInterval(async () => {
+      if (!isMounted.current || !currentBookingId.current) {
+        clearInterval(pollingInterval.current);
+        pollingInterval.current = null;
+        return;
+      }
+      
+      attempts++;
+      console.log(`⏱️ Polling attempt ${attempts}/${maxAttempts}`);
+      
+      const { data: booking, error } = await supabase
+        .from("bookings")
+        .select("status, driver_id, cancelled_by, cancellation_reason")
+        .eq("id", bookingId)
+        .maybeSingle();
+
+      if (error) {
+        console.log("❌ Polling error:", error);
+        return;
+      }
+
+      if (booking?.status === 'accepted') {
+        console.log(`✅ Polling found ACCEPTED booking! Driver: ${booking.driver_id}`);
+        
+        // Clean up
+        cleanupBookingTracking();
+        
+        // Navigate
+        if (isMounted.current) {
+          setFindingDriver(false);
+          navigation.navigate("TrackRide", { 
+            bookingId, 
+            driverId: booking.driver_id 
+          });
+        }
+      }
+      else if (booking?.status === 'cancelled') {
+        console.log('❌ Polling found CANCELLED booking');
+        
+        // Clean up
+        cleanupBookingTracking();
+        
+        // Show alert
+        if (isMounted.current) {
+          const cancelledBy = booking.cancelled_by || 'unknown';
+          const reason = booking.cancellation_reason || 'No reason provided';
+          
+          Alert.alert(
+            "❌ Booking Cancelled",
+            `This booking was cancelled by the ${cancelledBy}.\n\nReason: ${reason}`,
+            [{ text: "OK" }]
+          );
+          
+          setFindingDriver(false);
+        }
+      }
+      else if (attempts >= maxAttempts) {
+        // Time out after 90 seconds
+        console.log('⏰ Polling timeout - no driver found');
+        cleanupBookingTracking();
+        
+        if (isMounted.current) {
+          Alert.alert(
+            "No Driver Found",
+            "We couldn't find a driver at this time. Would you like to try again?",
+            [
+              { 
+                text: "Cancel", 
+                onPress: () => {
+                  setFindingDriver(false);
+                  cancelBooking(bookingId);
+                }
+              },
+              { 
+                text: "Try Again", 
+                onPress: () => findAndNotifyDrivers(bookingId) 
+              }
+            ]
+          );
+        }
+      }
+    }, 3000);
+  };
+
+  const handleDriverAccepted = (bookingId, driverId) => {
+    // Clean up tracking
+    cleanupBookingTracking();
+    
+    // Update UI
+    setFindingDriver(false);
+    
+    // Navigate to TrackRide
+    navigation.navigate("TrackRide", { 
+      bookingId, 
+      driverId 
+    });
+  };
+
+  const handleBookingCancelled = (cancelledBy, reason) => {
+    cleanupBookingTracking();
+    
+    if (isMounted.current) {
+      setFindingDriver(false);
+      
+      // Show different messages based on who cancelled
+      if (cancelledBy === 'commuter') {
+        Alert.alert(
+          "✅ Booking Cancelled",
+          "Your booking has been successfully cancelled.",
+          [{ text: "OK" }]
+        );
+      } else if (cancelledBy === 'driver') {
+        Alert.alert(
+          "❌ Booking Cancelled by Driver",
+          `The driver cancelled your booking.\n\nReason: ${reason}`,
+          [{ text: "OK" }]
+        );
+      } else if (cancelledBy === 'system') {
+        Alert.alert(
+          "⚠️ Booking Expired",
+          `Your booking has expired.\n\nReason: ${reason}`,
+          [{ text: "OK" }]
+        );
+      } else {
+        Alert.alert(
+          "❌ Booking Cancelled",
+          `Your booking was cancelled.\n\nReason: ${reason}`,
+          [{ text: "OK" }]
+        );
+      }
+    }
+  };
+
+  // ================= NEW: CANCEL BOOKING FUNCTION =================
+  const cancelBooking = async (bookingId, reason = "Cancelled by commuter") => {
+    try {
+      console.log(`🛑 Cancelling booking: ${bookingId}`);
+      
+      const { error } = await supabase
+        .from("bookings")
+        .update({ 
+          status: "cancelled",
+          cancelled_at: new Date(),
+          cancellation_reason: reason,
+          cancelled_by: "commuter",
+          updated_at: new Date()
+        })
+        .eq("id", bookingId);
+
+      if (error) throw error;
+
+      console.log("✅ Booking cancelled successfully");
+      
+      // Also update any pending booking requests
+      await supabase
+        .from("booking_requests")
+        .update({ 
+          status: "cancelled",
+          responded_at: new Date()
+        })
+        .eq("booking_id", bookingId)
+        .eq("status", "pending");
+
+      // Clean up tracking
+      cleanupBookingTracking();
+      
+      // Update UI
+      setFindingDriver(false);
+      
+    } catch (err) {
+      console.log("❌ Error cancelling booking:", err);
+      Alert.alert("Error", "Failed to cancel booking");
+    }
+  };
+
+  // ================= NEW: HANDLE MANUAL CANCELLATION =================
+  const handleManualCancel = async () => {
+    if (!currentBookingId.current) {
+      setFindingDriver(false);
+      return;
+    }
+
+    Alert.alert(
+      "Cancel Booking",
+      "Are you sure you want to cancel this booking?",
+      [
+        { text: "No", style: "cancel" },
+        { 
+          text: "Yes, Cancel", 
+          style: "destructive",
+          onPress: async () => {
+            await cancelBooking(currentBookingId.current, "Cancelled by commuter");
+          }
+        }
+      ]
+    );
+  };
+
   const createBooking = async () => {
     if (!commuterId) {
       Alert.alert("Error", "Please login first");
@@ -611,6 +908,9 @@ export default function CommuterHomeScreen() {
 
       if (bookingError) throw bookingError;
 
+      console.log(`✅ Booking created: ${booking.id}`);
+      
+      // Save recent locations
       if (pickup && pickupText) {
         saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
       }
@@ -618,7 +918,11 @@ export default function CommuterHomeScreen() {
         saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
       }
 
-      await findAndNotifyDrivers(booking.id);
+      // Set up tracking for this booking
+      setupBookingTracking(booking.id);
+
+      // Find and notify drivers (background process)
+      findAndNotifyDrivers(booking.id);
 
     } catch (err) {
       console.log("Error creating booking:", err);
@@ -629,6 +933,8 @@ export default function CommuterHomeScreen() {
 
   const findAndNotifyDrivers = async (bookingId) => {
     try {
+      console.log(`🚀 Finding drivers for booking: ${bookingId}`);
+
       const { data: drivers, error } = await supabase
         .from("driver_locations")
         .select(`
@@ -688,6 +994,7 @@ export default function CommuterHomeScreen() {
 
       if (requestError) throw requestError;
 
+      // Send push notifications
       nearbyDrivers.slice(0, 5).forEach(driver => {
         if (driver.expo_push_token) {
           sendPushNotification(
@@ -698,22 +1005,14 @@ export default function CommuterHomeScreen() {
         }
       });
 
-      setTimeout(() => checkBookingStatus(bookingId), 45000);
-
-      Alert.alert(
-        "Looking for Drivers",
-        "We're notifying nearby drivers. You'll be notified when a driver accepts.",
-        [{ text: "OK" }]
-      );
+      console.log(`📨 Notified ${nearbyDrivers.length} drivers`);
 
     } catch (err) {
-      console.log("Error finding drivers:", err);
-      handleDriverSearchError(bookingId);
+      console.log("❌ Error finding drivers:", err);
     }
   };
 
   const handleNoDriversAvailable = async (bookingId) => {
-    setFindingDriver(false);
     Alert.alert(
       "No Drivers Available",
       "No drivers are currently online. Would you like to try again?",
@@ -721,10 +1020,7 @@ export default function CommuterHomeScreen() {
         { 
           text: "Cancel", 
           onPress: async () => {
-            await supabase
-              .from("bookings")
-              .update({ status: "cancelled" })
-              .eq("id", bookingId);
+            await cancelBooking(bookingId, "No drivers available");
           }
         },
         { 
@@ -743,11 +1039,7 @@ export default function CommuterHomeScreen() {
         { 
           text: "Cancel", 
           onPress: async () => {
-            setFindingDriver(false);
-            await supabase
-              .from("bookings")
-              .update({ status: "cancelled" })
-              .eq("id", bookingId);
+            await cancelBooking(bookingId, "No drivers nearby");
           }
         },
         { 
@@ -803,11 +1095,7 @@ export default function CommuterHomeScreen() {
             { 
               text: "Cancel", 
               onPress: async () => {
-                setFindingDriver(false);
-                await supabase
-                  .from("bookings")
-                  .update({ status: "cancelled" })
-                  .eq("id", bookingId);
+                await cancelBooking(bookingId, "No drivers within 5km");
               }
             },
             { 
@@ -843,74 +1131,9 @@ export default function CommuterHomeScreen() {
         }
       });
 
-      setTimeout(() => checkBookingStatus(bookingId), 45000);
-
     } catch (err) {
       console.log("Error expanding search:", err);
-      handleDriverSearchError(bookingId);
     }
-  };
-
-  const checkBookingStatus = async (bookingId) => {
-    try {
-      const { data: booking, error } = await supabase
-        .from("bookings")
-        .select("status, driver_id")
-        .eq("id", bookingId)
-        .single();
-
-      if (error) throw error;
-
-      if (booking.status === 'pending') {
-        Alert.alert(
-          "No Driver Accepted",
-          "No drivers accepted your booking. Would you like to try again?",
-          [
-            { 
-              text: "Cancel", 
-              onPress: async () => {
-                setFindingDriver(false);
-                await supabase
-                  .from("bookings")
-                  .update({ status: "cancelled" })
-                  .eq("id", bookingId);
-              }
-            },
-            { 
-              text: "Try Again", 
-              onPress: () => findAndNotifyDrivers(bookingId) 
-            }
-          ]
-        );
-      } else if (booking.status === 'accepted') {
-        setFindingDriver(false);
-        navigation.navigate("TrackRide", { 
-          bookingId, 
-          driverId: booking.driver_id 
-        });
-      }
-    } catch (err) {
-      console.log("Error checking booking status:", err);
-    }
-  };
-
-  const handleDriverSearchError = async (bookingId) => {
-    setFindingDriver(false);
-    Alert.alert(
-      "Error",
-      "Failed to find drivers. Please try again.",
-      [
-        {
-          text: "OK",
-          onPress: async () => {
-            await supabase
-              .from("bookings")
-              .update({ status: "cancelled" })
-              .eq("id", bookingId);
-          }
-        }
-      ]
-    );
   };
 
   const sendPushNotification = async (expoPushToken, title, body) => {
@@ -941,18 +1164,17 @@ export default function CommuterHomeScreen() {
   const cancelFinding = async () => {
     Alert.alert(
       "Cancel Finding",
-      "Are you sure you want to cancel?",
+      "Are you sure you want to cancel finding a driver?",
       [
         { text: "No", style: "cancel" },
         { 
           text: "Yes, Cancel", 
+          style: "destructive",
           onPress: async () => {
-            setFindingDriver(false);
-            if (activeBooking?.id) {
-              await supabase
-                .from("bookings")
-                .update({ status: "cancelled" })
-                .eq("id", activeBooking.id);
+            if (currentBookingId.current) {
+              await cancelBooking(currentBookingId.current, "Cancelled by commuter");
+            } else {
+              setFindingDriver(false);
             }
           }
         }
@@ -977,7 +1199,7 @@ export default function CommuterHomeScreen() {
         <Text style={styles.findingDriverTitle}>Finding your driver...</Text>
         <Text style={styles.findingDriverSubtitle}>
           Looking for nearby available drivers{'\n'}
-          This usually takes 30-60 seconds
+          You'll be notified as soon as a driver accepts
         </Text>
         
         <View style={styles.statsContainer}>
@@ -988,8 +1210,8 @@ export default function CommuterHomeScreen() {
           </View>
           <View style={styles.statItem}>
             <Ionicons name="time" size={24} color="#FFB37A" />
-            <Text style={styles.statValue}>30-60s</Text>
-            <Text style={styles.statLabel}>Est. Wait Time</Text>
+            <Text style={styles.statValue}>Instant</Text>
+            <Text style={styles.statLabel}>Real-time Updates</Text>
           </View>
         </View>
 
@@ -997,7 +1219,7 @@ export default function CommuterHomeScreen() {
           style={styles.cancelFindingButton}
           onPress={cancelFinding}
         >
-          <Text style={styles.cancelFindingText}>Cancel</Text>
+          <Text style={styles.cancelFindingText}>Cancel Booking</Text>
         </Pressable>
       </View>
     );
@@ -1245,7 +1467,7 @@ export default function CommuterHomeScreen() {
           <View style={styles.driversInfo}>
             <Ionicons name="people-circle" size={20} color="#183B5C" />
             <Text style={styles.driversText}>
-              {nearbyDrivers} drivers nearby • Will notify drivers in queue
+              {nearbyDrivers} drivers nearby • Real-time updates when driver accepts
             </Text>
           </View>
 
@@ -1274,6 +1496,7 @@ export default function CommuterHomeScreen() {
 
 const styles = StyleSheet.create({
   container: {
+    marginTop:-50,
     flex: 1,
     backgroundColor: "#F5F7FA",
   },

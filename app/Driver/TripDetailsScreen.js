@@ -31,7 +31,7 @@ export default function TripDetailsScreen({ navigation }) {
       setLoading(true);
       console.log("🔍 Fetching trip details for ID:", tripId);
 
-      // Fetch booking details with commuter info
+      // Fetch booking details with commuter info and driver info if available
       const { data: bookingData, error: bookingError } = await supabase
         .from("bookings")
         .select(`
@@ -43,6 +43,14 @@ export default function TripDetailsScreen({ navigation }) {
             last_name,
             phone,
             email,
+            profile_picture
+          ),
+          driver:drivers (
+            id,
+            first_name,
+            middle_name,
+            last_name,
+            phone,
             profile_picture
           )
         `)
@@ -70,7 +78,6 @@ export default function TripDetailsScreen({ navigation }) {
     if (!dateString) return "N/A";
     const date = new Date(dateString);
     return date.toLocaleDateString('en-PH', {
-      weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -80,7 +87,7 @@ export default function TripDetailsScreen({ navigation }) {
   };
 
   const getStatusColor = (status) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'completed': return '#10B981';
       case 'cancelled': return '#EF4444';
       case 'pending': return '#F59E0B';
@@ -90,7 +97,7 @@ export default function TripDetailsScreen({ navigation }) {
   };
 
   const getStatusIcon = (status) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'completed': return 'checkmark-circle';
       case 'cancelled': return 'close-circle';
       case 'pending': return 'time';
@@ -99,12 +106,22 @@ export default function TripDetailsScreen({ navigation }) {
     }
   };
 
+  const getStatusLabel = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'completed': return 'Completed';
+      case 'cancelled': return 'Cancelled';
+      case 'pending': return 'Pending';
+      case 'accepted': return 'Accepted';
+      default: return status || 'Unknown';
+    }
+  };
+
   const openMaps = (lat, lng, label) => {
-    const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}&query_place_id=${label}`;
+    const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
     Linking.openURL(url);
   };
 
-  const callCommuter = (phone) => {
+  const callContact = (phone) => {
     if (!phone) {
       Alert.alert("Error", "No phone number available");
       return;
@@ -143,6 +160,12 @@ export default function TripDetailsScreen({ navigation }) {
     );
   }
 
+  // Determine which fare to display
+  const displayFare = trip.actual_fare || trip.fare || trip.estimated_fare || 0;
+  
+  // Determine payment method
+  const paymentMethod = trip.payment_method || trip.payment_type || 'cash';
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: "#F5F7FA" }}
@@ -172,6 +195,11 @@ export default function TripDetailsScreen({ navigation }) {
         <Text style={{ fontSize: 14, color: "#FFB37A", marginTop: 5 }}>
           {formatDate(trip.created_at)}
         </Text>
+        {trip.booking_reference && (
+          <Text style={{ fontSize: 12, color: "#FFF", marginTop: 5 }}>
+            Ref: {trip.booking_reference}
+          </Text>
+        )}
       </View>
 
       {/* Status Banner */}
@@ -210,13 +238,13 @@ export default function TripDetailsScreen({ navigation }) {
               color: getStatusColor(trip.status),
               textTransform: "capitalize"
             }}>
-              {trip.status}
+              {getStatusLabel(trip.status)}
             </Text>
           </View>
           <View>
             <Text style={{ color: "#666", fontSize: 12 }}>Fare</Text>
             <Text style={{ fontSize: 22, fontWeight: "bold", color: "#183B5C" }}>
-              ₱{trip.actual_fare?.toFixed(2) || trip.fare?.toFixed(2) || "0.00"}
+              ₱{displayFare?.toFixed(2)}
             </Text>
           </View>
         </View>
@@ -248,6 +276,16 @@ export default function TripDetailsScreen({ navigation }) {
             <Text style={{ fontSize: 16, color: "#333", marginTop: 2 }}>
               {trip.pickup_location}
             </Text>
+            {trip.pickup_landmark && (
+              <Text style={{ fontSize: 14, color: "#666", marginTop: 2 }}>
+                Landmark: {trip.pickup_landmark}
+              </Text>
+            )}
+            {trip.pickup_details && (
+              <Text style={{ fontSize: 14, color: "#666", marginTop: 2 }}>
+                Details: {trip.pickup_details}
+              </Text>
+            )}
             {trip.pickup_latitude && trip.pickup_longitude && (
               <Pressable 
                 onPress={() => openMaps(trip.pickup_latitude, trip.pickup_longitude, "Pickup")}
@@ -281,6 +319,16 @@ export default function TripDetailsScreen({ navigation }) {
             <Text style={{ fontSize: 16, color: "#333", marginTop: 2 }}>
               {trip.dropoff_location}
             </Text>
+            {trip.dropoff_landmark && (
+              <Text style={{ fontSize: 14, color: "#666", marginTop: 2 }}>
+                Landmark: {trip.dropoff_landmark}
+              </Text>
+            )}
+            {trip.dropoff_details && (
+              <Text style={{ fontSize: 14, color: "#666", marginTop: 2 }}>
+                Details: {trip.dropoff_details}
+              </Text>
+            )}
             {trip.dropoff_latitude && trip.dropoff_longitude && (
               <Pressable 
                 onPress={() => openMaps(trip.dropoff_latitude, trip.dropoff_longitude, "Dropoff")}
@@ -312,6 +360,15 @@ export default function TripDetailsScreen({ navigation }) {
           shadowRadius: 4,
           elevation: 2,
         }}>
+          {trip.passenger_count && (
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 12 }}>
+              <Text style={{ color: "#666" }}>Passengers</Text>
+              <Text style={{ fontWeight: "600", color: "#333" }}>
+                {trip.passenger_count}
+              </Text>
+            </View>
+          )}
+
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 12 }}>
             <Text style={{ color: "#666" }}>Distance</Text>
             <Text style={{ fontWeight: "600", color: "#333" }}>
@@ -329,7 +386,7 @@ export default function TripDetailsScreen({ navigation }) {
           <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 12 }}>
             <Text style={{ color: "#666" }}>Payment Method</Text>
             <Text style={{ fontWeight: "600", color: "#333", textTransform: "capitalize" }}>
-              {trip.payment_method || trip.payment_type || "N/A"}
+              {paymentMethod}
             </Text>
           </View>
 
@@ -343,6 +400,24 @@ export default function TripDetailsScreen({ navigation }) {
               {trip.payment_status || "pending"}
             </Text>
           </View>
+
+          {trip.base_fare && (
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 12 }}>
+              <Text style={{ color: "#666" }}>Base Fare</Text>
+              <Text style={{ fontWeight: "600", color: "#333" }}>
+                ₱{trip.base_fare}.00
+              </Text>
+            </View>
+          )}
+
+          {trip.per_km_rate && (
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 12 }}>
+              <Text style={{ color: "#666" }}>Per KM Rate</Text>
+              <Text style={{ fontWeight: "600", color: "#333" }}>
+                ₱{trip.per_km_rate}.00
+              </Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -374,21 +449,30 @@ export default function TripDetailsScreen({ navigation }) {
               alignItems: "center",
               marginRight: 15,
             }}>
-              <Ionicons name="person" size={30} color="#9CA3AF" />
+              {commuter.profile_picture ? (
+                <Image source={{ uri: commuter.profile_picture }} style={{ width: 50, height: 50, borderRadius: 25 }} />
+              ) : (
+                <Ionicons name="person" size={30} color="#9CA3AF" />
+              )}
             </View>
             
             <View style={{ flex: 1 }}>
               <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
-                {commuter.first_name} {commuter.last_name}
+                {commuter.first_name} {commuter.middle_name ? commuter.middle_name + ' ' : ''}{commuter.last_name}
               </Text>
               <Text style={{ fontSize: 14, color: "#666", marginTop: 2 }}>
                 {commuter.phone || "No phone number"}
               </Text>
+              {commuter.email && (
+                <Text style={{ fontSize: 12, color: "#999", marginTop: 2 }}>
+                  {commuter.email}
+                </Text>
+              )}
             </View>
 
             {commuter.phone && (
               <Pressable 
-                onPress={() => callCommuter(commuter.phone)}
+                onPress={() => callContact(commuter.phone)}
                 style={{
                   backgroundColor: "#183B5C",
                   width: 40,
@@ -404,6 +488,69 @@ export default function TripDetailsScreen({ navigation }) {
           </View>
         </View>
       )}
+
+      {/* Driver Information (if assigned)
+      {trip.driver && (
+        <View style={{ marginHorizontal: 20, marginTop: 25 }}>
+          <Text style={{ fontSize: 18, fontWeight: "bold", marginBottom: 15, color: "#333" }}>
+            🚗 Driver
+          </Text>
+
+          <View style={{ 
+            backgroundColor: "#FFF", 
+            borderRadius: 16, 
+            padding: 15,
+            flexDirection: "row",
+            alignItems: "center",
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.05,
+            shadowRadius: 4,
+            elevation: 2,
+          }}>
+            <View style={{
+              width: 50,
+              height: 50,
+              borderRadius: 25,
+              backgroundColor: "#E5E7EB",
+              justifyContent: "center",
+              alignItems: "center",
+              marginRight: 15,
+            }}>
+              {trip.driver.profile_picture ? (
+                <Image source={{ uri: trip.driver.profile_picture }} style={{ width: 50, height: 50, borderRadius: 25 }} />
+              ) : (
+                <Ionicons name="person" size={30} color="#9CA3AF" />
+              )}
+            </View>
+            
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
+                {trip.driver.first_name} {trip.driver.middle_name ? trip.driver.middle_name + ' ' : ''}{trip.driver.last_name}
+              </Text>
+              <Text style={{ fontSize: 14, color: "#666", marginTop: 2 }}>
+                {trip.driver.phone || "No phone number"}
+              </Text>
+            </View>
+
+            {trip.driver.phone && (
+              <Pressable 
+                onPress={() => callContact(trip.driver.phone)}
+                style={{
+                  backgroundColor: "#183B5C",
+                  width: 40,
+                  height: 40,
+                  borderRadius: 20,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Ionicons name="call" size={20} color="#FFF" />
+              </Pressable>
+            )}
+          </View>
+        </View>
+      )} */}
 
       {/* Timeline */}
       <View style={{ marginHorizontal: 20, marginTop: 25 }}>
@@ -421,6 +568,11 @@ export default function TripDetailsScreen({ navigation }) {
           shadowRadius: 4,
           elevation: 2,
         }}>
+          <View style={{ flexDirection: "row", marginBottom: 10 }}>
+            <Text style={{ width: 100, color: "#666" }}>Created</Text>
+            <Text style={{ flex: 1, fontWeight: "500" }}>{formatDate(trip.created_at)}</Text>
+          </View>
+
           {trip.accepted_at && (
             <View style={{ flexDirection: "row", marginBottom: 10 }}>
               <Text style={{ width: 100, color: "#666" }}>Accepted</Text>
@@ -443,16 +595,23 @@ export default function TripDetailsScreen({ navigation }) {
           )}
           
           {trip.ride_completed_at && (
-            <View style={{ flexDirection: "row" }}>
+            <View style={{ flexDirection: "row", marginBottom: 10 }}>
               <Text style={{ width: 100, color: "#666" }}>Completed</Text>
               <Text style={{ flex: 1, fontWeight: "500" }}>{formatDate(trip.ride_completed_at)}</Text>
+            </View>
+          )}
+
+          {trip.cancelled_at && (
+            <View style={{ flexDirection: "row" }}>
+              <Text style={{ width: 100, color: "#666" }}>Cancelled</Text>
+              <Text style={{ flex: 1, fontWeight: "500" }}>{formatDate(trip.cancelled_at)}</Text>
             </View>
           )}
         </View>
       </View>
 
       {/* Ratings & Reviews */}
-      {(trip.commuter_rating || trip.driver_review) && (
+      {(trip.commuter_rating || trip.commuter_review || trip.driver_rating || trip.driver_review) && (
         <View style={{ marginHorizontal: 20, marginTop: 25 }}>
           <Text style={{ fontSize: 18, fontWeight: "bold", marginBottom: 15, color: "#333" }}>
             ⭐ Feedback
@@ -469,25 +628,55 @@ export default function TripDetailsScreen({ navigation }) {
             elevation: 2,
           }}>
             {trip.commuter_rating && (
-              <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
-                <Text style={{ marginRight: 10, color: "#666" }}>Your rating:</Text>
-                <View style={{ flexDirection: "row" }}>
-                  {[1,2,3,4,5].map((star) => (
-                    <Ionicons 
-                      key={star}
-                      name={star <= trip.commuter_rating ? "star" : "star-outline"} 
-                      size={16} 
-                      color="#F59E0B" 
-                    />
-                  ))}
+              <View style={{ marginBottom: trip.commuter_review ? 15 : 0 }}>
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
+                  <Text style={{ marginRight: 10, color: "#666" }}>Commuter rating:</Text>
+                  <View style={{ flexDirection: "row" }}>
+                    {[1,2,3,4,5].map((star) => (
+                      <Ionicons 
+                        key={star}
+                        name={star <= trip.commuter_rating ? "star" : "star-outline"} 
+                        size={16} 
+                        color="#F59E0B" 
+                      />
+                    ))}
+                  </View>
                 </View>
+                {trip.commuter_review && (
+                  <Text style={{ color: "#333", fontStyle: "italic" }}>"{trip.commuter_review}"</Text>
+                )}
+                {trip.commuter_rated_at && (
+                  <Text style={{ fontSize: 11, color: "#999", marginTop: 5 }}>
+                    Rated on: {formatDate(trip.commuter_rated_at)}
+                  </Text>
+                )}
               </View>
             )}
             
-            {trip.commuter_review && (
+            {trip.driver_rating && (
               <View>
-                <Text style={{ color: "#666", marginBottom: 5 }}>Review:</Text>
-                <Text style={{ color: "#333", fontStyle: "italic" }}>"{trip.commuter_review}"</Text>
+                {trip.commuter_rating && <View style={{ height: 1, backgroundColor: "#E5E7EB", marginVertical: 15 }} />}
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
+                  <Text style={{ marginRight: 10, color: "#666" }}>Driver rating:</Text>
+                  <View style={{ flexDirection: "row" }}>
+                    {[1,2,3,4,5].map((star) => (
+                      <Ionicons 
+                        key={star}
+                        name={star <= trip.driver_rating ? "star" : "star-outline"} 
+                        size={16} 
+                        color="#F59E0B" 
+                      />
+                    ))}
+                  </View>
+                </View>
+                {trip.driver_review && (
+                  <Text style={{ color: "#333", fontStyle: "italic" }}>"{trip.driver_review}"</Text>
+                )}
+                {trip.driver_rated_at && (
+                  <Text style={{ fontSize: 11, color: "#999", marginTop: 5 }}>
+                    Rated on: {formatDate(trip.driver_rated_at)}
+                  </Text>
+                )}
               </View>
             )}
           </View>
@@ -529,9 +718,16 @@ export default function TripDetailsScreen({ navigation }) {
                 Cancelled by: {trip.cancelled_by}
               </Text>
             )}
+            {trip.cancelled_at && (
+              <Text style={{ color: "#7F1D1D", marginTop: 5, fontSize: 12 }}>
+                Cancelled at: {formatDate(trip.cancelled_at)}
+              </Text>
+            )}
           </View>
         )}
       </View>
     </ScrollView>
   );
 }
+
+// Payment Status

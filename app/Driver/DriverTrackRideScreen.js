@@ -1,5 +1,5 @@
 // screens/driver/DriverTrackRideScreen.js
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Platform,
   Image,
   StyleSheet,
+  Modal,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,6 +20,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
+import QRCode from 'react-native-qrcode-svg';
 import Constants from "expo-constants";
 
 export default function DriverTrackRideScreen({ navigation }) {
@@ -40,6 +42,7 @@ export default function DriverTrackRideScreen({ navigation }) {
   
   // For pending requests
   const [pendingRequests, setPendingRequests] = useState([]);
+  const [cancelledRequest, setCancelledRequest] = useState(null);
   
   // For request map
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -55,8 +58,105 @@ export default function DriverTrackRideScreen({ navigation }) {
   
   // UI state
   const [showPendingRequests, setShowPendingRequests] = useState(true);
+  const [cancelledBookingAlert, setCancelledBookingAlert] = useState(null);
+
+  // QR Code related state - Use refs to prevent re-renders
+  const showQRModalRef = useRef(false);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [qrPoints, setQrPoints] = useState(0);
+  const [qrFare, setQrFare] = useState(0);
+  const [qrValue, setQrValue] = useState('');
+  const [waitingForPayment, setWaitingForPayment] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  
+  // Timer refs
+  const timerRef = useRef(null);
+  const [timeLeft, setTimeLeft] = useState(300);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
+  // Timer effect - separated to prevent re-renders
+  useEffect(() => {
+    if (showQRModal && timeLeft > 0 && !isProcessingPayment) {
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerRef.current);
+            if (!isProcessingPayment) {
+              setShowQRModal(false);
+              setWaitingForPayment(false);
+              Alert.alert(
+                "QR Code Expired",
+                "The QR code has expired. Please try again.",
+                [{ text: "OK" }]
+              );
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      
+      return () => {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
+      };
+    }
+  }, [showQRModal, isProcessingPayment]); // Removed timeLeft from dependencies
+
+  // Update showQRModalRef whenever showQRModal changes
+  useEffect(() => {
+    showQRModalRef.current = showQRModal;
+  }, [showQRModal]);
+
+  // Listen for payment confirmation from commuter via real-time subscription
+  useEffect(() => {
+    if (!activeBooking || !waitingForPayment || isProcessingPayment) return;
+
+    const paymentSubscription = supabase
+      .channel(`payment-${activeBooking.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bookings',
+          filter: `id=eq.${activeBooking.id}`,
+        },
+        (payload) => {
+          console.log("💳 Payment update received:", payload);
+          
+          // Check if payment status changed to paid
+          if (payload.new.payment_status === 'paid' && waitingForPayment && !isProcessingPayment) {
+            setIsProcessingPayment(true);
+            
+            // Complete the trip
+            completeTripWithPayment(
+              payload.new.actual_fare || activeBooking.fare,
+              "points",
+              qrPoints
+            ).finally(() => {
+              setIsProcessingPayment(false);
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      paymentSubscription.unsubscribe();
+    };
+  }, [activeBooking, waitingForPayment, qrPoints, isProcessingPayment]);
 
   useEffect(() => {
     if (pendingRequests.length > 0 && !selectedRequest && !activeBooking) {
@@ -94,7 +194,69 @@ export default function DriverTrackRideScreen({ navigation }) {
     }, [])
   );
 
-  // Subscribe to real-time updates
+  // Periodic check for bookings (every 10 seconds)
+  useEffect(() => {
+    if (!driverId) return;
+
+    const interval = setInterval(() => {
+      console.log("⏰ Periodic check for bookings");
+      checkForBookings();
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [driverId, activeBooking, hasArrivedAtPickup, rideStarted]);
+
+  const checkForBookings = async () => {
+    try {
+      if (!driverId) return;
+      
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("id, status, driver_arrived_at, ride_started_at, payment_status")
+        .eq("driver_id", driverId)
+        .in("status", ["accepted", "pending"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.log("❌ Error in periodic check:", error);
+        return;
+      }
+
+      if (data) {
+        console.log("📊 Found booking in periodic check:", data);
+        if (data.status === "accepted" && !activeBooking) {
+          await fetchActiveBooking(driverId);
+        } else if (data.status === "accepted" && activeBooking) {
+          if (data.driver_arrived_at && !hasArrivedAtPickup) {
+            setHasArrivedAtPickup(true);
+            setNavigationDestination('dropoff');
+          }
+          if (data.ride_started_at && !rideStarted) {
+            setRideStarted(true);
+          }
+          // Check if payment was completed while waiting
+          if (data.payment_status === 'paid' && waitingForPayment && !isProcessingPayment) {
+            setIsProcessingPayment(true);
+            completeTripWithPayment(
+              activeBooking.fare,
+              "points",
+              qrPoints
+            ).finally(() => {
+              setIsProcessingPayment(false);
+            });
+          }
+        } else if (data.status === "pending") {
+          await fetchPendingRequests(driverId);
+        }
+      }
+    } catch (err) {
+      console.log("❌ Error in checkForBookings:", err);
+    }
+  };
+
+  // ================= REAL-TIME SUBSCRIPTIONS =================
   useEffect(() => {
     if (!driverId) return;
 
@@ -113,6 +275,46 @@ export default function DriverTrackRideScreen({ navigation }) {
           fetchPendingRequests(driverId);
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'booking_requests',
+          filter: `driver_id=eq.${driverId}`,
+        },
+        (payload) => {
+          console.log("📝 Booking request updated:", payload);
+          
+          if (payload.new.status === 'rejected' || payload.new.status === 'cancelled') {
+            fetchBookingDetails(payload.new.booking_id).then(booking => {
+              if (booking) {
+                const cancelledBy = booking.cancelled_by || 'commuter';
+                const reason = booking.cancellation_reason || 'No reason provided';
+                
+                Alert.alert(
+                  "❌ Booking Request Cancelled",
+                  `The booking request has been cancelled by the ${cancelledBy}.\n\nReason: ${reason}`,
+                  [{ text: "OK" }]
+                );
+                
+                setCancelledRequest({
+                  id: payload.new.booking_id,
+                  reason: reason,
+                  cancelled_by: cancelledBy,
+                  timestamp: new Date()
+                });
+                
+                setTimeout(() => {
+                  setCancelledRequest(null);
+                }, 5000);
+              }
+            });
+          }
+          
+          fetchPendingRequests(driverId);
+        }
+      )
       .subscribe();
 
     const bookingsSubscription = supabase
@@ -120,15 +322,80 @@ export default function DriverTrackRideScreen({ navigation }) {
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'UPDATE',
           schema: 'public',
           table: 'bookings',
           filter: `driver_id=eq.${driverId}`,
         },
         (payload) => {
           console.log("📅 Booking updated:", payload);
-          fetchActiveBooking(driverId);
-          fetchPendingRequests(driverId);
+          
+          if (activeBooking && payload.new.id === activeBooking.id) {
+            if (payload.new.status === 'cancelled') {
+              handleActiveTripCancelled(payload.new);
+            } else {
+              setActiveBooking(prev => ({
+                ...prev,
+                ...payload.new
+              }));
+              
+              if (payload.new.driver_arrived_at && !hasArrivedAtPickup) {
+                setHasArrivedAtPickup(true);
+                setNavigationDestination('dropoff');
+              }
+              
+              if (payload.new.ride_started_at && !rideStarted) {
+                setRideStarted(true);
+              }
+
+              // If payment was completed while waiting
+              if (payload.new.payment_status === 'paid' && waitingForPayment && !isProcessingPayment) {
+                setIsProcessingPayment(true);
+                setShowQRModal(false);
+                Alert.alert(
+                  "✅ Payment Received",
+                  "The passenger has successfully paid with points.",
+                  [{ text: "OK" }]
+                );
+                completeTripWithPayment(
+                  activeBooking.fare,
+                  "points",
+                  qrPoints
+                ).finally(() => {
+                  setIsProcessingPayment(false);
+                });
+              }
+            }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'bookings',
+        },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' && payload.new.status === 'cancelled') {
+            const isInPending = pendingRequests.some(req => req.id === payload.new.id);
+            if (isInPending) {
+              fetchBookingDetails(payload.new.id).then(booking => {
+                if (booking) {
+                  const cancelledBy = booking.cancelled_by || 'commuter';
+                  const reason = booking.cancellation_reason || 'No reason provided';
+                  
+                  Alert.alert(
+                    "❌ Booking Cancelled",
+                    `A booking request has been cancelled by the ${cancelledBy}.`,
+                    [{ text: "OK" }]
+                  );
+                  
+                  fetchPendingRequests(driverId);
+                }
+              });
+            }
+          }
         }
       )
       .subscribe();
@@ -137,10 +404,66 @@ export default function DriverTrackRideScreen({ navigation }) {
       bookingRequestsSubscription.unsubscribe();
       bookingsSubscription.unsubscribe();
     };
-  }, [driverId]);
+  }, [driverId, activeBooking, pendingRequests, hasArrivedAtPickup, rideStarted, waitingForPayment, isProcessingPayment]);
+
+  // ================= HELPER FUNCTIONS =================
+  const fetchBookingDetails = async (bookingId) => {
+    try {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("cancelled_by, cancellation_reason, status")
+        .eq("id", bookingId)
+        .single();
+      
+      if (error) throw error;
+      return data;
+    } catch (err) {
+      console.log("❌ Error fetching booking details:", err);
+      return null;
+    }
+  };
+
+  const handleActiveTripCancelled = (cancelledBooking) => {
+    console.log("🚫 Active trip cancelled:", cancelledBooking);
+    
+    const cancelledBy = cancelledBooking.cancelled_by || 'commuter';
+    const reason = cancelledBooking.cancellation_reason || 'No reason provided';
+    
+    Alert.alert(
+      "❌ Trip Cancelled",
+      `Your active trip has been cancelled by the ${cancelledBy}.\n\nReason: ${reason}`,
+      [{ text: "OK" }]
+    );
+    
+    setCancelledBookingAlert({
+      reason: reason,
+      cancelled_by: cancelledBy,
+      timestamp: new Date()
+    });
+    
+    setActiveBooking(null);
+    setCommuter(null);
+    setBookingStatus("pending");
+    setIsNavigating(false);
+    setShowPendingRequests(true);
+    setHasArrivedAtPickup(false);
+    setRideStarted(false);
+    setRouteCoordinates([]);
+    setEstimatedDistance(null);
+    setEstimatedTime(null);
+    setWaitingForPayment(false);
+    setShowQRModal(false);
+    setIsProcessingPayment(false);
+    
+    setTimeout(() => {
+      setCancelledBookingAlert(null);
+    }, 8000);
+  };
 
   const fetchPendingRequests = async (id) => {
     try {
+      console.log("🔍 Fetching pending requests for driver:", id);
+      
       const { data, error } = await supabase
         .from("booking_requests")
         .select(`
@@ -164,6 +487,7 @@ export default function DriverTrackRideScreen({ navigation }) {
             distance_km,
             duration_minutes,
             created_at,
+            status,
             commuter:commuters (
               first_name,
               last_name,
@@ -179,7 +503,7 @@ export default function DriverTrackRideScreen({ navigation }) {
       if (error) throw error;
 
       const requests = data
-        .filter(item => item.booking)
+        .filter(item => item.booking && item.booking.status === 'pending')
         .map(item => ({
           request_id: item.id,
           ...item.booking,
@@ -188,6 +512,7 @@ export default function DriverTrackRideScreen({ navigation }) {
           request_created_at: item.created_at
         }));
 
+      console.log(`📊 Found ${requests.length} pending requests`);
       setPendingRequests(requests || []);
     } catch (err) {
       console.log("❌ Error fetching pending requests:", err);
@@ -223,22 +548,40 @@ export default function DriverTrackRideScreen({ navigation }) {
 
       if (data) {
         console.log("✅ Active booking found:", data.id);
+        
         setActiveBooking(data);
         setCommuter(data.commuter);
         setBookingStatus(data.status);
         setShowPendingRequests(false);
         
         if (data.status === "accepted") {
-          setNavigationDestination('pickup');
-          setIsNavigating(true);
-          setHasArrivedAtPickup(false);
-          setRideStarted(false);
-          
-          if (driverLocation) {
-            calculateRouteToPickup(driverLocation, {
-              latitude: data.pickup_latitude,
-              longitude: data.pickup_longitude
-            });
+          if (data.driver_arrived_at) {
+            setHasArrivedAtPickup(true);
+            setNavigationDestination('dropoff');
+            setIsNavigating(true);
+            
+            if (data.ride_started_at) {
+              setRideStarted(true);
+            }
+            
+            if (driverLocation) {
+              calculateRouteToDropoff(
+                { latitude: data.pickup_latitude, longitude: data.pickup_longitude },
+                { latitude: data.dropoff_latitude, longitude: data.dropoff_longitude }
+              );
+            }
+          } else {
+            setNavigationDestination('pickup');
+            setIsNavigating(true);
+            setHasArrivedAtPickup(false);
+            setRideStarted(false);
+            
+            if (driverLocation) {
+              calculateRouteToPickup(driverLocation, {
+                latitude: data.pickup_latitude,
+                longitude: data.pickup_longitude
+              });
+            }
           }
         }
       } else {
@@ -315,7 +658,7 @@ export default function DriverTrackRideScreen({ navigation }) {
     }
   };
 
-  // ================= FIXED: HANDLE ACCEPT REQUEST =================
+  // ================= HANDLE ACCEPT REQUEST =================
   const handleAcceptRequest = async (bookingId, requestId) => {
     Alert.alert(
       "Accept Booking",
@@ -327,6 +670,25 @@ export default function DriverTrackRideScreen({ navigation }) {
           onPress: async () => {
             try {
               setLoading(true);
+              
+              const { data: bookingCheck, error: checkError } = await supabase
+                .from("bookings")
+                .select("status")
+                .eq("id", bookingId)
+                .single();
+
+              if (checkError) throw checkError;
+
+              if (bookingCheck.status !== 'pending') {
+                Alert.alert(
+                  "Cannot Accept",
+                  `This booking is no longer available (Status: ${bookingCheck.status}).`,
+                  [{ text: "OK" }]
+                );
+                await fetchPendingRequests(driverId);
+                setLoading(false);
+                return;
+              }
               
               const { error: bookingError } = await supabase
                 .from("bookings")
@@ -442,6 +804,11 @@ export default function DriverTrackRideScreen({ navigation }) {
               setHasArrivedAtPickup(true);
               setNavigationDestination('dropoff');
               
+              setActiveBooking(prev => ({
+                ...prev,
+                driver_arrived_at: new Date()
+              }));
+              
               if (driverLocation && activeBooking) {
                 calculateRouteToDropoff(
                   { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
@@ -499,269 +866,237 @@ export default function DriverTrackRideScreen({ navigation }) {
     );
   };
 
-// ================= SIMPLIFIED: HANDLE COMPLETE TRIP (CASH ONLY) =================
-const handleCompleteTrip = async () => {
-  Alert.alert(
-    "Complete Trip",
-    "Have you reached the destination and dropped off the passenger?",
-    [
-      { text: "No", style: "cancel" },
-      {
-        text: "Yes, Complete",
-        onPress: async () => {
-          try {
-            setLoading(true);
-            
-            // All earnings go to cash_earnings for now
-            const actualFare = activeBooking.fare || 0;
+  // ================= PAYMENT OPTIONS =================
+  const handleCompleteTrip = () => {
+    if (isProcessingPayment) {
+      Alert.alert("Processing", "Please wait while payment is being processed.");
+      return;
+    }
 
-            console.log("💰 Completing trip:", {
-              actualFare,
-              bookingId: activeBooking.id
-            });
+    Alert.alert(
+      "Payment Method",
+      "How would the passenger like to pay?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "💵 Cash",
+          onPress: () => processCashPayment()
+        },
+        {
+          text: "⭐ Points",
+          onPress: () => checkCommuterPoints()
+        }
+      ]
+    );
+  };
 
-            // Check if wallet exists, create if not
-            const { data: wallet, error: walletError } = await supabase
-              .from("driver_wallets")
-              .select("*")
-              .eq("driver_id", driverId)
-              .maybeSingle();
+  const processCashPayment = async () => {
+    try {
+      setLoading(true);
+      
+      const actualFare = activeBooking.fare || 0;
 
-            if (walletError) {
-              console.log("❌ Error fetching wallet:", walletError);
-              throw walletError;
+      console.log("💰 Completing trip with CASH payment:", {
+        actualFare,
+        bookingId: activeBooking.id
+      });
+
+      const { data: wallet, error: walletError } = await supabase
+        .from("driver_wallets")
+        .select("*")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (walletError) {
+        console.log("❌ Error fetching wallet:", walletError);
+        throw walletError;
+      }
+
+      if (!wallet) {
+        console.log("📝 Creating wallet for driver:", driverId);
+        const { error: insertError } = await supabase
+          .from("driver_wallets")
+          .insert({
+            driver_id: driverId,
+            balance: 0,
+            total_deposits: 0,
+            total_withdrawals: 0,
+            cash_earnings: 0,
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+
+        if (insertError) throw insertError;
+      }
+
+      const { data: currentWallet, error: currentError } = await supabase
+        .from("driver_wallets")
+        .select("cash_earnings")
+        .eq("driver_id", driverId)
+        .single();
+
+      if (currentError) throw currentError;
+
+      const newCashEarnings = (currentWallet.cash_earnings || 0) + actualFare;
+
+      const { error: earningsError } = await supabase
+        .from("driver_wallets")
+        .update({
+          cash_earnings: newCashEarnings,
+          updated_at: new Date()
+        })
+        .eq("driver_id", driverId);
+
+      if (earningsError) {
+        console.log("❌ Error updating earnings:", earningsError);
+        throw earningsError;
+      }
+
+      console.log(`💵 Added ₱${actualFare} to cash_earnings. New total: ₱${newCashEarnings}`);
+
+      await completeTripWithPayment(actualFare, "cash");
+
+    } catch (err) {
+      console.log("❌ Error processing cash payment:", err);
+      Alert.alert("Error", "Failed to process cash payment: " + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const checkCommuterPoints = async () => {
+    try {
+      setLoading(true);
+      
+      const actualFare = activeBooking.fare || 0;
+      const pointsNeeded = Math.floor(actualFare * 10);
+      
+      const { data: commuterWallet, error: walletError } = await supabase
+        .from("commuter_wallets")
+        .select("points")
+        .eq("commuter_id", activeBooking.commuter_id)
+        .maybeSingle();
+
+      if (walletError) {
+        console.log("❌ Error fetching commuter wallet:", walletError);
+        throw walletError;
+      }
+
+      const currentPoints = commuterWallet?.points || 0;
+
+      if (currentPoints >= pointsNeeded) {
+        setQrPoints(pointsNeeded);
+        setQrFare(actualFare);
+        showQRCodeForPoints(pointsNeeded, actualFare);
+      } else {
+        Alert.alert(
+          "Insufficient Points",
+          `Passenger only has ${currentPoints} points but needs ${pointsNeeded} points for this trip (₱${actualFare.toFixed(2)} × 10).\n\nWould you like to switch to cash payment?`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "💵 Use Cash",
+              onPress: () => processCashPayment()
             }
+          ]
+        );
+      }
+    } catch (err) {
+      console.log("❌ Error checking points:", err);
+      Alert.alert("Error", "Failed to check points balance");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-            // Create wallet if it doesn't exist
-            if (!wallet) {
-              console.log("📝 Creating wallet for driver:", driverId);
-              const { error: insertError } = await supabase
-                .from("driver_wallets")
-                .insert({
-                  driver_id: driverId,
-                  balance: 0,                    // From top-ups
-                  total_deposits: 0,              // Total top-ups
-                  total_withdrawals: 0,           // Total withdrawals
-                  cash_earnings: 0,               // All earnings go here for now
-                  created_at: new Date(),
-                  updated_at: new Date()
-                });
+  const showQRCodeForPoints = (pointsNeeded, fare) => {
+    const expiryTime = new Date();
+    expiryTime.setMinutes(expiryTime.getMinutes() + 5);
+    
+    const qrDataValue = JSON.stringify({
+      type: "points_payment",
+      booking_id: activeBooking.id,
+      driver_id: driverId,
+      commuter_id: activeBooking.commuter_id,
+      amount: fare,
+      points: pointsNeeded,
+      timestamp: new Date().toISOString(),
+      expires_at: expiryTime.toISOString()
+    });
 
-              if (insertError) throw insertError;
-            }
+    setQrValue(qrDataValue);
+    setWaitingForPayment(true);
+    setShowQRModal(true);
+    setTimeLeft(300);
+    
+    // Also update the booking to indicate points payment is pending
+    supabase
+      .from("bookings")
+      .update({
+        payment_type: "points",
+        payment_status: "pending",
+        updated_at: new Date()
+      })
+      .eq("id", activeBooking.id)
+      .then(({ error }) => {
+        if (error) console.log("❌ Error updating payment status:", error);
+      });
+  };
 
-            // Get current cash_earnings
-            const { data: currentWallet, error: currentError } = await supabase
-              .from("driver_wallets")
-              .select("cash_earnings")
-              .eq("driver_id", driverId)
-              .single();
+  const completeTripWithPayment = async (actualFare, paymentMethod, pointsUsed = 0) => {
+    try {
+      const { error: bookingError } = await supabase
+        .from("bookings")
+        .update({ 
+          status: "completed",
+          actual_fare: actualFare,
+          payment_type: paymentMethod,
+          payment_status: "paid",
+          ride_completed_at: new Date(),
+          updated_at: new Date()
+        })
+        .eq("id", activeBooking.id);
 
-            if (currentError) throw currentError;
+      if (bookingError) throw bookingError;
 
-            console.log("📊 Current cash earnings:", currentWallet.cash_earnings);
+      const { data: updatedWallet, error: fetchError } = await supabase
+        .from("driver_wallets")
+        .select("balance, cash_earnings, total_deposits, total_withdrawals")
+        .eq("driver_id", driverId)
+        .single();
 
-            // Calculate new cash earnings
-            const newCashEarnings = (currentWallet.cash_earnings || 0) + actualFare;
+      if (fetchError) throw fetchError;
 
-            // Update cash_earnings only
-            const { error: earningsError } = await supabase
-              .from("driver_wallets")
-              .update({
-                cash_earnings: newCashEarnings,
-                updated_at: new Date()
-              })
-              .eq("driver_id", driverId);
+      const { error: transactionError } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: driverId,
+          user_type: "driver",
+          type: "earning",
+          amount: actualFare,
+          status: "completed",
+          created_at: new Date(),
+          metadata: {
+            booking_id: activeBooking.id,
+            commuter_id: activeBooking.commuter_id,
+            pickup: activeBooking.pickup_location,
+            dropoff: activeBooking.dropoff_location,
+            payment_method: paymentMethod,
+            points_used: pointsUsed,
+            fare: actualFare,
+            category: "trip"
+          }
+        });
 
-            if (earningsError) {
-              console.log("❌ Error updating earnings:", earningsError);
-              throw earningsError;
-            }
+      if (transactionError) {
+        console.log("❌ Transaction error:", transactionError);
+      }
 
-            console.log(`💵 Added ₱${actualFare} to cash_earnings. New total: ₱${newCashEarnings}`);
+      const paymentDetails = paymentMethod === "points"
+        ? `   Points Used: ${pointsUsed}\n   Fare: ₱${actualFare.toFixed(2)}`
+        : `   Cash Received: ₱${actualFare.toFixed(2)}`;
 
-            // Update the booking with actual_fare
-            const { error: bookingError } = await supabase
-              .from("bookings")
-              .update({ 
-                status: "completed",
-                actual_fare: actualFare,
-                ride_completed_at: new Date(),
-                updated_at: new Date()
-              })
-              .eq("id", activeBooking.id);
-
-            if (bookingError) throw bookingError;
-
-            // Get updated wallet data for display
-            const { data: updatedWallet, error: fetchError } = await supabase
-              .from("driver_wallets")
-              .select("balance, cash_earnings, total_deposits, total_withdrawals")
-              .eq("driver_id", driverId)
-              .single();
-
-            if (fetchError) throw fetchError;
-
-            console.log("💰 Updated wallet:", {
-              cash_earnings: updatedWallet.cash_earnings,
-              balance: updatedWallet.balance
-            });
-
-            // Create transaction record
-            const { error: transactionError } = await supabase
-              .from("transactions")
-              .insert({
-                user_id: driverId,
-                user_type: "driver",
-                type: "earning",
-                amount: actualFare,
-                status: "completed",
-                created_at: new Date(),
-                metadata: {
-                  booking_id: activeBooking.id,
-                  commuter_id: activeBooking.commuter_id,
-                  pickup: activeBooking.pickup_location,
-                  dropoff: activeBooking.dropoff_location,
-                  payment_method: "cash",
-                  fare: actualFare,
-                  category: "trip"
-                }
-              });
-
-            if (transactionError) {
-              console.log("❌ Transaction error:", transactionError);
-            }
-
-            // Update ride missions if exists
-            try {
-              const today = new Date();
-              const startOfWeek = new Date(today);
-              startOfWeek.setDate(today.getDate() - today.getDay() + 1);
-              startOfWeek.setHours(0, 0, 0, 0);
-
-              const endOfWeek = new Date(startOfWeek);
-              endOfWeek.setDate(startOfWeek.getDate() + 6);
-              endOfWeek.setHours(23, 59, 59, 999);
-
-              const { data: mission, error: missionError } = await supabase
-                .from("ride_missions")
-                .select("*")
-                .eq("driver_id", driverId)
-                .gte("week_start", startOfWeek.toISOString().split("T")[0])
-                .lte("week_end", endOfWeek.toISOString().split("T")[0])
-                .maybeSingle();
-
-              if (!missionError && mission) {
-                const newActualRides = (mission.actual_rides || 0) + 1;
-                let status = mission.status;
-                let achievedAt = mission.achieved_at;
-                
-                if (newActualRides >= mission.target_rides && mission.status === "active") {
-                  status = "achieved";
-                  achievedAt = new Date();
-                  
-                  // Get current cash_earnings for bonus
-                  const { data: bonusWallet } = await supabase
-                    .from("driver_wallets")
-                    .select("cash_earnings")
-                    .eq("driver_id", driverId)
-                    .single();
-
-                  if (bonusWallet) {
-                    // Add bonus to cash_earnings
-                    await supabase
-                      .from("driver_wallets")
-                      .update({
-                        cash_earnings: (bonusWallet.cash_earnings || 0) + (mission.bonus_amount || 0),
-                        updated_at: new Date()
-                      })
-                      .eq("driver_id", driverId);
-
-                    console.log(`🏆 Added bonus ₱${mission.bonus_amount} to cash_earnings`);
-                  }
-
-                  // Create transaction for bonus
-                  await supabase
-                    .from("transactions")
-                    .insert({
-                      user_id: driverId,
-                      user_type: "driver",
-                      type: "earning",
-                      amount: mission.bonus_amount || 0,
-                      status: "completed",
-                      created_at: new Date(),
-                      metadata: {
-                        mission_id: mission.id,
-                        rides: mission.target_rides,
-                        bonus: mission.bonus_amount,
-                        category: "bonus"
-                      }
-                    });
-                }
-
-                await supabase
-                  .from("ride_missions")
-                  .update({
-                    actual_rides: newActualRides,
-                    status: status,
-                    achieved_at: achievedAt,
-                    updated_at: new Date()
-                  })
-                  .eq("id", mission.id);
-              }
-            } catch (missionErr) {
-              console.log("❌ Error updating mission:", missionErr);
-            }
-
-            // Create notification for commuter
-            try {
-              await supabase
-                .from("notifications")
-                .insert({
-                  user_id: activeBooking.commuter_id,
-                  user_type: "commuter",
-                  type: "booking",
-                  title: "Trip Completed",
-                  message: `Your trip has been completed. Fare: ₱${actualFare.toFixed(2)}`,
-                  reference_id: activeBooking.id,
-                  reference_type: "booking",
-                  data: { 
-                    fare: actualFare,
-                    booking_id: activeBooking.id
-                  },
-                  created_at: new Date()
-                });
-            } catch (notifErr) {
-              console.log("❌ Commuter notification error:", notifErr);
-            }
-
-            // Create notification for driver
-            try {
-              await supabase
-                .from("notifications")
-                .insert({
-                  user_id: driverId,
-                  user_type: "driver",
-                  type: "payment",
-                  title: "Trip Earnings Added",
-                  message: `You earned ₱${actualFare.toFixed(2)} from this trip.`,
-                  reference_id: activeBooking.id,
-                  reference_type: "booking",
-                  data: { 
-                    fare: actualFare,
-                    cash_earnings: updatedWallet?.cash_earnings || 0,
-                    total_earnings: updatedWallet?.cash_earnings || 0,
-                    balance: updatedWallet?.balance || 0,
-                    booking_id: activeBooking.id
-                  },
-                  created_at: new Date()
-                });
-            } catch (notifErr) {
-              console.log("❌ Driver notification error:", notifErr);
-            }
-
-            // Prepare success message
-            const successMessage = `
+      const successMessage = `
 ━━━━━━━━━━━━━━━━━━━━━
 ✅ TRIP COMPLETED
 ━━━━━━━━━━━━━━━━━━━━━
@@ -769,8 +1104,8 @@ const handleCompleteTrip = async () => {
 📍 From: ${activeBooking.pickup_location?.split(",")[0] || "Pickup"}
 📍 To: ${activeBooking.dropoff_location?.split(",")[0] || "Dropoff"}
 
-💰 THIS TRIP:
-   Fare Earned: ₱${actualFare.toFixed(2)}
+💰 PAYMENT DETAILS:
+${paymentDetails}
 
 📊 YOUR EARNINGS:
    💵 Total Cash Earnings: ₱${(updatedWallet?.cash_earnings || 0).toFixed(2)}
@@ -782,35 +1117,31 @@ const handleCompleteTrip = async () => {
 Thank you for driving with SakayNA!
 ━━━━━━━━━━━━━━━━━━━━━`;
 
-            // Reset state
-            setActiveBooking(null);
-            setCommuter(null);
-            setBookingStatus("pending");
-            setIsNavigating(false);
-            setShowPendingRequests(true);
-            setHasArrivedAtPickup(false);
-            setRideStarted(false);
-            setRouteCoordinates([]);
-            setEstimatedDistance(null);
-            setEstimatedTime(null);
+      setActiveBooking(null);
+      setCommuter(null);
+      setBookingStatus("pending");
+      setIsNavigating(false);
+      setShowPendingRequests(true);
+      setHasArrivedAtPickup(false);
+      setRideStarted(false);
+      setRouteCoordinates([]);
+      setEstimatedDistance(null);
+      setEstimatedTime(null);
+      setWaitingForPayment(false);
+      setShowQRModal(false);
+      setIsProcessingPayment(false);
 
-            Alert.alert(
-              "🎉 Trip Completed!",
-              successMessage,
-              [{ text: "OK" }]
-            );
+      Alert.alert(
+        "🎉 Trip Completed!",
+        successMessage,
+        [{ text: "OK" }]
+      );
 
-          } catch (err) {
-            console.log("❌ Error completing trip:", err);
-            Alert.alert("Error", "Failed to complete trip: " + err.message);
-          } finally {
-            setLoading(false);
-          }
-        }
-      }
-    ]
-  );
-};
+    } catch (err) {
+      console.log("❌ Error completing trip:", err);
+      throw err;
+    }
+  };
 
   const handleCancelTrip = () => {
     if (bookingStatus !== "accepted") {
@@ -848,6 +1179,9 @@ Thank you for driving with SakayNA!
               setBookingStatus("pending");
               setIsNavigating(false);
               setShowPendingRequests(true);
+              setWaitingForPayment(false);
+              setShowQRModal(false);
+              setIsProcessingPayment(false);
 
               Alert.alert(
                 "❌ Trip Cancelled",
@@ -859,6 +1193,36 @@ Thank you for driving with SakayNA!
             } finally {
               setLoading(false);
             }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCancelQRPayment = () => {
+    Alert.alert(
+      "Cancel Payment",
+      "Are you sure you want to cancel the points payment?",
+      [
+        { text: "No", style: "cancel" },
+        {
+          text: "Yes, Cancel",
+          style: "destructive",
+          onPress: () => {
+            setShowQRModal(false);
+            setWaitingForPayment(false);
+            setTimeLeft(300);
+            
+            // Reset payment status
+            supabase
+              .from("bookings")
+              .update({
+                payment_type: null,
+                payment_status: null,
+                updated_at: new Date()
+              })
+              .eq("id", activeBooking.id)
+              .then(() => {});
           }
         }
       ]
@@ -1139,12 +1503,12 @@ Thank you for driving with SakayNA!
   };
 
   const getStatusText = () => {
-    if (!hasArrivedAtPickup) {
-      return "🚗 Heading to Pickup";
-    } else if (hasArrivedAtPickup && !rideStarted) {
+    if (rideStarted) {
+      return "🚗 On the way to Destination";
+    } else if (hasArrivedAtPickup) {
       return "📍 Waiting for Passenger";
     } else {
-      return "🚗 On the way to Destination";
+      return "🚗 Heading to Pickup";
     }
   };
 
@@ -1155,6 +1519,98 @@ Thank you for driving with SakayNA!
       return "Navigate to destination";
     }
   };
+
+  // Memoized QR Code Modal Component to prevent unnecessary re-renders
+  const QRCodeModal = useMemo(() => {
+    return ({ visible, qrValue, points, fare }) => {
+      if (!visible) return null;
+
+      const minutes = Math.floor(timeLeft / 60);
+      const seconds = timeLeft % 60;
+
+      return (
+        <Modal
+          visible={visible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {}} // Prevent closing by tapping outside or back button
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Points Payment QR Code</Text>
+              </View>
+
+              <View style={styles.qrCodeContainer}>
+                {qrValue ? (
+                  <View style={styles.qrWrapper}>
+                    <QRCode
+                      value={qrValue}
+                      size={220}
+                      color="#000"
+                      backgroundColor="#FFF"
+                    />
+                  </View>
+                ) : (
+                  <View style={styles.qrPlaceholder}>
+                    <ActivityIndicator size="large" color="#183B5C" />
+                    <Text style={styles.qrPlaceholderText}>Generating QR Code...</Text>
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.paymentDetailsContainer}>
+                <View style={styles.paymentDetailRow}>
+                  <Text style={styles.paymentDetailLabel}>Fare Amount:</Text>
+                  <Text style={styles.paymentDetailValue}>₱{fare.toFixed(2)}</Text>
+                </View>
+                
+                <View style={styles.paymentDetailRow}>
+                  <Text style={styles.paymentDetailLabel}>Points Required:</Text>
+                  <Text style={[styles.paymentDetailValue, { color: "#F59E0B" }]}>
+                    {points} points
+                  </Text>
+                </View>
+
+                <View style={styles.paymentDetailRow}>
+                  <Text style={styles.paymentDetailLabel}>Rate:</Text>
+                  <Text style={styles.paymentDetailSubtext}>10 points = ₱1</Text>
+                </View>
+              </View>
+
+              <View style={styles.timerContainer}>
+                <Ionicons name="time-outline" size={20} color="#666" />
+                <Text style={styles.timerText}>
+                  QR Code expires in {minutes}:{seconds.toString().padStart(2, '0')}
+                </Text>
+              </View>
+
+              <View style={styles.instructionContainer}>
+                <Ionicons name="information-circle" size={20} color="#3B82F6" />
+                <Text style={styles.instructionText}>
+                  Ask the passenger to scan this QR code with their app to complete the payment.
+                </Text>
+              </View>
+
+              <View style={styles.waitingContainer}>
+                <ActivityIndicator size="small" color="#10B981" />
+                <Text style={styles.waitingText}>Waiting for passenger to scan...</Text>
+              </View>
+
+              <View style={styles.modalActions}>
+                <Pressable 
+                  style={[styles.modalButton, styles.cancelModalButton]} 
+                  onPress={handleCancelQRPayment}
+                >
+                  <Text style={styles.cancelModalButtonText}>Cancel Payment</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      );
+    };
+  }, [timeLeft]); // Only re-create when timeLeft changes
 
   if (loading) {
     return (
@@ -1168,6 +1624,31 @@ Thank you for driving with SakayNA!
   if (activeBooking) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* QR Code Modal - Memoized to prevent flickering */}
+        <QRCodeModal
+          visible={showQRModal}
+          qrValue={qrValue}
+          points={qrPoints}
+          fare={qrFare}
+        />
+
+        {/* Cancelled Trip Banner */}
+        {cancelledBookingAlert && (
+          <View style={styles.cancelledBanner}>
+            <Ionicons name="alert-circle" size={24} color="#EF4444" />
+            <View style={styles.cancelledBannerText}>
+              <Text style={styles.cancelledTitle}>Trip Cancelled</Text>
+              <Text style={styles.cancelledMessage}>
+                Cancelled by {cancelledBookingAlert.cancelled_by}
+                {cancelledBookingAlert.reason ? `: ${cancelledBookingAlert.reason}` : ''}
+              </Text>
+            </View>
+            <Pressable onPress={() => setCancelledBookingAlert(null)}>
+              <Ionicons name="close" size={20} color="#666" />
+            </Pressable>
+          </View>
+        )}
+
         <View style={styles.header}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
@@ -1336,7 +1817,7 @@ Thank you for driving with SakayNA!
           </View>
 
           <View style={styles.actionContainer}>
-            {!hasArrivedAtPickup && (
+            {!hasArrivedAtPickup && !rideStarted && (
               <>
                 <Pressable style={styles.arrivedButton} onPress={handleArrivedAtPickup}>
                   <Ionicons name="location" size={20} color="#FFF" />
@@ -1376,7 +1857,7 @@ Thank you for driving with SakayNA!
             )}
           </View>
 
-          {!hasArrivedAtPickup && (
+          {!hasArrivedAtPickup && !rideStarted && (
             <Pressable
               style={styles.navigationButton}
               onPress={() => openMaps(
@@ -1390,7 +1871,7 @@ Thank you for driving with SakayNA!
             </Pressable>
           )}
 
-          {hasArrivedAtPickup && (
+          {(hasArrivedAtPickup || rideStarted) && (
             <Pressable
               style={styles.navigationButton}
               onPress={() => openMaps(
@@ -1412,6 +1893,23 @@ Thank you for driving with SakayNA!
   if (pendingRequests.length > 0) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* Cancelled Request Banner */}
+        {cancelledRequest && (
+          <View style={styles.cancelledBanner}>
+            <Ionicons name="alert-circle" size={24} color="#EF4444" />
+            <View style={styles.cancelledBannerText}>
+              <Text style={styles.cancelledTitle}>Booking Request Cancelled</Text>
+              <Text style={styles.cancelledMessage}>
+                Cancelled by {cancelledRequest.cancelled_by}
+                {cancelledRequest.reason ? `: ${cancelledRequest.reason}` : ''}
+              </Text>
+            </View>
+            <Pressable onPress={() => setCancelledRequest(null)}>
+              <Ionicons name="close" size={20} color="#666" />
+            </Pressable>
+          </View>
+        )}
+
         <View style={styles.header}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
@@ -2136,6 +2634,192 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   acceptButtonText: {
+    color: "#FFF",
+    fontWeight: "600",
+  },
+  cancelledBanner: {
+    backgroundColor: "#FEE2E2",
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+    position: 'absolute',
+    top: 80,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    elevation: 100,
+  },
+  cancelledBannerText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  cancelledTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#B91C1C",
+    marginBottom: 2,
+  },
+  cancelledMessage: {
+    fontSize: 12,
+    color: "#7F1D1D",
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  modalContent: {
+    backgroundColor: "#FFF",
+    borderRadius: 20,
+    padding: 20,
+    width: "90%",
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+    position: 'relative',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    textAlign: "center",
+  },
+  closeButton: {
+    position: 'absolute',
+    right: 0,
+    padding: 5,
+  },
+  qrCodeContainer: {
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  qrPlaceholder: {
+    width: 220,
+    height: 220,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#E5E7EB",
+    borderStyle: "dashed",
+  },
+  qrPlaceholderText: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 8,
+  },
+  qrWrapper: {
+    width: 220,
+    height: 220,
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  paymentDetailsContainer: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 15,
+  },
+  paymentDetailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  paymentDetailLabel: {
+    fontSize: 14,
+    color: "#666",
+  },
+  paymentDetailValue: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+  },
+  paymentDetailSubtext: {
+    fontSize: 12,
+    color: "#999",
+  },
+  instructionContainer: {
+    flexDirection: "row",
+    backgroundColor: "#EFF6FF",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 15,
+    gap: 8,
+  },
+  instructionText: {
+    flex: 1,
+    fontSize: 14,
+    color: "#3B82F6",
+    lineHeight: 20,
+  },
+  timerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+    gap: 8,
+  },
+  timerText: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
+  },
+  waitingContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
+    gap: 8,
+    backgroundColor: "#E8F5E9",
+    padding: 12,
+    borderRadius: 12,
+  },
+  waitingText: {
+    fontSize: 14,
+    color: "#10B981",
+    fontWeight: "500",
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  modalButton: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  cancelModalButton: {
+    backgroundColor: "#F3F4F6",
+  },
+  cancelModalButtonText: {
+    color: "#666",
+    fontWeight: "600",
+  },
+  confirmModalButton: {
+    backgroundColor: "#10B981",
+  },
+  confirmModalButtonText: {
     color: "#FFF",
     fontWeight: "600",
   },

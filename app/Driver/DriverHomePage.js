@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFF",
   },
   topBar: {
-    height: 25,
+    height: 45,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",

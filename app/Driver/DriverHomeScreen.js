@@ -1,5 +1,5 @@
 // screens/driver/DriverHomeScreen.js
-import React, { useState, useCallback, useRef, useEffect } from "react";
+import React, { useState, useCallback, useRef, useEffect, memo } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,136 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
 
+// ================= OPTIMIZED COMPONENTS =================
+const MissionProgress = memo(({ missionProgress }) => {
+  if (!missionProgress) return null;
+
+  const progress = (missionProgress.actual_rides / missionProgress.target_rides) * 100;
+
+  return (
+    <View
+      style={{
+        marginHorizontal: 20,
+        marginTop: 10,
+        padding: 15,
+        backgroundColor: "#F0F9FF",
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: "#B2D9FF",
+      }}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Text style={{ fontWeight: "bold", fontSize: 16 }}>
+          🎯 Weekly Mission
+        </Text>
+        <Text style={{ color: "#183B5C", fontWeight: "bold" }}>
+          {missionProgress.actual_rides}/{missionProgress.target_rides} rides
+        </Text>
+      </View>
+
+      <View
+        style={{
+          height: 8,
+          backgroundColor: "#E5E7EB",
+          borderRadius: 4,
+          marginTop: 10,
+          overflow: "hidden",
+        }}
+      >
+        <View
+          style={{
+            width: `${progress}%`,
+            height: "100%",
+            backgroundColor: progress >= 100 ? "#10B981" : "#3B82F6",
+          }}
+        />
+      </View>
+
+      {progress >= 100 ? (
+        <Text style={{ marginTop: 8, color: "#10B981", fontWeight: "600" }}>
+          🎉 Congrats! You've hit the target! ₱{missionProgress.bonus_amount} bonus coming soon!
+        </Text>
+      ) : (
+        <Text style={{ marginTop: 8, color: "#6B7280" }}>
+          {missionProgress.target_rides - missionProgress.actual_rides} more
+          rides to earn ₱{missionProgress.bonus_amount} bonus!
+        </Text>
+      )}
+    </View>
+  );
+});
+
+const TripItem = memo(({ item, navigation }) => (
+  <Pressable
+    style={({ pressed }) => ({
+      backgroundColor: pressed ? "#F3F4F6" : "#F9FAFB",
+      borderRadius: 16,
+      padding: 15,
+      marginBottom: 10,
+      flexDirection: "row",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: "#E5E7EB",
+    })}
+    onPress={() =>
+      navigation.navigate("TripDetailsScreen", { tripId: item.id })
+    }
+  >
+    <View style={{
+      width: 45,
+      height: 45,
+      borderRadius: 12,
+      backgroundColor: item.paymentColor || "#183B5C",
+      justifyContent: "center",
+      alignItems: "center",
+      marginRight: 12,
+    }}>
+      <Ionicons 
+        name={
+          item.paymentMethod === "gcash" ? "phone-portrait" :
+          item.paymentMethod === "cash" ? "cash" : "wallet"
+        } 
+        size={24} 
+        color="#FFF" 
+      />
+    </View>
+
+    <View style={{ flex: 1 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+        <Ionicons name="location" size={12} color="#10B981" />
+        <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
+          {item.from}
+        </Text>
+      </View>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <Ionicons name="flag" size={12} color="#EF4444" />
+        <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
+          {item.to}
+        </Text>
+      </View>
+    </View>
+
+    <View style={{ alignItems: "flex-end" }}>
+      <Text style={{ fontSize: 16, fontWeight: "bold", color: "#183B5C" }}>
+        {item.earnings}
+      </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
+        <Ionicons name="time-outline" size={10} color="#9CA3AF" />
+        <Text style={{ fontSize: 10, color: "#9CA3AF", marginLeft: 2 }}>
+          {item.distance} • {item.time}
+        </Text>
+      </View>
+    </View>
+  </Pressable>
+));
+
+// ================= MAIN COMPONENT =================
 export default function DriverHomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -36,18 +166,37 @@ export default function DriverHomeScreen() {
   const [locationSubscription, setLocationSubscription] = useState(null);
   const [locationPermission, setLocationPermission] = useState(false);
   const appState = useRef(AppState.currentState);
-
-  // * ================= WALLET DATA WITH SEPARATE BALANCE AND EARNINGS ================= */
-  const [walletData, setWalletData] = useState({
-    balance: 0,                    // From top-ups minus withdrawals
-    total_deposits: 0,              // Total top-ups made
-    total_withdrawals: 0,           // Total withdrawals made
-    cash_earnings: 0,               // Earnings from cash trips
-    gcash_earnings: 0,              // Earnings from GCash trips
-    wallet_earnings: 0,              // Earnings from wallet payments
+  
+  // Cache for fetched data to avoid re-fetching
+  const dataCache = useRef({
+    wallet: null,
+    today: null,
+    recent: null,
+    weekly: null,
+    subscription: null,
+    mission: null,
+    notifications: null,
+    rank: null,
+    timestamp: null,
   });
   
-  const [totalEarnings, setTotalEarnings] = useState(0); // Combined earnings from all trips
+  // Flag to track if initial load is complete
+  const initialLoadComplete = useRef(false);
+  
+  // Flag to prevent duplicate requests
+  const isFetching = useRef(false);
+
+  // * ================= WALLET DATA =================
+  const [walletData, setWalletData] = useState({
+    balance: 0,
+    total_deposits: 0,
+    total_withdrawals: 0,
+    cash_earnings: 0,
+    gcash_earnings: 0,
+    wallet_earnings: 0,
+  });
+  
+  const [totalEarnings, setTotalEarnings] = useState(0);
   const [todayEarnings, setTodayEarnings] = useState(0);
   const [todayTrips, setTodayTrips] = useState(0);
   const [recentTrips, setRecentTrips] = useState([]);
@@ -65,7 +214,9 @@ export default function DriverHomeScreen() {
     points: 0,
   });
 
-  // * ================= LOCATION TRACKING SETUP ================= */
+  const screenWidth = Dimensions.get("window").width - 40;
+
+  // * ================= LOCATION TRACKING =================
   const setupLocationPermission = async () => {
     try {
       const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
@@ -74,7 +225,6 @@ export default function DriverHomeScreen() {
         setLocationPermission(false);
         return false;
       }
-
       setLocationPermission(true);
       return true;
     } catch (err) {
@@ -93,18 +243,14 @@ export default function DriverHomeScreen() {
         accuracy: Location.Accuracy.High,
       });
 
-      const { data: existingLocation, error: checkError } = await supabase
+      const { data: existingLocation } = await supabase
         .from("driver_locations")
         .select("id")
         .eq("driver_id", driverId)
         .maybeSingle();
 
-      if (checkError) {
-        console.log("Error checking existing location:", checkError);
-      }
-
       if (existingLocation) {
-        const { error } = await supabase
+        await supabase
           .from("driver_locations")
           .update({
             latitude: location.coords.latitude,
@@ -116,10 +262,8 @@ export default function DriverHomeScreen() {
             heading: location.coords.heading,
           })
           .eq("driver_id", driverId);
-        
-        if (error) console.log("Location update error:", error);
       } else {
-        const { error } = await supabase
+        await supabase
           .from("driver_locations")
           .insert({
             driver_id: driverId,
@@ -131,19 +275,17 @@ export default function DriverHomeScreen() {
             speed: location.coords.speed,
             heading: location.coords.heading,
           });
-        
-        if (error) console.log("Location insert error:", error);
       }
 
       const subscription = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10,
+          timeInterval: 10000, // Increased to 10 seconds to reduce calls
+          distanceInterval: 20, // Increased to 20 meters
         },
         async (newLocation) => {
           try {
-            const { error } = await supabase
+            await supabase
               .from("driver_locations")
               .update({
                 latitude: newLocation.coords.latitude,
@@ -155,10 +297,6 @@ export default function DriverHomeScreen() {
                 heading: newLocation.coords.heading,
               })
               .eq("driver_id", driverId);
-
-            if (error) {
-              console.log("Location update error:", error);
-            }
           } catch (err) {
             console.log("Location update error:", err);
           }
@@ -178,36 +316,636 @@ export default function DriverHomeScreen() {
         setLocationSubscription(null);
       }
 
-      const { error } = await supabase
+      await supabase
         .from("driver_locations")
         .update({
           is_online: false,
           last_updated: new Date()
         })
         .eq("driver_id", driverId);
-
-      if (error) {
-        console.log("Stop location updates error:", error);
-      }
     } catch (err) {
       console.log("Stop location updates error:", err);
     }
   };
 
-  // * ================= CLEANUP ON UNMOUNT ================= */
+  // * ================= OPTIMIZED DATA FETCHING =================
+  const fetchWalletData = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    // Check cache first (valid for 30 seconds)
+    if (useCache && dataCache.current.wallet && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 30000) {
+      return dataCache.current.wallet;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from("driver_wallets")
+        .select("balance, total_deposits, total_withdrawals, cash_earnings, gcash_earnings, wallet_earnings")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (error) {
+        console.log("Wallet error:", error.message);
+        return null;
+      }
+
+      if (data) {
+        // Cache the data
+        dataCache.current.wallet = data;
+        return data;
+      } else {
+        // Create wallet if it doesn't exist
+        const { error: insertError } = await supabase
+          .from("driver_wallets")
+          .insert({
+            driver_id: driverId,
+            balance: 0,
+            total_deposits: 0,
+            total_withdrawals: 0,
+            cash_earnings: 0,
+            gcash_earnings: 0,
+            wallet_earnings: 0,
+          });
+
+        if (insertError) console.log("Wallet creation error:", insertError);
+        
+        const defaultWallet = {
+          balance: 0,
+          total_deposits: 0,
+          total_withdrawals: 0,
+          cash_earnings: 0,
+          gcash_earnings: 0,
+          wallet_earnings: 0,
+        };
+        dataCache.current.wallet = defaultWallet;
+        return defaultWallet;
+      }
+    } catch (err) {
+      console.log("Fetch wallet error:", err.message);
+      return null;
+    }
+  }, []);
+
+  const fetchTodayEarnings = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    // Check cache first
+    if (useCache && dataCache.current.today && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 30000) {
+      return dataCache.current.today;
+    }
+    
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("actual_fare, payment_method, payment_type")
+        .eq("driver_id", driverId)
+        .eq("status", "completed")
+        .gte("ride_completed_at", today.toISOString())
+        .lt("ride_completed_at", tomorrow.toISOString());
+
+      if (error) {
+        console.log("Today earnings error:", error.message);
+        return null;
+      }
+
+      const total = data?.reduce((sum, booking) => sum + (booking.actual_fare || 0), 0) || 0;
+      const tripsCount = data?.length || 0;
+      
+      const result = { total, tripsCount };
+      dataCache.current.today = result;
+      return result;
+    } catch (err) {
+      console.log("Fetch today earnings error:", err.message);
+      return null;
+    }
+  }, []);
+
+  const fetchRecentTrips = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return [];
+    
+    // Check cache first (valid for 1 minute)
+    if (useCache && dataCache.current.recent && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 60000) {
+      return dataCache.current.recent;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select(
+          `
+          id,
+          pickup_location,
+          dropoff_location,
+          actual_fare,
+          distance_km,
+          ride_completed_at,
+          status,
+          payment_method,
+          payment_type
+        `,
+        )
+        .eq("driver_id", driverId)
+        .eq("status", "completed")
+        .order("ride_completed_at", { ascending: false })
+        .limit(10);
+
+      if (error) {
+        console.log("Recent trips error:", error.message);
+        return [];
+      }
+
+      const formattedTrips = data?.map((trip) => {
+        const paymentMethod = trip.payment_method || trip.payment_type || "cash";
+        const paymentColor = 
+          paymentMethod === "gcash" ? "#00579F" :
+          paymentMethod === "cash" ? "#10B981" : "#183B5C";
+        
+        return {
+          id: trip.id,
+          from: trip.pickup_location?.split(",")[0] || "Pickup",
+          to: trip.dropoff_location?.split(",")[0] || "Dropoff",
+          distance: trip.distance_km ? `${trip.distance_km.toFixed(1)} km` : "? km",
+          earnings: `₱${trip.actual_fare?.toFixed(2) || "0.00"}`,
+          time: trip.ride_completed_at
+            ? new Date(trip.ride_completed_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : "Unknown",
+          paymentMethod,
+          paymentColor,
+        };
+      }) || [];
+
+      dataCache.current.recent = formattedTrips;
+      return formattedTrips;
+    } catch (err) {
+      console.log("Fetch recent trips error:", err.message);
+      return [];
+    }
+  }, []);
+
+  const fetchWeeklyData = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    // Check cache first
+    if (useCache && dataCache.current.weekly && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 60000) {
+      return dataCache.current.weekly;
+    }
+    
+    try {
+      const today = new Date();
+      const dayOfWeek = today.getDay();
+
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(
+        today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1),
+      );
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("actual_fare, ride_completed_at")
+        .eq("driver_id", driverId)
+        .eq("status", "completed")
+        .gte("ride_completed_at", startOfWeek.toISOString())
+        .lt("ride_completed_at", endOfWeek.toISOString())
+        .order("ride_completed_at", { ascending: true });
+
+      if (error) {
+        console.log("Weekly data error:", error.message);
+        return null;
+      }
+
+      const earnings = [0, 0, 0, 0, 0, 0, 0];
+      const trips = [0, 0, 0, 0, 0, 0, 0];
+
+      data?.forEach((booking) => {
+        if (booking.ride_completed_at) {
+          const date = new Date(booking.ride_completed_at);
+          let dayIndex = date.getDay();
+          dayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
+
+          earnings[dayIndex] += booking.actual_fare || 0;
+          trips[dayIndex] += 1;
+        }
+      });
+
+      const result = {
+        labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        earnings: earnings,
+        trips: trips,
+      };
+      
+      dataCache.current.weekly = result;
+      return result;
+    } catch (err) {
+      console.log("Fetch weekly data error:", err.message);
+      return null;
+    }
+  }, []);
+
+  const fetchActiveSubscription = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    // Check cache first
+    if (useCache && dataCache.current.subscription && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 30000) {
+      return dataCache.current.subscription;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from("driver_subscriptions")
+        .select(
+          `
+          id,
+          plan_id,
+          start_date,
+          end_date,
+          status,
+          subscription_plans (
+            plan_name,
+            plan_type,
+            price
+          )
+        `,
+        )
+        .eq("driver_id", driverId)
+        .eq("status", "active")
+        .gte("end_date", new Date().toISOString())
+        .order("end_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error && error.code !== "PGRST116") {
+        console.log("Subscription error:", error.message);
+        return null;
+      }
+
+      dataCache.current.subscription = data;
+      return data;
+    } catch (err) {
+      console.log("Fetch subscription error:", err.message);
+      return null;
+    }
+  }, []);
+
+  const fetchMissionProgress = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    // Check cache first
+    if (useCache && dataCache.current.mission && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 30000) {
+      return dataCache.current.mission;
+    }
+    
+    try {
+      const today = new Date();
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - today.getDay() + 1);
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      const { data, error } = await supabase
+        .from("ride_missions")
+        .select("*")
+        .eq("driver_id", driverId)
+        .gte("week_start", startOfWeek.toISOString().split("T")[0])
+        .lte("week_end", endOfWeek.toISOString().split("T")[0])
+        .maybeSingle();
+
+      if (error && error.code !== "PGRST116") {
+        console.log("Mission error:", error.message);
+        return null;
+      }
+
+      dataCache.current.mission = data;
+      return data;
+    } catch (err) {
+      console.log("Fetch mission error:", err.message);
+      return null;
+    }
+  }, []);
+
+  const fetchUnreadNotifications = useCallback(async (userId, useCache = true) => {
+    if (!userId) return 0;
+    
+    // Check cache first
+    if (useCache && dataCache.current.notifications !== undefined && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 30000) {
+      return dataCache.current.notifications;
+    }
+    
+    try {
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_read", false);
+
+      if (error) throw error;
+      
+      dataCache.current.notifications = count || 0;
+      return count || 0;
+    } catch (err) {
+      console.log("Error fetching notifications:", err);
+      return 0;
+    }
+  }, []);
+
+  const fetchDriverRank = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    // Check cache first
+    if (useCache && dataCache.current.rank && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 60000) {
+      return dataCache.current.rank;
+    }
+    
+    try {
+      const { data: drivers, error } = await supabase
+        .from("drivers")
+        .select(`
+          id,
+          first_name,
+          last_name
+        `)
+        .eq("status", "approved");
+
+      if (error) throw error;
+
+      // Optimize by fetching counts in parallel with Promise.all
+      const driverStats = await Promise.all(
+        drivers.map(async (d) => {
+          const { count, error: countError } = await supabase
+            .from("bookings")
+            .select("*", { count: "exact", head: true })
+            .eq("driver_id", d.id)
+            .eq("status", "completed");
+
+          if (countError) throw countError;
+
+          return {
+            ...d,
+            trips: count || 0,
+            points: (count || 0) * 10,
+          };
+        })
+      );
+
+      const sortedDrivers = driverStats.sort((a, b) => b.points - a.points);
+      const currentDriverIndex = sortedDrivers.findIndex(d => d.id === driverId);
+      const currentRank = currentDriverIndex + 1;
+      const currentDriverPoints = sortedDrivers[currentDriverIndex]?.points || 0;
+
+      let level = "Bronze";
+      if (currentDriverPoints >= 2000) level = "Diamond";
+      else if (currentDriverPoints >= 1000) level = "Gold";
+      else if (currentDriverPoints >= 500) level = "Silver";
+
+      const result = {
+        currentRank,
+        level,
+        points: currentDriverPoints,
+      };
+      
+      dataCache.current.rank = result;
+      return result;
+    } catch (err) {
+      console.log("Error fetching rank:", err.message);
+      return null;
+    }
+  }, []);
+
+  // * ================= MAIN LOAD FUNCTION (OPTIMIZED) =================
+  const loadDriverData = useCallback(async (forceRefresh = false) => {
+    if (!driver?.id || isFetching.current) return;
+    
+    try {
+      isFetching.current = true;
+      
+      if (forceRefresh) {
+        dataCache.current.timestamp = null;
+      }
+      
+      // Check if we have fresh cache (less than 30 seconds old)
+      if (!forceRefresh && dataCache.current.timestamp && 
+          (Date.now() - dataCache.current.timestamp) < 30000) {
+        console.log("Using cached data - less than 30 seconds old");
+        
+        // Use cached data
+        if (dataCache.current.wallet) {
+          setWalletData(dataCache.current.wallet);
+          const total = (dataCache.current.wallet.cash_earnings || 0) + 
+                       (dataCache.current.wallet.gcash_earnings || 0) + 
+                       (dataCache.current.wallet.wallet_earnings || 0);
+          setTotalEarnings(total);
+        }
+        
+        if (dataCache.current.today) {
+          setTodayEarnings(dataCache.current.today.total);
+          setTodayTrips(dataCache.current.today.tripsCount);
+        }
+        
+        if (dataCache.current.recent) {
+          setRecentTrips(dataCache.current.recent);
+        }
+        
+        if (dataCache.current.weekly) {
+          setWeeklyData(dataCache.current.weekly);
+        }
+        
+        setActiveSubscription(dataCache.current.subscription);
+        setMissionProgress(dataCache.current.mission);
+        setUnreadNotifications(dataCache.current.notifications || 0);
+        
+        if (dataCache.current.rank) {
+          setDriverRank(dataCache.current.rank);
+        }
+        
+        return;
+      }
+
+      console.log("Fetching fresh data...");
+      
+      // Fetch all data in parallel for maximum speed
+      const [
+        walletResult,
+        todayResult,
+        recentResult,
+        weeklyResult,
+        subscriptionResult,
+        missionResult,
+        notificationsResult,
+        rankResult,
+      ] = await Promise.all([
+        fetchWalletData(driver.id, false),
+        fetchTodayEarnings(driver.id, false),
+        fetchRecentTrips(driver.id, false),
+        fetchWeeklyData(driver.id, false),
+        fetchActiveSubscription(driver.id, false),
+        fetchMissionProgress(driver.id, false),
+        fetchUnreadNotifications(driver.id, false),
+        fetchDriverRank(driver.id, false),
+      ]);
+
+      // Update state with results
+      if (walletResult) {
+        setWalletData(walletResult);
+        const total = (walletResult.cash_earnings || 0) + 
+                     (walletResult.gcash_earnings || 0) + 
+                     (walletResult.wallet_earnings || 0);
+        setTotalEarnings(total);
+      }
+      
+      if (todayResult) {
+        setTodayEarnings(todayResult.total);
+        setTodayTrips(todayResult.tripsCount);
+      }
+      
+      if (recentResult) {
+        setRecentTrips(recentResult);
+      }
+      
+      if (weeklyResult) {
+        setWeeklyData(weeklyResult);
+      }
+      
+      setActiveSubscription(subscriptionResult);
+      setMissionProgress(missionResult);
+      setUnreadNotifications(notificationsResult);
+      
+      if (rankResult) {
+        setDriverRank(rankResult);
+      }
+      
+      // Update cache timestamp
+      dataCache.current.timestamp = Date.now();
+      
+    } catch (err) {
+      console.log("Error loading driver data:", err);
+    } finally {
+      isFetching.current = false;
+    }
+  }, [driver?.id, fetchWalletData, fetchTodayEarnings, fetchRecentTrips, 
+      fetchWeeklyData, fetchActiveSubscription, fetchMissionProgress, 
+      fetchUnreadNotifications, fetchDriverRank]);
+
+  // * ================= INITIAL LOAD =================
+  useEffect(() => {
+    const getDriver = async () => {
+      try {
+        setLoading(true);
+
+        const storedUserId = await AsyncStorage.getItem("user_id");
+        if (!storedUserId) {
+          setLoading(false);
+          return;
+        }
+
+        const { data, error } = await supabase
+          .from("drivers")
+          .select(
+            `
+            id, 
+            first_name, 
+            middle_name, 
+            last_name, 
+            status, 
+            is_active,
+            email,
+            phone,
+            profile_picture
+          `,
+          )
+          .eq("id", storedUserId)
+          .single();
+
+        if (error) {
+          console.log(error.message);
+          setLoading(false);
+          return;
+        }
+
+        setDriver(data);
+        setIsOnline(data?.is_active ?? false);
+
+        await setupLocationPermission();
+
+        if (data?.status === "approved" && data?.is_active) {
+          await startLocationUpdates(data.id);
+        }
+
+        // Load all data
+        await loadDriverData(true);
+        
+        initialLoadComplete.current = true;
+      } catch (err) {
+        console.log(err.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    getDriver();
+  }, []);
+
+  // * ================= REFRESH HANDLER =================
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadDriverData(true); // Force refresh
+    setRefreshing(false);
+  }, [loadDriverData]);
+
+  // * ================= FOCUS EFFECT =================
+  useFocusEffect(
+    useCallback(() => {
+      // Only reload if cache is stale (older than 30 seconds) or if not loaded yet
+      if (initialLoadComplete.current && driver?.id) {
+        const cacheAge = dataCache.current.timestamp ? Date.now() - dataCache.current.timestamp : Infinity;
+        if (cacheAge > 30000) {
+          console.log("Cache stale - reloading data");
+          loadDriverData(false);
+        }
+      }
+    }, [driver?.id, loadDriverData])
+  );
+
+  // * ================= CLEANUP =================
   useEffect(() => {
     return () => {
       if (locationSubscription) {
         locationSubscription.remove();
       }
     };
-  }, []);
+  }, [locationSubscription]);
 
-  // * ================= HANDLE APP STATE CHANGES ================= */
+  // * ================= APP STATE HANDLER =================
   useEffect(() => {
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       if (appState.current.match(/inactive|background/) && nextAppState === "active") {
         console.log("App has come to foreground!");
+        
+        // Refresh data when app comes to foreground
+        if (driver?.id) {
+          loadDriverData(false);
+        }
         
         if (isOnline && driver?.id && locationSubscription) {
           try {
@@ -245,448 +983,9 @@ export default function DriverHomeScreen() {
     return () => {
       subscription.remove();
     };
-  }, [isOnline, driver?.id]);
+  }, [isOnline, driver?.id, loadDriverData]);
 
-  // * ================= FETCH DRIVER ================= */
-  useFocusEffect(
-    useCallback(() => {
-      const getDriver = async () => {
-        try {
-          setLoading(true);
-
-          const storedUserId = await AsyncStorage.getItem("user_id");
-          if (!storedUserId) return;
-
-          const { data, error } = await supabase
-            .from("drivers")
-            .select(
-              `
-              id, 
-              first_name, 
-              middle_name, 
-              last_name, 
-              status, 
-              is_active,
-              email,
-              phone,
-              profile_picture
-            `,
-            )
-            .eq("id", storedUserId)
-            .single();
-
-          if (error) {
-            console.log(error.message);
-            return;
-          }
-
-          setDriver(data);
-          setIsOnline(data?.is_active ?? false);
-
-          await setupLocationPermission();
-
-          if (data?.status === "approved" && data?.is_active) {
-            await startLocationUpdates(data.id);
-          }
-
-          if (data) {
-            await Promise.all([
-              fetchWalletData(data.id),
-              fetchTodayEarnings(data.id),
-              fetchRecentTrips(data.id),
-              fetchWeeklyData(data.id),
-              fetchActiveSubscription(data.id),
-              fetchMissionProgress(data.id),
-              fetchUnreadNotifications(storedUserId),
-              fetchDriverRank(data.id),
-            ]);
-          }
-        } catch (err) {
-          console.log(err.message);
-        } finally {
-          setLoading(false);
-        }
-      };
-
-      getDriver();
-    }, []),
-  );
-
-  // * ================= REFRESH HANDLER ================= */
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    if (driver?.id) {
-      await Promise.all([
-        fetchWalletData(driver.id),
-        fetchTodayEarnings(driver.id),
-        fetchRecentTrips(driver.id),
-        fetchWeeklyData(driver.id),
-        fetchActiveSubscription(driver.id),
-        fetchMissionProgress(driver.id),
-        fetchUnreadNotifications(driver.id),
-        fetchDriverRank(driver.id),
-      ]);
-    }
-    setRefreshing(false);
-  }, [driver?.id]);
-
-  // * ================= FETCH WALLET DATA ================= */
-  const fetchWalletData = async (driverId) => {
-    try {
-      const { data, error } = await supabase
-        .from("driver_wallets")
-        .select("balance, total_deposits, total_withdrawals, cash_earnings, gcash_earnings, wallet_earnings")
-        .eq("driver_id", driverId)
-        .maybeSingle();
-
-      if (error) {
-        console.log("Wallet error:", error.message);
-        return;
-      }
-
-      if (data) {
-        setWalletData(data);
-        // Calculate total earnings from all trips
-        const total = (data.cash_earnings || 0) + (data.gcash_earnings || 0) + (data.wallet_earnings || 0);
-        setTotalEarnings(total);
-      } else {
-        // Create wallet if it doesn't exist
-        const { error: insertError } = await supabase
-          .from("driver_wallets")
-          .insert({
-            driver_id: driverId,
-            balance: 0,
-            total_deposits: 0,
-            total_withdrawals: 0,
-            cash_earnings: 0,
-            gcash_earnings: 0,
-            wallet_earnings: 0,
-          });
-
-        if (insertError) console.log("Wallet creation error:", insertError);
-        
-        setWalletData({
-          balance: 0,
-          total_deposits: 0,
-          total_withdrawals: 0,
-          cash_earnings: 0,
-          gcash_earnings: 0,
-          wallet_earnings: 0,
-        });
-        setTotalEarnings(0);
-      }
-    } catch (err) {
-      console.log("Fetch wallet error:", err.message);
-    }
-  };
-
-  // * ================= FETCH TODAY'S EARNINGS ================= */
-  const fetchTodayEarnings = async (driverId) => {
-    try {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("actual_fare, payment_method, payment_type")
-        .eq("driver_id", driverId)
-        .eq("status", "completed")
-        .gte("ride_completed_at", today.toISOString())
-        .lt("ride_completed_at", tomorrow.toISOString());
-
-      if (error) {
-        console.log("Today earnings error:", error.message);
-        return;
-      }
-
-      const total = data?.reduce((sum, booking) => sum + (booking.actual_fare || 0), 0) || 0;
-      const tripsCount = data?.length || 0;
-      
-      setTodayEarnings(total);
-      setTodayTrips(tripsCount);
-    } catch (err) {
-      console.log("Fetch today earnings error:", err.message);
-    }
-  };
-
-  // * ================= FETCH RECENT TRIPS ================= */
-  const fetchRecentTrips = async (driverId) => {
-    try {
-      console.log("🔍 Fetching trips for driver:", driverId);
-
-      const { data, error } = await supabase
-        .from("bookings")
-        .select(
-          `
-          id,
-          pickup_location,
-          dropoff_location,
-          actual_fare,
-          distance_km,
-          ride_completed_at,
-          status,
-          payment_method,
-          payment_type
-        `,
-        )
-        .eq("driver_id", driverId)
-        .eq("status", "completed")
-        .order("ride_completed_at", { ascending: false })
-        .limit(10);
-
-      if (error) {
-        console.log("❌ Recent trips error:", error.message);
-        return;
-      }
-
-      const formattedTrips = data?.map((trip) => {
-        const paymentMethod = trip.payment_method || trip.payment_type || "cash";
-        const paymentColor = 
-          paymentMethod === "gcash" ? "#00579F" :
-          paymentMethod === "cash" ? "#10B981" : "#183B5C";
-        
-        return {
-          id: trip.id,
-          from: trip.pickup_location?.split(",")[0] || "Pickup",
-          to: trip.dropoff_location?.split(",")[0] || "Dropoff",
-          distance: trip.distance_km ? `${trip.distance_km.toFixed(1)} km` : "? km",
-          earnings: `₱${trip.actual_fare?.toFixed(2) || "0.00"}`,
-          time: trip.ride_completed_at
-            ? new Date(trip.ride_completed_at).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })
-            : "Unknown",
-          paymentMethod,
-          paymentColor,
-        };
-      }) || [];
-
-      setRecentTrips(formattedTrips);
-    } catch (err) {
-      console.log("❌ Fetch recent trips error:", err.message);
-    }
-  };
-
-  // * ================= FETCH WEEKLY DATA ================= */
-  const fetchWeeklyData = async (driverId) => {
-    try {
-      console.log("🔍 Fetching weekly data for driver:", driverId);
-
-      const today = new Date();
-      const dayOfWeek = today.getDay();
-
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(
-        today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1),
-      );
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 7);
-
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("actual_fare, ride_completed_at")
-        .eq("driver_id", driverId)
-        .eq("status", "completed")
-        .gte("ride_completed_at", startOfWeek.toISOString())
-        .lt("ride_completed_at", endOfWeek.toISOString())
-        .order("ride_completed_at", { ascending: true });
-
-      if (error) {
-        console.log("❌ Weekly data error:", error.message);
-        return;
-      }
-
-      const earnings = [0, 0, 0, 0, 0, 0, 0];
-      const trips = [0, 0, 0, 0, 0, 0, 0];
-
-      data?.forEach((booking) => {
-        if (booking.ride_completed_at) {
-          const date = new Date(booking.ride_completed_at);
-          let dayIndex = date.getDay();
-          dayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-
-          earnings[dayIndex] += booking.actual_fare || 0;
-          trips[dayIndex] += 1;
-        }
-      });
-
-      setWeeklyData({
-        labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        earnings: earnings,
-        trips: trips,
-      });
-    } catch (err) {
-      console.log("❌ Fetch weekly data error:", err.message);
-    }
-  };
-
-  // * ================= FETCH ACTIVE SUBSCRIPTION ================= */
-  const fetchActiveSubscription = async (driverId) => {
-    try {
-      const { data, error } = await supabase
-        .from("driver_subscriptions")
-        .select(
-          `
-          id,
-          plan_id,
-          start_date,
-          end_date,
-          status,
-          subscription_plans (
-            plan_name,
-            plan_type,
-            price
-          )
-        `,
-        )
-        .eq("driver_id", driverId)
-        .eq("status", "active")
-        .gte("end_date", new Date().toISOString())
-        .order("end_date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error && error.code !== "PGRST116") {
-        console.log("Subscription error:", error.message);
-        return;
-      }
-
-      if (data) {
-        setActiveSubscription(data);
-      } else {
-        setActiveSubscription(null);
-      }
-    } catch (err) {
-      console.log("Fetch subscription error:", err.message);
-    }
-  };
-
-  // * ================= FETCH MISSION PROGRESS ================= */
-  const fetchMissionProgress = async (driverId) => {
-    try {
-      const today = new Date();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - today.getDay() + 1);
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 6);
-      endOfWeek.setHours(23, 59, 59, 999);
-
-      const { data, error } = await supabase
-        .from("ride_missions")
-        .select("*")
-        .eq("driver_id", driverId)
-        .gte("week_start", startOfWeek.toISOString().split("T")[0])
-        .lte("week_end", endOfWeek.toISOString().split("T")[0])
-        .maybeSingle();
-
-      if (error && error.code !== "PGRST116") {
-        console.log("Mission error:", error.message);
-        return;
-      }
-
-      if (data) {
-        setMissionProgress(data);
-      } else {
-        setMissionProgress(null);
-      }
-    } catch (err) {
-      console.log("Fetch mission error:", err.message);
-    }
-  };
-
-  // * ================= FETCH UNREAD NOTIFICATIONS ================= */
-  const fetchUnreadNotifications = async (userId) => {
-    try {
-      const { count, error } = await supabase
-        .from("notifications")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("is_read", false);
-
-      if (error) throw error;
-      setUnreadNotifications(count || 0);
-    } catch (err) {
-      console.log("Error fetching notifications:", err);
-    }
-  };
-
-  // * ================= FETCH DRIVER RANK ================= */
-  const fetchDriverRank = async (driverId) => {
-    try {
-      const { data: drivers, error } = await supabase
-        .from("drivers")
-        .select(`
-          id,
-          first_name,
-          last_name
-        `)
-        .eq("status", "approved");
-
-      if (error) throw error;
-
-      const driverStats = await Promise.all(
-        drivers.map(async (d) => {
-          const { count, error: countError } = await supabase
-            .from("bookings")
-            .select("*", { count: "exact", head: true })
-            .eq("driver_id", d.id)
-            .eq("status", "completed");
-
-          if (countError) throw countError;
-
-          return {
-            ...d,
-            trips: count || 0,
-            points: (count || 0) * 10,
-          };
-        })
-      );
-
-      const sortedDrivers = driverStats.sort((a, b) => b.points - a.points);
-      const currentDriverIndex = sortedDrivers.findIndex(d => d.id === driverId);
-      const currentRank = currentDriverIndex + 1;
-      const currentDriverPoints = sortedDrivers[currentDriverIndex]?.points || 0;
-
-      let level = "Bronze";
-      if (currentDriverPoints >= 2000) level = "Diamond";
-      else if (currentDriverPoints >= 1000) level = "Gold";
-      else if (currentDriverPoints >= 500) level = "Silver";
-
-      setDriverRank({
-        currentRank,
-        level,
-        points: currentDriverPoints,
-      });
-    } catch (err) {
-      console.log("Error fetching rank:", err.message);
-    }
-  };
-
-  /* ================= ANIMATED TOGGLE ================= */
-  const toggleAnim = useRef(new Animated.Value(0)).current;
-
-  const translateY = toggleAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [30, 0],
-  });
-
-  useEffect(() => {
-    Animated.timing(toggleAnim, {
-      toValue: isOnline ? 1 : 0,
-      duration: 250,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: false,
-    }).start();
-  }, [isOnline]);
-
-  /* ================= TOGGLE ONLINE ================= */
+  // * ================= TOGGLE ONLINE =================
   const toggleAvailability = async () => {
     if (!driver || driver.status !== "approved") return;
 
@@ -734,21 +1033,6 @@ export default function DriverHomeScreen() {
         return;
       }
 
-      await supabase.from("audit_logs").insert([
-        {
-          user_id: driver.id,
-          user_type: "driver",
-          action: "UPDATE",
-          table_name: "drivers",
-          record_id: driver.id,
-          metadata: {
-            field: "is_active",
-            old_value: !newOnlineStatus,
-            new_value: newOnlineStatus,
-          },
-        },
-      ]);
-
       Alert.alert(
         newOnlineStatus ? "You're Online!" : "You're Offline",
         newOnlineStatus 
@@ -763,137 +1047,29 @@ export default function DriverHomeScreen() {
     }
   };
 
-  const renderTrip = ({ item }) => (
-    <Pressable
-      style={({ pressed }) => ({
-        backgroundColor: pressed ? "#F3F4F6" : "#F9FAFB",
-        borderRadius: 16,
-        padding: 15,
-        marginBottom: 10,
-        flexDirection: "row",
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: "#E5E7EB",
-      })}
-      onPress={() =>
-        navigation.navigate("TripDetailsScreen", { tripId: item.id })
-      }
-    >
-      <View style={{
-        width: 45,
-        height: 45,
-        borderRadius: 12,
-        backgroundColor: item.paymentColor || "#183B5C",
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 12,
-      }}>
-        <Ionicons 
-          name={
-            item.paymentMethod === "gcash" ? "phone-portrait" :
-            item.paymentMethod === "cash" ? "cash" : "wallet"
-          } 
-          size={24} 
-          color="#FFF" 
-        />
-      </View>
+  // * ================= ANIMATED TOGGLE =================
+  const toggleAnim = useRef(new Animated.Value(0)).current;
 
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
-          <Ionicons name="location" size={12} color="#10B981" />
-          <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
-            {item.from}
-          </Text>
-        </View>
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <Ionicons name="flag" size={12} color="#EF4444" />
-          <Text style={{ fontSize: 13, color: "#333", marginLeft: 2, flex: 1 }} numberOfLines={1}>
-            {item.to}
-          </Text>
-        </View>
-      </View>
+  const translateY = toggleAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [30, 0],
+  });
 
-      <View style={{ alignItems: "flex-end" }}>
-        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#183B5C" }}>
-          {item.earnings}
-        </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2 }}>
-          <Ionicons name="time-outline" size={10} color="#9CA3AF" />
-          <Text style={{ fontSize: 10, color: "#9CA3AF", marginLeft: 2 }}>
-            {item.distance} • {item.time}
-          </Text>
-        </View>
-      </View>
-    </Pressable>
-  );
+  useEffect(() => {
+    Animated.timing(toggleAnim, {
+      toValue: isOnline ? 1 : 0,
+      duration: 250,
+      easing: Easing.out(Easing.ease),
+      useNativeDriver: false,
+    }).start();
+  }, [isOnline]);
 
-  const screenWidth = Dimensions.get("window").width - 40;
+  // * ================= RENDER TRIP ITEM =================
+  const renderTrip = useCallback(({ item }) => (
+    <TripItem item={item} navigation={navigation} />
+  ), [navigation]);
 
-  // Mission progress component
-  const MissionProgress = () => {
-    if (!missionProgress) return null;
-
-    const progress = (missionProgress.actual_rides / missionProgress.target_rides) * 100;
-
-    return (
-      <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: 10,
-          padding: 15,
-          backgroundColor: "#F0F9FF",
-          borderRadius: 12,
-          borderWidth: 1,
-          borderColor: "#B2D9FF",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <Text style={{ fontWeight: "bold", fontSize: 16 }}>
-            🎯 Weekly Mission
-          </Text>
-          <Text style={{ color: "#183B5C", fontWeight: "bold" }}>
-            {missionProgress.actual_rides}/{missionProgress.target_rides} rides
-          </Text>
-        </View>
-
-        <View
-          style={{
-            height: 8,
-            backgroundColor: "#E5E7EB",
-            borderRadius: 4,
-            marginTop: 10,
-            overflow: "hidden",
-          }}
-        >
-          <View
-            style={{
-              width: `${progress}%`,
-              height: "100%",
-              backgroundColor: progress >= 100 ? "#10B981" : "#3B82F6",
-            }}
-          />
-        </View>
-
-        {progress >= 100 ? (
-          <Text style={{ marginTop: 8, color: "#10B981", fontWeight: "600" }}>
-            🎉 Congrats! You've hit the target! ₱{missionProgress.bonus_amount} bonus coming soon!
-          </Text>
-        ) : (
-          <Text style={{ marginTop: 8, color: "#6B7280" }}>
-            {missionProgress.target_rides - missionProgress.actual_rides} more
-            rides to earn ₱{missionProgress.bonus_amount} bonus!
-          </Text>
-        )}
-      </View>
-    );
-  };
-
+  // Loading state
   if (loading && !refreshing) {
     return (
       <View style={[styles.container, { paddingTop: insets.top, justifyContent: "center", alignItems: "center" }]}>
@@ -910,6 +1086,10 @@ export default function DriverHomeScreen() {
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }
+      // Optimize scrolling performance
+      removeClippedSubviews={true}
+      maxToRenderPerBatch={5}
+      windowSize={5}
     >
       {/* HEADER */}
       <LinearGradient
@@ -954,11 +1134,9 @@ export default function DriverHomeScreen() {
             </View>
 
             <Text style={[styles.userName, { color: "#FFF" }]}>
-              {loading
-                ? "Loading..."
-                : driver
-                  ? `${driver.first_name} ${driver.middle_name ? driver.middle_name + " " : ""}${driver.last_name}`
-                  : "Driver"}
+              {driver
+                ? `${driver.first_name} ${driver.middle_name ? driver.middle_name + " " : ""}${driver.last_name}`
+                : "Driver"}
             </Text>
           </View>
 
@@ -1071,7 +1249,7 @@ export default function DriverHomeScreen() {
       </LinearGradient>
 
       {/* DRIVER STATUS WARNING */}
-      {!loading && driver && driver.status !== "approved" && (
+      {driver && driver.status !== "approved" && (
         <View
           style={{
             marginHorizontal: 20,
@@ -1326,11 +1504,11 @@ export default function DriverHomeScreen() {
       {/* If only mission exists */}
       {!activeSubscription && missionProgress && (
         <View style={{ marginHorizontal: 20, marginTop: 15 }}>
-          <MissionProgress />
+          <MissionProgress missionProgress={missionProgress} />
         </View>
       )}
 
-      {/* BALANCE CARD - UPDATED WITH CLEAR SEPARATION */}
+      {/* BALANCE CARD */}
       <View style={[styles.balanceCard, { position: "relative", marginTop: 10 }]}>
         <View style={styles.balanceRow}>
           <Pressable
@@ -1363,7 +1541,7 @@ export default function DriverHomeScreen() {
           </View>
         </View>
 
-        {/* EARNINGS BREAKDOWN - FROM TRIPS */}
+        {/* EARNINGS BREAKDOWN */}
         <View style={{
           marginTop: 15,
           padding: 12,
@@ -1387,7 +1565,7 @@ export default function DriverHomeScreen() {
               </Text>
             </View>
 
-            <View style={{ alignItems: "center" }}>
+            {/* <View style={{ alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#00579F", marginRight: 4 }} />
                 <Text style={{ fontSize: 11, color: "#666" }}>GCash</Text>
@@ -1395,7 +1573,7 @@ export default function DriverHomeScreen() {
               <Text style={{ fontSize: 14, fontWeight: "600", color: "#00579F" }}>
                 ₱{walletData.gcash_earnings.toFixed(0)}
               </Text>
-            </View>
+            </View> */}
 
             <View style={{ alignItems: "center" }}>
               <View style={{ flexDirection: "row", alignItems: "center" }}>
@@ -1717,6 +1895,9 @@ export default function DriverHomeScreen() {
                   }}
                   style={{ marginVertical: 8, borderRadius: 16 }}
                   fromZero={true}
+                  bezier={false}
+                  withInnerLines={false}
+                  withOuterLines={true}
                 />
               </View>
             ) : (
@@ -1793,6 +1974,9 @@ export default function DriverHomeScreen() {
               renderItem={renderTrip}
               keyExtractor={(item) => item.id.toString()}
               scrollEnabled={false}
+              removeClippedSubviews={true}
+              maxToRenderPerBatch={5}
+              initialNumToRender={5}
               ListEmptyComponent={
                 <View style={{ 
                   padding: 30, 
@@ -1816,3 +2000,5 @@ export default function DriverHomeScreen() {
     </ScrollView>
   );
 }
+
+// Gcash
