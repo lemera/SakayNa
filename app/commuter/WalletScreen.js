@@ -11,7 +11,8 @@ import {
   RefreshControl,
   Modal,
   TextInput,
-  Image,
+  Animated,
+  Dimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,7 +20,9 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
-import * as ImagePicker from "expo-image-picker";
+import * as Haptics from 'expo-haptics';
+
+const { width } = Dimensions.get('window');
 
 export default function CommuterWalletScreen() {
   const insets = useSafeAreaInsets();
@@ -29,31 +32,42 @@ export default function CommuterWalletScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [commuterId, setCommuterId] = useState(null);
   const [commuter, setCommuter] = useState(null);
-  const [wallet, setWallet] = useState(null);
-  const [transactions, setTransactions] = useState([]);
-  const [recentBookings, setRecentBookings] = useState([]);
-  const [availablePromos, setAvailablePromos] = useState([]);
-  const [paymentMethods, setPaymentMethods] = useState([]);
+  const [points, setPoints] = useState(0);
   const [pointsHistory, setPointsHistory] = useState([]);
-  const [referralInfo, setReferralInfo] = useState(null);
+  const [recentBookings, setRecentBookings] = useState([]);
   
-  // Cash-in modal
-  const [showCashInModal, setShowCashInModal] = useState(false);
-  const [cashInAmount, setCashInAmount] = useState("");
-  const [cashInMethod, setCashInMethod] = useState("gcash");
-  const [processingCashIn, setProcessingCashIn] = useState(false);
-  const [proofImage, setProofImage] = useState(null);
-
-  // Promo modal
+  // Promo related states
+  const [availablePromos, setAvailablePromos] = useState([]);
   const [showPromoModal, setShowPromoModal] = useState(false);
-  const [promoCode, setPromoCode] = useState("");
-  const [applyingPromo, setApplyingPromo] = useState(false);
+  const [processingPromo, setProcessingPromo] = useState(false);
+  const [selectedPromo, setSelectedPromo] = useState(null);
+  const [promoCategory, setPromoCategory] = useState('all'); // 'all', 'redeem', 'buy'
+  
+  // Buy points states
+  const [showBuyPointsModal, setShowBuyPointsModal] = useState(false);
+  const [processingBuyPoints, setProcessingBuyPoints] = useState(false);
+  const [gcashNumber, setGcashNumber] = useState("");
+  
+  // Points stats
+  const [totalPointsEarned, setTotalPointsEarned] = useState(0);
+  const [totalPointsRedeemed, setTotalPointsRedeemed] = useState(0);
+  const [pointsThisMonth, setPointsThisMonth] = useState(0);
+  const [nextTierPoints, setNextTierPoints] = useState(0);
+  
+  // Points configuration
+  const [pointsConfig] = useState({
+    cashRate: 0.05,
+    walletRate: 0.10,
+    minFare: 20,
+    conversionRate: 0.10,
+  });
 
   // Stats
   const [totalSpent, setTotalSpent] = useState(0);
   const [totalTrips, setTotalTrips] = useState(0);
-  const [points, setPoints] = useState(0);
-  const [referralEarnings, setReferralEarnings] = useState(0);
+
+  // Animation values
+  const [slideAnim] = useState(new Animated.Value(0));
 
   useFocusEffect(
     React.useCallback(() => {
@@ -70,13 +84,11 @@ export default function CommuterWalletScreen() {
         await Promise.all([
           fetchCommuterProfile(id),
           fetchWallet(id),
-          fetchTransactions(id),
           fetchRecentBookings(id),
           fetchStats(id),
-          fetchAvailablePromos(id),
-          fetchPaymentMethods(id),
           fetchPointsHistory(id),
-          fetchReferralInfo(id)
+          fetchPointsStats(id),
+          fetchAvailablePromos(id)
         ]);
       }
     } catch (err) {
@@ -84,99 +96,6 @@ export default function CommuterWalletScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
-    }
-  };
-
-  const fetchCommuterProfile = async (id) => {
-    try {
-      const { data, error } = await supabase
-        .from("commuters")
-        .select("first_name, last_name, phone, email, profile_picture")
-        .eq("id", id)
-        .single();
-
-      if (error) throw error;
-      setCommuter(data);
-    } catch (err) {
-      console.log("Error fetching commuter profile:", err);
-    }
-  };
-
-  const fetchWallet = async (id) => {
-    try {
-      const { data, error } = await supabase
-        .from("commuter_wallets")
-        .select("*")
-        .eq("commuter_id", id)
-        .single();
-
-      if (error && error.code !== "PGRST116") throw error;
-
-      if (data) {
-        setWallet(data);
-        setPoints(data.points || 0);
-      } else {
-        // Create wallet if doesn't exist
-        const { data: newWallet, error: createError } = await supabase
-          .from("commuter_wallets")
-          .insert([
-            {
-              commuter_id: id,
-              balance: 0,
-              points: 0,
-            },
-          ])
-          .select()
-          .single();
-
-        if (createError) throw createError;
-        setWallet(newWallet);
-      }
-    } catch (err) {
-      console.log("Error fetching wallet:", err);
-    }
-  };
-
-  const fetchTransactions = async (id) => {
-    try {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select("*")
-        .eq("user_id", id)
-        .eq("user_type", "commuter")
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      if (error) throw error;
-      setTransactions(data || []);
-    } catch (err) {
-      console.log("Error fetching transactions:", err);
-    }
-  };
-
-  const fetchRecentBookings = async (id) => {
-    try {
-      const { data, error } = await supabase
-        .from("bookings")
-        .select(`
-          id,
-          booking_reference,
-          fare,
-          payment_type,
-          payment_status,
-          created_at,
-          pickup_location,
-          dropoff_location,
-          commuter_rating
-        `)
-        .eq("commuter_id", id)
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      if (error) throw error;
-      setRecentBookings(data || []);
-    } catch (err) {
-      console.log("Error fetching recent bookings:", err);
     }
   };
 
@@ -214,93 +133,397 @@ export default function CommuterWalletScreen() {
     }
   };
 
-  const fetchPaymentMethods = async (id) => {
+  const handlePromoSelect = (promo) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedPromo(promo);
+    
+    if (promo.discount_type === 'points_multiplier') {
+      setShowBuyPointsModal(true);
+    } else {
+      Alert.alert(
+        "Redeem Points",
+        `${promo.description}\n\nYou have ${points} points available.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { 
+            text: "Redeem Now", 
+            onPress: () => handleRedeemPromo(promo)
+          }
+        ]
+      );
+    }
+  };
+
+  const handleRedeemPromo = async (promo) => {
+    if (points < promo.points_required) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        "Insufficient Points",
+        `You need ${promo.points_required} points to redeem this promo. You only have ${points} points.`
+      );
+      return;
+    }
+
+    setProcessingPromo(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      const { count, error: usageError } = await supabase
+        .from("commuter_promos")
+        .select("*", { count: "exact", head: true })
+        .eq("commuter_id", commuterId)
+        .eq("promo_id", promo.id);
+
+      if (usageError) throw usageError;
+
+      if (promo.user_limit && count >= promo.user_limit) {
+        Alert.alert("Limit Reached", "You have already used this promo.");
+        setProcessingPromo(false);
+        return;
+      }
+
+      const newPoints = points - promo.points_required;
+      
+      const { error: updateError } = await supabase
+        .from("commuter_wallets")
+        .update({ 
+          points: newPoints,
+          updated_at: new Date()
+        })
+        .eq("commuter_id", commuterId);
+
+      if (updateError) throw updateError;
+
+      const { error: historyError } = await supabase
+        .from("commuter_points_history")
+        .insert({
+          commuter_id: commuterId,
+          points: promo.points_required,
+          type: 'redeemed',
+          source: 'promo',
+          description: `Redeemed ${promo.points_required} points for ₱${promo.discount_value} GCash`,
+          created_at: new Date()
+        });
+
+      if (historyError) throw historyError;
+
+      const { error: promoError } = await supabase
+        .from("commuter_promos")
+        .insert({
+          commuter_id: commuterId,
+          promo_id: promo.id,
+          used_at: new Date(),
+          discount_amount: promo.discount_value
+        });
+
+      if (promoError) throw promoError;
+
+      setPoints(newPoints);
+      
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      
+      Alert.alert(
+        "🎉 Redemption Successful!",
+        `You have successfully redeemed ${promo.points_required} points for ₱${promo.discount_value} GCash.\n\nPlease check your GCash app within 24 hours.`,
+        [{ text: "Awesome!" }]
+      );
+
+      await Promise.all([
+        fetchWallet(commuterId),
+        fetchPointsHistory(commuterId),
+        fetchPointsStats(commuterId),
+        fetchAvailablePromos(commuterId)
+      ]);
+
+    } catch (err) {
+      console.log("Error redeeming promo:", err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert("Oops!", "Failed to redeem promo. Please try again.");
+    } finally {
+      setProcessingPromo(false);
+      setSelectedPromo(null);
+      setShowPromoModal(false);
+    }
+  };
+
+  const handleBuyPoints = async () => {
+    if (!selectedPromo) return;
+    
+    if (!gcashNumber || gcashNumber.length < 11) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert("Invalid Number", "Please enter a valid GCash number.");
+      return;
+    }
+
+    setProcessingBuyPoints(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      const pointsToAdd = selectedPromo.discount_value;
+      const newPoints = points + pointsToAdd;
+      
+      const { error: updateError } = await supabase
+        .from("commuter_wallets")
+        .update({ 
+          points: newPoints,
+          updated_at: new Date()
+        })
+        .eq("commuter_id", commuterId);
+
+      if (updateError) throw updateError;
+
+      const { error: historyError } = await supabase
+        .from("commuter_points_history")
+        .insert({
+          commuter_id: commuterId,
+          points: pointsToAdd,
+          type: 'earned',
+          source: 'promo',
+          description: `Bought ${pointsToAdd} points via GCash`,
+          created_at: new Date()
+        });
+
+      if (historyError) throw historyError;
+
+      const { error: promoError } = await supabase
+        .from("commuter_promos")
+        .insert({
+          commuter_id: commuterId,
+          promo_id: selectedPromo.id,
+          used_at: new Date(),
+          discount_amount: pointsToAdd
+        });
+
+      if (promoError) throw promoError;
+
+      setPoints(newPoints);
+      
+      const amountPaid = selectedPromo.promo_code === 'BUY100' ? 10 :
+                        selectedPromo.promo_code === 'BUY500' ? 50 :
+                        selectedPromo.promo_code === 'BUY1000' ? 100 : 0;
+      
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      
+      Alert.alert(
+        "✨ Purchase Successful!",
+        `You have successfully bought ${pointsToAdd} points for ₱${amountPaid} via GCash.\n\nReference: GCASH-${Date.now()}`,
+        [{ text: "Great!" }]
+      );
+
+      await Promise.all([
+        fetchWallet(commuterId),
+        fetchPointsHistory(commuterId),
+        fetchPointsStats(commuterId),
+        fetchAvailablePromos(commuterId)
+      ]);
+
+    } catch (err) {
+      console.log("Error buying points:", err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert("Oops!", "Failed to buy points. Please try again.");
+    } finally {
+      setProcessingBuyPoints(false);
+      setShowBuyPointsModal(false);
+      setShowPromoModal(false);
+      setGcashNumber("");
+      setSelectedPromo(null);
+    }
+  };
+
+  const fetchPointsStats = async (id) => {
+    try {
+      const { data: earnedData } = await supabase
+        .from("commuter_points_history")
+        .select("points")
+        .eq("commuter_id", id)
+        .eq("type", "earned");
+
+      const totalEarned = earnedData?.reduce((sum, item) => sum + item.points, 0) || 0;
+      setTotalPointsEarned(totalEarned);
+
+      const { data: redeemedData } = await supabase
+        .from("commuter_points_history")
+        .select("points")
+        .eq("commuter_id", id)
+        .eq("type", "redeemed");
+
+      const totalRedeemed = redeemedData?.reduce((sum, item) => sum + item.points, 0) || 0;
+      setTotalPointsRedeemed(totalRedeemed);
+
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const { data: monthData } = await supabase
+        .from("commuter_points_history")
+        .select("points")
+        .eq("commuter_id", id)
+        .eq("type", "earned")
+        .gte("created_at", startOfMonth.toISOString());
+
+      const monthEarned = monthData?.reduce((sum, item) => sum + item.points, 0) || 0;
+      setPointsThisMonth(monthEarned);
+
+      const tiers = [0, 1000, 5000, 10000];
+      const nextTier = tiers.find(tier => tier > totalEarned) || tiers[tiers.length - 1];
+      setNextTierPoints(nextTier - totalEarned);
+
+    } catch (err) {
+      console.log("Error fetching points stats:", err);
+    }
+  };
+
+  const fetchCommuterProfile = async (id) => {
     try {
       const { data, error } = await supabase
-        .from("commuter_payment_methods")
-        .select("*")
-        .eq("commuter_id", id)
-        .order("is_default", { ascending: false });
+        .from("commuters")
+        .select("first_name, last_name, phone, email, profile_picture")
+        .eq("id", id)
+        .single();
 
       if (error) throw error;
-      setPaymentMethods(data || []);
+      setCommuter(data);
     } catch (err) {
-      console.log("Error fetching payment methods:", err);
+      console.log("Error fetching commuter profile:", err);
+    }
+  };
+
+  const fetchWallet = async (id) => {
+    try {
+      const { data, error } = await supabase
+        .from("commuter_wallets")
+        .select("points")
+        .eq("commuter_id", id)
+        .maybeSingle();
+
+      if (error && error.code !== "PGRST116") throw error;
+
+      if (data) {
+        setPoints(data.points || 0);
+      } else {
+        const { data: newWallet, error: createError } = await supabase
+          .from("commuter_wallets")
+          .insert([
+            {
+              commuter_id: id,
+              points: 0,
+              updated_at: new Date()
+            },
+          ])
+          .select()
+          .single();
+
+        if (createError) throw createError;
+        setPoints(newWallet?.points || 0);
+      }
+    } catch (err) {
+      console.log("Error fetching wallet:", err);
+    }
+  };
+
+  const fetchRecentBookings = async (id) => {
+    try {
+      const { data, error } = await supabase
+        .from("bookings")
+        .select(`
+          id,
+          booking_reference,
+          fare,
+          payment_type,
+          payment_status,
+          created_at,
+          pickup_location,
+          dropoff_location,
+          commuter_rating,
+          points_used
+        `)
+        .eq("commuter_id", id)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (error) throw error;
+      
+      const enhancedBookings = await Promise.all((data || []).map(async (booking) => {
+        const { data: pointsData } = await supabase
+          .from("commuter_points_history")
+          .select("points")
+          .eq("source_id", booking.id)
+          .eq("type", "earned")
+          .maybeSingle();
+        
+        return {
+          ...booking,
+          points_earned: pointsData?.points || 0
+        };
+      }));
+      
+      setRecentBookings(enhancedBookings);
+    } catch (err) {
+      console.log("Error fetching recent bookings:", err);
     }
   };
 
   const fetchPointsHistory = async (id) => {
     try {
-      const { data, error } = await supabase
+      const { data: historyData, error: historyError } = await supabase
         .from("commuter_points_history")
         .select("*")
         .eq("commuter_id", id)
         .order("created_at", { ascending: false })
-        .limit(10);
+        .limit(20);
 
-      if (error) throw error;
-      setPointsHistory(data || []);
+      if (historyError) throw historyError;
+      
+      if (historyData && historyData.length > 0) {
+        const bookingIds = historyData
+          .filter(item => item.source_id && (item.source === 'trip' || item.source === 'trip_cash' || item.source === 'trip_wallet'))
+          .map(item => item.source_id);
+        
+        let bookingsMap = {};
+        
+        if (bookingIds.length > 0) {
+          const { data: bookingsData } = await supabase
+            .from("bookings")
+            .select("id, pickup_location, dropoff_location, fare, payment_type")
+            .in("id", bookingIds);
+
+          if (bookingsData) {
+            bookingsMap = bookingsData.reduce((acc, booking) => {
+              acc[booking.id] = booking;
+              return acc;
+            }, {});
+          }
+        }
+        
+        const enhancedHistory = historyData.map(item => ({
+          ...item,
+          bookings: item.source_id && bookingsMap[item.source_id] ? bookingsMap[item.source_id] : null
+        }));
+        
+        setPointsHistory(enhancedHistory);
+      } else {
+        setPointsHistory([]);
+      }
+      
     } catch (err) {
       console.log("Error fetching points history:", err);
-    }
-  };
-
-  const fetchReferralInfo = async (id) => {
-    try {
-      // Get referrals made by this commuter
-      const { data: referrals, error: refError } = await supabase
-        .from("referrals")
-        .select(`
-          *,
-          referred:referred_id (
-            id,
-            user_type
-          ),
-          commissions (
-            id,
-            amount,
-            status,
-            paid_at
-          )
-        `)
-        .eq("referrer_id", id)
-        .eq("referrer_type", "commuter");
-
-      if (refError) throw refError;
-
-      // Calculate total referral earnings
-      const totalEarnings = referrals?.reduce((sum, ref) => {
-        const commissionSum = ref.commissions?.reduce((cSum, comm) => 
-          cSum + (comm.status === 'paid' ? comm.amount : 0), 0) || 0;
-        return sum + commissionSum;
-      }, 0) || 0;
-
-      setReferralInfo({
-        referrals: referrals || [],
-        totalEarnings: totalEarnings
-      });
-      setReferralEarnings(totalEarnings);
-    } catch (err) {
-      console.log("Error fetching referral info:", err);
+      setPointsHistory([]);
     }
   };
 
   const fetchStats = async (id) => {
     try {
-      // Get total spent from wallet transactions
-      const { data: spentData, error: spentError } = await supabase
-        .from("transactions")
-        .select("amount")
-        .eq("user_id", id)
-        .eq("user_type", "commuter")
-        .eq("type", "payment");
+      const { data: bookingsData, error: bookingsError } = await supabase
+        .from("bookings")
+        .select("fare")
+        .eq("commuter_id", id)
+        .eq("status", "completed");
 
-      if (spentError) throw spentError;
+      if (bookingsError) throw bookingsError;
       
-      const total = spentData?.reduce((sum, t) => sum + t.amount, 0) || 0;
+      const total = bookingsData?.reduce((sum, b) => sum + b.fare, 0) || 0;
       setTotalSpent(total);
 
-      // Get total trips
       const { count, error: tripsError } = await supabase
         .from("bookings")
         .select("*", { count: "exact", head: true })
@@ -320,402 +543,19 @@ export default function CommuterWalletScreen() {
     loadCommuterData();
   };
 
-  // ================= POINTS SYSTEM =================
-  const calculatePointsEarned = (fare) => {
-    // 1 point for every ₱10 spent
-    return Math.floor(fare / 10);
+  const calculatePointsEarned = (fare, paymentType = 'cash') => {
+    if (!fare || fare < pointsConfig.minFare) return 0;
+    
+    const rate = paymentType === 'wallet' ? pointsConfig.walletRate : pointsConfig.cashRate;
+    let points = fare * rate;
+    return Math.floor(points);
   };
 
-  const addPoints = async (source, sourceId, points, description) => {
-    try {
-      // Update wallet points
-      const newPoints = (wallet?.points || 0) + points;
-      
-      await supabase
-        .from("commuter_wallets")
-        .update({ 
-          points: newPoints,
-          updated_at: new Date()
-        })
-        .eq("commuter_id", commuterId);
-
-      // Add to points history
-      await supabase
-        .from("commuter_points_history")
-        .insert({
-          commuter_id: commuterId,
-          points: points,
-          type: "earned",
-          source: source,
-          source_id: sourceId,
-          description: description,
-          created_at: new Date()
-        });
-
-      setPoints(newPoints);
-    } catch (err) {
-      console.log("Error adding points:", err);
-    }
-  };
-
-  const redeemPoints = async (pointsToRedeem, description) => {
-    try {
-      if ((wallet?.points || 0) < pointsToRedeem) {
-        Alert.alert("Insufficient Points", "You don't have enough points.");
-        return false;
-      }
-
-      const newPoints = (wallet?.points || 0) - pointsToRedeem;
-      
-      await supabase
-        .from("commuter_wallets")
-        .update({ 
-          points: newPoints,
-          updated_at: new Date()
-        })
-        .eq("commuter_id", commuterId);
-
-      await supabase
-        .from("commuter_points_history")
-        .insert({
-          commuter_id: commuterId,
-          points: pointsToRedeem,
-          type: "redeemed",
-          source: "promo",
-          description: description,
-          created_at: new Date()
-        });
-
-      setPoints(newPoints);
-      return true;
-    } catch (err) {
-      console.log("Error redeeming points:", err);
-      return false;
-    }
-  };
-
-  // ================= PROMO SYSTEM =================
-  const handleApplyPromo = async () => {
-    if (!promoCode.trim()) {
-      Alert.alert("Error", "Please enter a promo code");
-      return;
-    }
-
-    setApplyingPromo(true);
-
-    try {
-      const { data: promo, error } = await supabase
-        .from("promos")
-        .select("*")
-        .eq("promo_code", promoCode.toUpperCase())
-        .eq("is_active", true)
-        .single();
-
-      if (error) throw error;
-
-      // Check if promo is within date range
-      const now = new Date();
-      const startDate = new Date(promo.start_date);
-      const endDate = new Date(promo.end_date);
-
-      if (now < startDate) {
-        Alert.alert("Not Yet Available", "This promo hasn't started yet.");
-        return;
-      }
-
-      if (now > endDate) {
-        Alert.alert("Expired", "This promo has expired.");
-        return;
-      }
-
-      // Check if user has already used this promo
-      const { count, error: usageError } = await supabase
-        .from("commuter_promos")
-        .select("*", { count: "exact", head: true })
-        .eq("commuter_id", commuterId)
-        .eq("promo_id", promo.id);
-
-      if (usageError) throw usageError;
-
-      if (promo.user_limit && count >= promo.user_limit) {
-        Alert.alert("Limit Reached", "You have already used this promo.");
-        return;
-      }
-
-      // Check if promo requires points
-      if (promo.points_required && (wallet?.points || 0) < promo.points_required) {
-        Alert.alert(
-          "Insufficient Points", 
-          `You need ${promo.points_required} points to use this promo.`
-        );
-        return;
-      }
-
-      // Store promo in context/navigation for booking
-      Alert.alert(
-        "Promo Applied!",
-        `${promo.title}\n\n${promo.description}\n\nDiscount: ${
-          promo.discount_type === 'percentage' ? `${promo.discount_value}%` : `₱${promo.discount_value}`
-        }`,
-        [
-          { 
-            text: "Use on Next Booking", 
-            onPress: () => {
-              // Save promo to AsyncStorage for booking screen
-              AsyncStorage.setItem("active_promo", JSON.stringify({
-                id: promo.id,
-                code: promo.promo_code,
-                discount_type: promo.discount_type,
-                discount_value: promo.discount_value,
-                min_spend: promo.min_spend,
-                max_discount: promo.max_discount
-              }));
-              setShowPromoModal(false);
-              setPromoCode("");
-            }
-          }
-        ]
-      );
-
-    } catch (err) {
-      console.log("Error applying promo:", err);
-      Alert.alert("Invalid Promo", "The promo code you entered is invalid.");
-    } finally {
-      setApplyingPromo(false);
-    }
-  };
-
-  // ================= CASH-IN SYSTEM =================
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.8,
-    });
-
-    if (!result.canceled) {
-      setProofImage(result.assets[0].uri);
-    }
-  };
-
-  const generateReferenceNumber = () => {
-    return `CASH-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-  };
-
-  const handleCashIn = async () => {
-    if (!cashInAmount || parseFloat(cashInAmount) < 20) {
-      Alert.alert("Invalid Amount", "Minimum cash-in amount is ₱20");
-      return;
-    }
-
-    if (cashInMethod === "gcash" && !proofImage) {
-      Alert.alert("Proof Required", "Please upload a screenshot of your GCash payment.");
-      return;
-    }
-
-    setProcessingCashIn(true);
-
-    try {
-      const referenceNumber = generateReferenceNumber();
-      
-      // Upload proof image if exists
-      let proofUrl = null;
-      if (proofImage) {
-        const fileName = `cashin/${commuterId}/${referenceNumber}.jpg`;
-        const response = await fetch(proofImage);
-        const blob = await response.blob();
-        
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from("payments")
-          .upload(fileName, blob);
-
-        if (!uploadError) {
-          proofUrl = supabase.storage.from("payments").getPublicUrl(fileName).data.publicUrl;
-        }
-      }
-
-      // Create cash-in request
-      const { data: cashInRequest, error: requestError } = await supabase
-        .from("cash_in_requests")
-        .insert([
-          {
-            commuter_id: commuterId,
-            amount: parseFloat(cashInAmount),
-            payment_method: cashInMethod,
-            reference_number: referenceNumber,
-            status: "pending",
-            proof_of_payment: proofUrl,
-            metadata: {
-              method: cashInMethod,
-              requested_at: new Date().toISOString()
-            },
-            created_at: new Date()
-          }
-        ])
-        .select()
-        .single();
-
-      if (requestError) throw requestError;
-
-      // Create transaction record
-      await supabase
-        .from("transactions")
-        .insert([
-          {
-            user_id: commuterId,
-            user_type: "commuter",
-            type: "cash_in",
-            amount: parseFloat(cashInAmount),
-            status: "pending",
-            metadata: {
-              cash_in_request_id: cashInRequest.id,
-              method: cashInMethod,
-              reference: referenceNumber
-            },
-            created_at: new Date()
-          }
-        ]);
-
-      // Show instructions based on payment method
-      if (cashInMethod === "gcash") {
-        Alert.alert(
-          "GCash Payment",
-          `Please send ₱${cashInAmount} to:\n\nGCash Number: 0912 345 6789\nName: SAKAY NA TRANSACTIONS INC.\n\nReference: ${referenceNumber}\n\nYour wallet will be updated once payment is verified.`,
-          [{ text: "OK", onPress: () => setShowCashInModal(false) }]
-        );
-      } else if (cashInMethod === "cash") {
-        Alert.alert(
-          "Cash Payment",
-          `Please pay ₱${cashInAmount} at any:\n\n• 7-Eleven (CLIQQ)\n• Bayad Center\n• SM Bills Payment\n• Cebuana Lhuillier\n\nReference: ${referenceNumber}\n\nShow this reference number to the cashier.`,
-          [{ text: "OK", onPress: () => setShowCashInModal(false) }]
-        );
-      } else if (cashInMethod === "card") {
-        Alert.alert(
-          "Card Payment",
-          `You will be redirected to our secure payment gateway to complete the payment of ₱${cashInAmount}.`,
-          [
-            { text: "Cancel", style: "cancel" },
-            { 
-              text: "Proceed to Payment", 
-              onPress: () => {
-                // Integrate with payment gateway (PayMongo, etc.)
-                navigation.navigate("CardPayment", {
-                  amount: cashInAmount,
-                  reference: referenceNumber,
-                  onSuccess: () => {
-                    refreshWalletAfterCashIn(cashInRequest.id, parseFloat(cashInAmount));
-                  }
-                });
-              }
-            }
-          ]
-        );
-      }
-
-      // Reset form
-      setCashInAmount("");
-      setProofImage(null);
-
-    } catch (err) {
-      console.log("Error processing cash in:", err);
-      Alert.alert("Error", "Failed to process cash-in request");
-    } finally {
-      setProcessingCashIn(false);
-    }
-  };
-
-  const refreshWalletAfterCashIn = async (requestId, amount) => {
-    try {
-      // Update cash-in request status
-      await supabase
-        .from("cash_in_requests")
-        .update({ 
-          status: "completed",
-          processed_at: new Date()
-        })
-        .eq("id", requestId);
-
-      // Update transaction status
-      await supabase
-        .from("transactions")
-        .update({ status: "completed" })
-        .eq("metadata->cash_in_request_id", requestId);
-
-      // Update wallet balance
-      const newBalance = (wallet?.balance || 0) + amount;
-      
-      await supabase
-        .from("commuter_wallets")
-        .update({ 
-          balance: newBalance,
-          updated_at: new Date()
-        })
-        .eq("commuter_id", commuterId);
-
-      // Refresh wallet data
-      await fetchWallet(commuterId);
-      await fetchTransactions(commuterId);
-
-      Alert.alert("Success", "Your wallet has been updated!");
-    } catch (err) {
-      console.log("Error refreshing wallet:", err);
-    }
-  };
-
-  // ================= PAYMENT METHODS =================
-  const handleAddPaymentMethod = async (methodType) => {
-    navigation.navigate("AddPaymentMethod", {
-      methodType,
-      onSuccess: () => {
-        fetchPaymentMethods(commuterId);
-      }
-    });
-  };
-
-  const handleSetDefaultMethod = async (methodId) => {
-    try {
-      // Remove default from all
-      await supabase
-        .from("commuter_payment_methods")
-        .update({ is_default: false })
-        .eq("commuter_id", commuterId);
-
-      // Set new default
-      await supabase
-        .from("commuter_payment_methods")
-        .update({ is_default: true })
-        .eq("id", methodId);
-
-      fetchPaymentMethods(commuterId);
-    } catch (err) {
-      console.log("Error setting default method:", err);
-    }
-  };
-
-  const handleRemovePaymentMethod = async (methodId) => {
-    Alert.alert(
-      "Remove Payment Method",
-      "Are you sure you want to remove this payment method?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await supabase
-                .from("commuter_payment_methods")
-                .delete()
-                .eq("id", methodId);
-
-              fetchPaymentMethods(commuterId);
-            } catch (err) {
-              console.log("Error removing payment method:", err);
-            }
-          }
-        }
-      ]
-    );
+  const getPointsTier = (totalEarned) => {
+    if (totalEarned >= 10000) return { name: 'Platinum', color: '#8B5CF6', icon: 'diamond' };
+    if (totalEarned >= 5000) return { name: 'Gold', color: '#F59E0B', icon: 'star' };
+    if (totalEarned >= 1000) return { name: 'Silver', color: '#9CA3AF', icon: 'star-outline' };
+    return { name: 'Bronze', color: '#CD7F32', icon: 'star-outline' };
   };
 
   const formatDate = (dateString) => {
@@ -733,256 +573,272 @@ export default function CommuterWalletScreen() {
     return `₱${amount?.toFixed(2) || "0.00"}`;
   };
 
-  const getTransactionIcon = (type, metadata) => {
-    switch (type) {
-      case "cash_in":
-        return { name: "arrow-down-circle", color: "#10B981" };
-      case "payment":
-        return { name: "arrow-up-circle", color: "#EF4444" };
-      case "refund":
-        return { name: "repeat", color: "#F59E0B" };
-      case "bonus":
-        return { name: "gift", color: "#8B5CF6" };
-      default:
-        return { name: "swap-horizontal", color: "#6B7280" };
-    }
-  };
-
-  // Cash-in Modal
-  const CashInModal = () => (
+  // Promo Modal Component
+  const PromoModal = () => (
     <Modal
-      visible={showCashInModal}
+      visible={showPromoModal}
       animationType="slide"
       transparent={true}
-      onRequestClose={() => setShowCashInModal(false)}
+      onRequestClose={() => {
+        setShowPromoModal(false);
+        setSelectedPromo(null);
+        setPromoCategory('all');
+      }}
     >
       <View style={styles.modalOverlay}>
         <View style={styles.modalContent}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Cash In</Text>
-            <Pressable onPress={() => {
-              setShowCashInModal(false);
-              setProofImage(null);
-              setCashInAmount("");
-            }}>
+            <Text style={styles.modalTitle}>✨ Special Offers</Text>
+            <Pressable 
+              style={styles.modalCloseButton}
+              onPress={() => {
+                setShowPromoModal(false);
+                setSelectedPromo(null);
+                setPromoCategory('all');
+              }}
+            >
               <Ionicons name="close" size={24} color="#666" />
             </Pressable>
           </View>
 
-          <ScrollView showsVerticalScrollIndicator={false}>
-            <Text style={styles.modalLabel}>Amount</Text>
-            <View style={styles.amountInputContainer}>
-              <Text style={styles.currencySymbol}>₱</Text>
-              <TextInput
-                style={styles.amountInput}
-                placeholder="0.00"
-                keyboardType="numeric"
-                value={cashInAmount}
-                onChangeText={setCashInAmount}
-                editable={!processingCashIn}
-              />
-            </View>
-
-            <Text style={styles.modalLabel}>Payment Method</Text>
-            <View style={styles.paymentMethods}>
-              <Pressable
-                style={[
-                  styles.paymentMethod,
-                  cashInMethod === "gcash" && styles.paymentMethodSelected,
-                ]}
-                onPress={() => setCashInMethod("gcash")}
-              >
-                <Ionicons 
-                  name="phone-portrait" 
-                  size={24} 
-                  color={cashInMethod === "gcash" ? "#FFF" : "#666"} 
-                />
-                <Text
-                  style={[
-                    styles.paymentMethodText,
-                    cashInMethod === "gcash" && styles.paymentMethodTextSelected,
-                  ]}
-                >
-                  GCash
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.paymentMethod,
-                  cashInMethod === "cash" && styles.paymentMethodSelected,
-                ]}
-                onPress={() => setCashInMethod("cash")}
-              >
-                <Ionicons 
-                  name="cash" 
-                  size={24} 
-                  color={cashInMethod === "cash" ? "#FFF" : "#666"} 
-                />
-                <Text
-                  style={[
-                    styles.paymentMethodText,
-                    cashInMethod === "cash" && styles.paymentMethodTextSelected,
-                  ]}
-                >
-                  Cash
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.paymentMethod,
-                  cashInMethod === "card" && styles.paymentMethodSelected,
-                ]}
-                onPress={() => setCashInMethod("card")}
-              >
-                <Ionicons 
-                  name="card" 
-                  size={24} 
-                  color={cashInMethod === "card" ? "#FFF" : "#666"} 
-                />
-                <Text
-                  style={[
-                    styles.paymentMethodText,
-                    cashInMethod === "card" && styles.paymentMethodTextSelected,
-                  ]}
-                >
-                  Card
-                </Text>
-              </Pressable>
-            </View>
-
-            {cashInMethod === "gcash" && (
-              <View style={styles.gcashInstructions}>
-                <Text style={styles.instructionTitle}>GCash Payment Steps:</Text>
-                <Text style={styles.instructionText}>1. Open GCash app</Text>
-                <Text style={styles.instructionText}>2. Send to: 0912 345 6789</Text>
-                <Text style={styles.instructionText}>3. Take a screenshot of the receipt</Text>
-                
-                <Pressable style={styles.uploadButton} onPress={pickImage}>
-                  <Ionicons name="cloud-upload" size={20} color="#183B5C" />
-                  <Text style={styles.uploadButtonText}>
-                    {proofImage ? "Change Receipt" : "Upload Payment Receipt"}
-                  </Text>
-                </Pressable>
-
-                {proofImage && (
-                  <View style={styles.imagePreview}>
-                    <Image source={{ uri: proofImage }} style={styles.previewImage} />
-                    <Pressable onPress={() => setProofImage(null)}>
-                      <Ionicons name="close-circle" size={24} color="#EF4444" />
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {cashInMethod === "cash" && (
-              <View style={styles.cashInstructions}>
-                <Text style={styles.instructionTitle}>Cash Payment Options:</Text>
-                <Text style={styles.instructionText}>• 7-Eleven (CLIQQ)</Text>
-                <Text style={styles.instructionText}>• Bayad Center</Text>
-                <Text style={styles.instructionText}>• SM Bills Payment</Text>
-                <Text style={styles.instructionText}>• Cebuana Lhuillier</Text>
-                <Text style={styles.instructionNote}>
-                  Show the reference number to the cashier
-                </Text>
-              </View>
-            )}
-
-            {cashInMethod === "card" && (
-              <View style={styles.cardInstructions}>
-                <Text style={styles.instructionTitle}>Card Payment:</Text>
-                <Text style={styles.instructionText}>
-                  You will be redirected to our secure payment gateway.
-                </Text>
-                <Text style={styles.instructionNote}>
-                  We accept Visa, Mastercard, and JCB
-                </Text>
-              </View>
-            )}
-
+          {/* Category Tabs */}
+          <View style={styles.categoryTabs}>
             <Pressable
-              style={[
-                styles.confirmButton,
-                (processingCashIn || (cashInMethod === "gcash" && !proofImage)) && styles.confirmButtonDisabled,
-              ]}
-              onPress={handleCashIn}
-              disabled={processingCashIn || (cashInMethod === "gcash" && !proofImage)}
+              style={[styles.categoryTab, promoCategory === 'all' && styles.categoryTabActive]}
+              onPress={() => setPromoCategory('all')}
             >
-              {processingCashIn ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Text style={styles.confirmButtonText}>Proceed</Text>
-              )}
+              <Text style={[styles.categoryTabText, promoCategory === 'all' && styles.categoryTabTextActive]}>All</Text>
             </Pressable>
+            <Pressable
+              style={[styles.categoryTab, promoCategory === 'redeem' && styles.categoryTabActive]}
+              onPress={() => setPromoCategory('redeem')}
+            >
+              <Text style={[styles.categoryTabText, promoCategory === 'redeem' && styles.categoryTabTextActive]}>Redeem</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.categoryTab, promoCategory === 'buy' && styles.categoryTabActive]}
+              onPress={() => setPromoCategory('buy')}
+            >
+              <Text style={[styles.categoryTabText, promoCategory === 'buy' && styles.categoryTabTextActive]}>Buy Points</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.promoList}>
+            {availablePromos.length === 0 ? (
+              <View style={styles.emptyPromoContainer}>
+                <View style={styles.emptyPromoIcon}>
+                  <Ionicons name="pricetag-outline" size={48} color="#D1D5DB" />
+                </View>
+                <Text style={styles.emptyPromoTitle}>No Promos Available</Text>
+                <Text style={styles.emptyPromoText}>Check back later for exciting offers!</Text>
+              </View>
+            ) : (
+              availablePromos
+                .filter(promo => {
+                  if (promoCategory === 'all') return true;
+                  if (promoCategory === 'redeem') return promo.discount_type !== 'points_multiplier';
+                  if (promoCategory === 'buy') return promo.discount_type === 'points_multiplier';
+                  return true;
+                })
+                .map((promo) => {
+                  const isRedeemPromo = promo.discount_type !== 'points_multiplier';
+                  const pointsRequired = promo.points_required || 0;
+                  const canRedeem = points >= pointsRequired;
+                  
+                  return (
+                    <Pressable
+                      key={promo.id}
+                      style={[
+                        styles.promoCard,
+                        !canRedeem && isRedeemPromo && styles.promoCardDisabled
+                      ]}
+                      onPress={() => handlePromoSelect(promo)}
+                      disabled={!canRedeem && isRedeemPromo}
+                    >
+                      <LinearGradient
+                        colors={isRedeemPromo ? ['#10B98120', '#10B98105'] : ['#F59E0B20', '#F59E0B05']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.promoCardGradient}
+                      >
+                        <View style={styles.promoCardContent}>
+                          <View style={[styles.promoIcon, { backgroundColor: isRedeemPromo ? '#10B981' : '#F59E0B' }]}>
+                            <Ionicons 
+                              name={isRedeemPromo ? "cash-outline" : "card-outline"} 
+                              size={24} 
+                              color="#FFF" 
+                            />
+                          </View>
+                          
+                          <View style={styles.promoInfo}>
+                            <Text style={styles.promoTitle}>{promo.title}</Text>
+                            <Text style={styles.promoDescription}>{promo.description}</Text>
+                            
+                            {isRedeemPromo ? (
+                              <View style={styles.promoRequirement}>
+                                <View style={[styles.requirementBadge, { backgroundColor: '#F59E0B20' }]}>
+                                  <Ionicons name="star" size={12} color="#F59E0B" />
+                                  <Text style={styles.requirementText}>Need {promo.points_required}</Text>
+                                </View>
+                                <View style={[styles.availabilityBadge, { backgroundColor: canRedeem ? '#10B98120' : '#EF444420' }]}>
+                                  <Text style={[styles.availabilityText, { color: canRedeem ? '#10B981' : '#EF4444' }]}>
+                                    {canRedeem ? 'Available' : 'Insufficient'}
+                                  </Text>
+                                </View>
+                              </View>
+                            ) : (
+                              <View style={styles.promoRequirement}>
+                                <View style={[styles.requirementBadge, { backgroundColor: '#10B98120' }]}>
+                                  <Ionicons name="cash" size={12} color="#10B981" />
+                                  <Text style={styles.requirementText}>GCash</Text>
+                                </View>
+                              </View>
+                            )}
+                          </View>
+
+                          <View style={styles.promoAction}>
+                            <Text style={[
+                              styles.promoActionText,
+                              !canRedeem && isRedeemPromo && styles.promoActionDisabled
+                            ]}>
+                              {isRedeemPromo ? 'Redeem' : 'Buy'}
+                            </Text>
+                            <Ionicons name="chevron-forward" size={16} color={!canRedeem && isRedeemPromo ? '#9CA3AF' : '#183B5C'} />
+                          </View>
+                        </View>
+                      </LinearGradient>
+                    </Pressable>
+                  );
+                })
+            )}
           </ScrollView>
         </View>
       </View>
     </Modal>
   );
 
-  // Promo Modal
-  const PromoModal = () => (
+  // Buy Points Modal
+  const BuyPointsModal = () => (
     <Modal
-      visible={showPromoModal}
+      visible={showBuyPointsModal}
       animationType="slide"
       transparent={true}
-      onRequestClose={() => setShowPromoModal(false)}
+      onRequestClose={() => {
+        setShowBuyPointsModal(false);
+        setSelectedPromo(null);
+        setGcashNumber("");
+      }}
     >
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, styles.buyModalContent]}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Enter Promo Code</Text>
-            <Pressable onPress={() => setShowPromoModal(false)}>
+            <Text style={styles.modalTitle}>💳 Buy Points</Text>
+            <Pressable 
+              style={styles.modalCloseButton}
+              onPress={() => {
+                setShowBuyPointsModal(false);
+                setSelectedPromo(null);
+                setGcashNumber("");
+              }}
+            >
               <Ionicons name="close" size={24} color="#666" />
             </Pressable>
           </View>
 
-          <TextInput
-            style={styles.promoInput}
-            placeholder="Enter promo code"
-            value={promoCode}
-            onChangeText={(text) => setPromoCode(text.toUpperCase())}
-            autoCapitalize="characters"
-          />
-
-          {availablePromos.length > 0 && (
-            <View style={styles.availablePromos}>
-              <Text style={styles.availablePromosTitle}>Available for you:</Text>
-              {availablePromos.slice(0, 3).map((promo) => (
-                <View key={promo.id} style={styles.promoItem}>
-                  <View style={styles.promoIcon}>
-                    <Ionicons name="pricetag" size={20} color="#183B5C" />
+          {selectedPromo && (
+            <View style={styles.buyContainer}>
+              {/* Promo Summary Card */}
+              <LinearGradient
+                colors={['#F59E0B', '#FBBF24']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.promoSummaryCard}
+              >
+                <View style={styles.promoSummaryContent}>
+                  <View style={styles.promoSummaryIcon}>
+                    <Ionicons name="gift" size={32} color="#FFF" />
                   </View>
-                  <View style={styles.promoInfo}>
-                    <Text style={styles.promoCode}>{promo.promo_code}</Text>
-                    <Text style={styles.promoDescription}>{promo.title}</Text>
+                  <View style={styles.promoSummaryInfo}>
+                    <Text style={styles.promoSummaryTitle}>{selectedPromo.title}</Text>
+                    <Text style={styles.promoSummaryDescription}>{selectedPromo.description}</Text>
                   </View>
-                  <Pressable
-                    style={styles.usePromoButton}
-                    onPress={() => {
-                      setPromoCode(promo.promo_code);
-                    }}
-                  >
-                    <Text style={styles.usePromoText}>Use</Text>
-                  </Pressable>
                 </View>
-              ))}
+                
+                <View style={styles.promoSummaryDivider} />
+                
+                <View style={styles.promoSummaryDetails}>
+                  <View style={styles.promoSummaryDetail}>
+                    <Text style={styles.promoSummaryDetailLabel}>Points to get</Text>
+                    <Text style={styles.promoSummaryDetailValue}>{selectedPromo.discount_value} ⭐</Text>
+                  </View>
+                  <View style={styles.promoSummaryDetail}>
+                    <Text style={styles.promoSummaryDetailLabel}>Amount to pay</Text>
+                    <Text style={styles.promoSummaryDetailValue}>
+                      ₱{selectedPromo.promo_code === 'BUY100' ? 10 :
+                         selectedPromo.promo_code === 'BUY500' ? 50 :
+                         selectedPromo.promo_code === 'BUY1000' ? 100 : 0}
+                    </Text>
+                  </View>
+                </View>
+              </LinearGradient>
+
+              {/* GCash Input */}
+              <View style={styles.inputSection}>
+                <Text style={styles.inputLabel}>GCash Number</Text>
+                <View style={styles.inputContainer}>
+                  <Ionicons name="phone-portrait-outline" size={20} color="#666" style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0912 345 6789"
+                    placeholderTextColor="#999"
+                    keyboardType="phone-pad"
+                    value={gcashNumber}
+                    onChangeText={setGcashNumber}
+                    maxLength={11}
+                  />
+                </View>
+                <Text style={styles.inputHint}>Enter the GCash number linked to your account</Text>
+              </View>
+
+              {/* Action Buttons */}
+              <View style={styles.actionButtons}>
+                <Pressable
+                  style={styles.cancelButton}
+                  onPress={() => {
+                    setShowBuyPointsModal(false);
+                    setSelectedPromo(null);
+                    setGcashNumber("");
+                  }}
+                >
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  style={[
+                    styles.confirmButton,
+                    (!gcashNumber || gcashNumber.length < 11 || processingBuyPoints) && styles.confirmButtonDisabled
+                  ]}
+                  onPress={handleBuyPoints}
+                  disabled={!gcashNumber || gcashNumber.length < 11 || processingBuyPoints}
+                >
+                  {processingBuyPoints ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <>
+                      <Text style={styles.confirmButtonText}>Confirm Purchase</Text>
+                      <Ionicons name="checkmark-circle" size={20} color="#FFF" />
+                    </>
+                  )}
+                </Pressable>
+              </View>
+
+              {/* Security Note */}
+              <View style={styles.securityNote}>
+                <Ionicons name="shield-checkmark-outline" size={16} color="#10B981" />
+                <Text style={styles.securityNoteText}>Secure transaction powered by GCash</Text>
+              </View>
             </View>
           )}
-
-          <Pressable
-            style={[styles.applyButton, applyingPromo && styles.applyButtonDisabled]}
-            onPress={handleApplyPromo}
-            disabled={applyingPromo}
-          >
-            {applyingPromo ? (
-              <ActivityIndicator size="small" color="#FFF" />
-            ) : (
-              <Text style={styles.applyButtonText}>Apply Promo</Text>
-            )}
-          </Pressable>
         </View>
       </View>
     </Modal>
@@ -992,6 +848,7 @@ export default function CommuterWalletScreen() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#183B5C" />
+        <Text style={styles.loadingText}>Loading your points...</Text>
       </View>
     );
   }
@@ -1001,307 +858,386 @@ export default function CommuterWalletScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#183B5C" />
         }
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Wallet</Text>
+          <View>
+            <Text style={styles.headerGreeting}>Hello, {commuter?.first_name || 'Rider'}! 👋</Text>
+            <Text style={styles.headerTitle}>My Points</Text>
+          </View>
           <View style={styles.headerActions}>
+            {/* <Pressable 
+              style={styles.headerButton}
+              onPress={() => setShowPromoModal(true)}
+            >
+              <LinearGradient
+                colors={['#F59E0B', '#FBBF24']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.headerButtonGradient}
+              >
+                <Ionicons name="pricetag" size={20} color="#FFF" />
+              </LinearGradient>
+            </Pressable> */}
             <Pressable 
               style={styles.headerButton}
-              onPress={() => navigation.navigate("Referrals")}
+              onPress={() => navigation.navigate("ReferralsScreen")}
             >
-              <Ionicons name="people" size={22} color="#183B5C" />
+              <LinearGradient
+                colors={['#10B981', '#34D399']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.headerButtonGradient}
+              >
+                <Ionicons name="people" size={20} color="#FFF" />
+              </LinearGradient>
             </Pressable>
             <Pressable 
               style={styles.headerButton}
-              onPress={() => navigation.navigate("TransactionHistory")}
+              onPress={() => navigation.navigate("RideHistoryScreen")}
             >
-              <Ionicons name="time-outline" size={24} color="#183B5C" />
+              <LinearGradient
+                colors={['#3B82F6', '#60A5FA']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.headerButtonGradient}
+              >
+                <Ionicons name="time-outline" size={20} color="#FFF" />
+              </LinearGradient>
             </Pressable>
           </View>
         </View>
 
-        {/* Balance Card */}
+        {/* Points Card */}
         <LinearGradient
-          colors={["#183B5C", "#2C5A7A"]}
+          colors={["#183B5C", "#1E4B6E", "#235D82"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.balanceCard}
+          style={styles.pointsCard}
         >
-          <View style={styles.balanceHeader}>
-            <Text style={styles.balanceLabel}>Total Balance</Text>
+          <View style={styles.pointsCardHeader}>
+            <Text style={styles.pointsLabel}>Available Points</Text>
             <View style={styles.pointsBadge}>
-              <Ionicons name="star" size={14} color="#FFB37A" />
-              <Text style={styles.pointsText}>{points} pts</Text>
+              <Ionicons name="star" size={16} color="#FFB37A" />
+              <Text style={styles.pointsBadgeText}>{pointsThisMonth} this month</Text>
             </View>
           </View>
           
-          <Text style={styles.balanceAmount}>
-            {formatCurrency(wallet?.balance)}
-          </Text>
-
-          <View style={styles.balanceFooter}>
-            <View style={styles.balanceItem}>
-              <Text style={styles.balanceItemLabel}>Total Spent</Text>
-              <Text style={styles.balanceItemValue}>{formatCurrency(totalSpent)}</Text>
+          <View style={styles.pointsMain}>
+            <Text style={styles.pointsAmount}>{points}</Text>
+            <Text style={styles.pointsCurrency}>⭐</Text>
+          </View>
+          
+          <Text style={styles.pointsValue}>Worth ₱{(points * 0.1).toFixed(2)}</Text>
+          
+          <View style={styles.pointsFooter}>
+            <View style={styles.pointsFooterItem}>
+              <Ionicons name="car-outline" size={20} color="#FFB37A" />
+              <Text style={styles.pointsFooterLabel}>Total Trips</Text>
+              <Text style={styles.pointsFooterValue}>{totalTrips}</Text>
             </View>
-            <View style={styles.balanceDivider} />
-            <View style={styles.balanceItem}>
-              <Text style={styles.balanceItemLabel}>Total Trips</Text>
-              <Text style={styles.balanceItemValue}>{totalTrips}</Text>
+            <View style={styles.pointsFooterDivider} />
+            <View style={styles.pointsFooterItem}>
+              <Ionicons name="trending-up-outline" size={20} color="#FFB37A" />
+              <Text style={styles.pointsFooterLabel}>This Month</Text>
+              <Text style={styles.pointsFooterValue}>{pointsThisMonth}</Text>
             </View>
           </View>
         </LinearGradient>
 
-        {/* Action Buttons */}
-        <View style={styles.actionGrid}>
+        {/* Quick Actions */}
+        <View style={styles.quickActions}>
           <Pressable 
-            style={styles.actionButton}
-            onPress={() => setShowCashInModal(true)}
-          >
-            <View style={[styles.actionIcon, { backgroundColor: "#E3F2FD" }]}>
-              <Ionicons name="add-circle" size={24} color="#183B5C" />
-            </View>
-            <Text style={styles.actionText}>Cash In</Text>
-          </Pressable>
-
-          <Pressable 
-            style={styles.actionButton}
-            onPress={() => navigation.navigate("PaymentMethods", {
-              methods: paymentMethods,
-              onAdd: handleAddPaymentMethod,
-              onSetDefault: handleSetDefaultMethod,
-              onRemove: handleRemovePaymentMethod
-            })}
-          >
-            <View style={[styles.actionIcon, { backgroundColor: "#E8F5E9" }]}>
-              <Ionicons name="card" size={24} color="#10B981" />
-            </View>
-            <Text style={styles.actionText}>Payment Methods</Text>
-          </Pressable>
-
-          <Pressable 
-            style={styles.actionButton}
+            style={styles.quickAction}
             onPress={() => setShowPromoModal(true)}
           >
-            <View style={[styles.actionIcon, { backgroundColor: "#FFF3E0" }]}>
-              <Ionicons name="pricetag" size={24} color="#FFB37A" />
-            </View>
-            <Text style={styles.actionText}>Promos</Text>
+            <LinearGradient
+              colors={['#F59E0B', '#FBBF24']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.quickActionGradient}
+            >
+              <Ionicons name="pricetag" size={24} color="#FFF" />
+            </LinearGradient>
+            <Text style={styles.quickActionText}>Promos</Text>
           </Pressable>
 
           <Pressable 
-            style={styles.actionButton}
-            onPress={() => navigation.navigate("PointsRewards", {
-              points: points,
-              history: pointsHistory,
-              onRedeem: redeemPoints
-            })}
+            style={styles.quickAction}
+            onPress={() => {
+              setPromoCategory('buy');
+              setShowPromoModal(true);
+            }}
           >
-            <View style={[styles.actionIcon, { backgroundColor: "#F3E5F5" }]}>
-              <Ionicons name="gift" size={24} color="#8B5CF6" />
-            </View>
-            <Text style={styles.actionText}>Points</Text>
+            <LinearGradient
+              colors={['#10B981', '#34D399']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.quickActionGradient}
+            >
+              <Ionicons name="add-circle" size={24} color="#FFF" />
+            </LinearGradient>
+            <Text style={styles.quickActionText}>Buy Points</Text>
+          </Pressable>
+
+          <Pressable 
+            style={styles.quickAction}
+            onPress={() => {
+              setPromoCategory('redeem');
+              setShowPromoModal(true);
+            }}
+          >
+            <LinearGradient
+              colors={['#8B5CF6', '#A78BFA']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.quickActionGradient}
+            >
+              <Ionicons name="swap-horizontal" size={24} color="#FFF" />
+            </LinearGradient>
+            <Text style={styles.quickActionText}>Redeem</Text>
           </Pressable>
         </View>
 
-        {/* Referral Card (if has referrals) */}
-        {referralInfo && referralInfo.referrals.length > 0 && (
-          <Pressable 
-            style={styles.referralCard}
-            onPress={() => navigation.navigate("Referrals")}
-          >
-            <View style={styles.referralIcon}>
-              <Ionicons name="people-circle" size={40} color="#183B5C" />
+        {/* Points Tier Card */}
+        <View style={styles.tierCard}>
+          <View style={styles.tierHeader}>
+            <View>
+              <Text style={styles.tierTitle}>Points Tier</Text>
+              <View style={styles.tierNameContainer}>
+                <Ionicons name={getPointsTier(totalPointsEarned).icon} size={20} color={getPointsTier(totalPointsEarned).color} />
+                <Text style={[styles.tierName, { color: getPointsTier(totalPointsEarned).color }]}>
+                  {getPointsTier(totalPointsEarned).name}
+                </Text>
+              </View>
             </View>
-            <View style={styles.referralInfo}>
-              <Text style={styles.referralTitle}>Referral Earnings</Text>
-              <Text style={styles.referralValue}>{formatCurrency(referralEarnings)}</Text>
-              <Text style={styles.referralCount}>
-                {referralInfo.referrals.length} friend{referralInfo.referrals.length > 1 ? 's' : ''} referred
-              </Text>
+            <View style={[styles.tierBadge, { backgroundColor: getPointsTier(totalPointsEarned).color + '20' }]}>
+              <Ionicons name="star" size={24} color={getPointsTier(totalPointsEarned).color} />
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
-        )}
-
-        {/* Recent Transactions */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-            <Pressable onPress={() => navigation.navigate("TransactionHistory")}>
-              <Text style={styles.seeAllText}>See All</Text>
-            </Pressable>
           </View>
 
-          {transactions.length === 0 ? (
+          <View style={styles.tierProgress}>
+            <View style={styles.progressBar}>
+              <View 
+                style={[
+                  styles.progressFill, 
+                  { 
+                    width: `${Math.min((totalPointsEarned / 10000) * 100, 100)}%`,
+                    backgroundColor: getPointsTier(totalPointsEarned).color
+                  }
+                ]} 
+              />
+            </View>
+            <View style={styles.progressLabels}>
+              <Text style={styles.progressLabel}>{totalPointsEarned} pts earned</Text>
+              {totalPointsEarned < 10000 && (
+                <Text style={styles.progressLabel}>{10000 - totalPointsEarned} to Platinum</Text>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.tierStats}>
+            <View style={styles.tierStat}>
+              <Text style={styles.tierStatValue}>{totalPointsEarned}</Text>
+              <Text style={styles.tierStatLabel}>Total Earned</Text>
+            </View>
+            <View style={styles.tierStatDivider} />
+            <View style={styles.tierStat}>
+              <Text style={styles.tierStatValue}>{totalPointsRedeemed}</Text>
+              <Text style={styles.tierStatLabel}>Redeemed</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Points History */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Points History</Text>
+            {pointsHistory.length > 0 && (
+              <Pressable onPress={() => navigation.navigate("PointsHistory")}>
+                <Text style={styles.seeAll}>See All →</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {pointsHistory.length === 0 ? (
             <View style={styles.emptyState}>
-              <Ionicons name="swap-horizontal" size={48} color="#D1D5DB" />
-              <Text style={styles.emptyStateTitle}>No Transactions Yet</Text>
-              <Text style={styles.emptyStateText}>
-                Your transactions will appear here
-              </Text>
+              <View style={styles.emptyStateIcon}>
+                <Ionicons name="star-outline" size={48} color="#D1D5DB" />
+              </View>
+              <Text style={styles.emptyTitle}>No Points Yet</Text>
+              <Text style={styles.emptyText}>Complete rides to earn points!</Text>
+              <Pressable style={styles.emptyStateButton} onPress={() => navigation.navigate("Home")}>
+                <Text style={styles.emptyStateButtonText}>Book a Ride</Text>
+              </Pressable>
             </View>
           ) : (
-            transactions.slice(0, 5).map((transaction) => {
-              const icon = getTransactionIcon(transaction.type);
+            pointsHistory.slice(0, 5).map((item, index) => {
+              let sourceText = '';
+              let iconColor = '';
+              let bgColor = '';
+              
+              if (item.type === 'earned') {
+                iconColor = '#10B981';
+                bgColor = '#D1FAE5';
+                if (item.source === 'trip' || item.source === 'trip_cash') {
+                  sourceText = 'Trip (Cash)';
+                } else if (item.source === 'trip_wallet') {
+                  sourceText = 'Trip (Points)';
+                } else if (item.source === 'referral') {
+                  sourceText = 'Referral Bonus';
+                } else if (item.source === 'promo') {
+                  sourceText = 'Promo Bonus';
+                } else {
+                  sourceText = 'Points Earned';
+                }
+              } else {
+                iconColor = '#EF4444';
+                bgColor = '#FEE2E2';
+                sourceText = 'Points Used';
+              }
+              
               return (
-                <View key={transaction.id} style={styles.transactionItem}>
-                  <View style={[styles.transactionIcon, { backgroundColor: icon.color + "20" }]}>
-                    <Ionicons name={icon.name} size={20} color={icon.color} />
+                <Animated.View 
+                  key={item.id} 
+                  style={[
+                    styles.historyItem,
+                    index === 0 && styles.firstHistoryItem
+                  ]}
+                >
+                  <View style={[styles.historyIcon, { backgroundColor: bgColor }]}>
+                    <Ionicons 
+                      name={item.type === 'earned' ? 'star' : 'gift'} 
+                      size={20} 
+                      color={iconColor} 
+                    />
                   </View>
-                  <View style={styles.transactionInfo}>
-                    <Text style={styles.transactionType}>
-                      {transaction.type === "cash_in" ? "Cash In" : 
-                       transaction.type === "payment" ? "Trip Payment" : 
-                       transaction.type === "refund" ? "Refund" :
-                       transaction.type === "bonus" ? "Bonus" : 
-                       transaction.type}
-                    </Text>
-                    <Text style={styles.transactionDate}>
-                      {formatDate(transaction.created_at)}
-                    </Text>
-                    {transaction.metadata?.reference && (
-                      <Text style={styles.transactionRef}>
-                        Ref: {transaction.metadata.reference}
-                      </Text>
-                    )}
+                  <View style={styles.historyInfo}>
+                    <Text style={styles.historyTitle}>{sourceText}</Text>
+                    <Text style={styles.historyDate}>{formatDate(item.created_at)}</Text>
                   </View>
-                  <View style={styles.transactionAmount}>
-                    <Text
-                      style={[
-                        styles.transactionAmountText,
-                        transaction.type === "cash_in" && styles.positiveAmount,
-                        transaction.type === "payment" && styles.negativeAmount,
-                        transaction.type === "refund" && styles.refundAmount,
-                        transaction.type === "bonus" && styles.bonusAmount,
-                      ]}
-                    >
-                      {transaction.type === "cash_in" ? "+" : 
-                       transaction.type === "payment" ? "-" : 
-                       transaction.type === "refund" ? "+" : 
-                       transaction.type === "bonus" ? "+" : ""}
-                      {formatCurrency(transaction.amount)}
-                    </Text>
-                    <View style={[
-                      styles.transactionStatusBadge,
-                      transaction.status === "completed" ? styles.statusCompleted :
-                      transaction.status === "pending" ? styles.statusPending :
-                      styles.statusFailed
-                    ]}>
-                      <Text style={styles.transactionStatusText}>
-                        {transaction.status}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
+                  <Text style={[
+                    styles.historyAmount,
+                    item.type === 'earned' ? styles.earnedAmount : styles.redeemedAmount
+                  ]}>
+                    {item.type === 'earned' ? '+' : '-'}{item.points}
+                  </Text>
+                </Animated.View>
               );
             })
           )}
         </View>
 
-        {/* Recent Bookings */}
+        {/* Recent Trips */}
         {recentBookings.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Recent Trips</Text>
-              <Pressable onPress={() => navigation.navigate("TripHistory")}>
-                <Text style={styles.seeAllText}>See All</Text>
+              <Pressable onPress={() => navigation.navigate("RideHistoryScreen")}>
+                <Text style={styles.seeAll}>See All →</Text>
               </Pressable>
             </View>
 
-            {recentBookings.map((booking) => (
-              <Pressable
-                key={booking.id}
-                style={styles.bookingItem}
-                onPress={() => navigation.navigate("BookingDetails", { id: booking.id })}
-              >
-                <View style={styles.bookingIcon}>
-                  <Ionicons name="car" size={20} color="#183B5C" />
-                </View>
-                <View style={styles.bookingInfo}>
-                  <Text style={styles.bookingReference} numberOfLines={1}>
-                    {booking.booking_reference || "Trip"}
-                  </Text>
-                  <Text style={styles.bookingRoute} numberOfLines={1}>
-                    {booking.pickup_location?.split(",")[0]} → {booking.dropoff_location?.split(",")[0]}
-                  </Text>
-                  <Text style={styles.bookingDate}>{formatDate(booking.created_at)}</Text>
-                </View>
-                <View style={styles.bookingAmount}>
-                  <Text style={styles.bookingAmountText}>
-                    {formatCurrency(booking.fare)}
-                  </Text>
-                  <View style={styles.pointsEarned}>
-                    <Ionicons name="star" size={12} color="#FFB37A" />
-                    <Text style={styles.pointsEarnedText}>
-                      +{calculatePointsEarned(booking.fare)} pts
-                    </Text>
+            {recentBookings.map((booking, index) => {
+              const pointsEarned = booking.points_earned || calculatePointsEarned(booking.fare, booking.payment_type);
+              
+              return (
+                <Pressable
+                  key={booking.id}
+                  style={[
+                    styles.tripItem,
+                    index === 0 && styles.firstTripItem
+                  ]}
+                  onPress={() => navigation.navigate("BookingDetails", { id: booking.id })}
+                >
+                  <View style={styles.tripIcon}>
+                    <Ionicons name="car" size={20} color="#183B5C" />
                   </View>
-                </View>
-              </Pressable>
-            ))}
+                  <View style={styles.tripInfo}>
+                    <Text style={styles.tripRoute} numberOfLines={1}>
+                      {booking.pickup_location?.split(",")[0]} → {booking.dropoff_location?.split(",")[0]}
+                    </Text>
+                    <View style={styles.tripMeta}>
+                      <Text style={styles.tripDate}>{formatDate(booking.created_at)}</Text>
+                      {booking.payment_type === 'wallet' ? (
+                        <View style={styles.pointsBadge}>
+                          <Ionicons name="star" size={10} color="#F59E0B" />
+                          <Text style={styles.pointsBadgeText}>Points</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.cashBadge}>
+                          <Ionicons name="cash" size={10} color="#10B981" />
+                          <Text style={styles.cashBadgeText}>Cash</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                  <View style={styles.tripAmount}>
+                    <Text style={styles.tripFare}>{formatCurrency(booking.fare)}</Text>
+                    {pointsEarned > 0 && (
+                      <View style={styles.pointsEarned}>
+                        <Ionicons name="star" size={10} color="#F59E0B" />
+                        <Text style={styles.pointsEarnedText}>+{pointsEarned}</Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
+              );
+            })}
           </View>
         )}
 
-        {/* Quick Stats */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Ionicons name="wallet-outline" size={24} color="#183B5C" />
-            <Text style={styles.statValue}>{formatCurrency(wallet?.balance)}</Text>
-            <Text style={styles.statLabel}>Current Balance</Text>
+        {/* Info Card */}
+        <View style={styles.infoCard}>
+          <View style={styles.infoHeader}>
+            <Ionicons name="information-circle" size={20} color="#183B5C" />
+            <Text style={styles.infoTitle}>Points Guide</Text>
           </View>
-          <View style={styles.statCard}>
-            <Ionicons name="card-outline" size={24} color="#10B981" />
-            <Text style={styles.statValue}>{formatCurrency(totalSpent)}</Text>
-            <Text style={styles.statLabel}>Total Spent</Text>
+          
+          <View style={styles.infoGrid}>
+            <View style={styles.infoGridItem}>
+              <Text style={styles.infoRate}>5%</Text>
+              <Text style={styles.infoDesc}>Cash payments</Text>
+            </View>
+            <View style={styles.infoGridDivider} />
+            <View style={styles.infoGridItem}>
+              <Text style={[styles.infoRate, styles.walletRate]}>10%</Text>
+              <Text style={styles.infoDesc}>Points payment</Text>
+            </View>
           </View>
-          <View style={styles.statCard}>
-            <Ionicons name="star-outline" size={24} color="#FFB37A" />
-            <Text style={styles.statValue}>{points}</Text>
-            <Text style={styles.statLabel}>Points</Text>
+          
+          <View style={styles.infoNote}>
+            <Ionicons name="star" size={14} color="#F59E0B" />
+            <Text style={styles.infoNoteText}>10 points = ₱1 • Min fare: ₱15</Text>
           </View>
-          <View style={styles.statCard}>
-            <Ionicons name="car-outline" size={24} color="#EF4444" />
-            <Text style={styles.statValue}>{totalTrips}</Text>
-            <Text style={styles.statLabel}>Trips</Text>
-          </View>
-        </View>
-
-        {/* Help Section */}
-        <View style={styles.helpSection}>
-          <Ionicons name="help-circle-outline" size={20} color="#666" />
-          <Text style={styles.helpText}>
-            Having trouble with your wallet?{" "}
-            <Text 
-              style={styles.helpLink}
-              onPress={() => navigation.navigate("Support", { topic: "wallet" })}
-            >
-              Contact Support
-            </Text>
-          </Text>
         </View>
       </ScrollView>
 
       {/* Modals */}
-      <CashInModal />
       <PromoModal />
+      <BuyPointsModal />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: -50,
     flex: 1,
     backgroundColor: "#F5F7FA",
+    marginTop: -40,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#F5F7FA",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#666",
   },
   header: {
     flexDirection: "row",
@@ -1310,35 +1246,54 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
   },
+  headerGreeting: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 4,
+  },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: "bold",
     color: "#183B5C",
   },
   headerActions: {
     flexDirection: "row",
-    gap: 15,
+    gap: 10,
   },
   headerButton: {
-    padding: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    overflow: 'hidden',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  balanceCard: {
+  headerButtonGradient: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pointsCard: {
     marginHorizontal: 20,
     padding: 20,
-    borderRadius: 20,
+    borderRadius: 24,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
   },
-  balanceHeader: {
+  pointsCardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 10,
   },
-  balanceLabel: {
+  pointsLabel: {
     fontSize: 14,
     color: "#FFB37A",
     opacity: 0.9,
@@ -1346,109 +1301,182 @@ const styles = StyleSheet.create({
   pointsBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(255,255,255,0.15)",
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 15,
+    borderRadius: 20,
+    gap: 4,
   },
-  pointsText: {
-    color: "#FFF",
+  pointsBadgeText: {
+    color: "#FFB37A",
     fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
+    fontWeight: "500",
   },
-  balanceAmount: {
-    fontSize: 36,
+  pointsMain: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    marginBottom: 5,
+  },
+  pointsAmount: {
+    fontSize: 52,
     fontWeight: "bold",
     color: "#FFF",
+  },
+  pointsCurrency: {
+    fontSize: 28,
+    color: "#FFB37A",
+    marginLeft: 5,
+  },
+  pointsValue: {
+    fontSize: 16,
+    color: "#FFB37A",
     marginBottom: 20,
   },
-  balanceFooter: {
+  pointsFooter: {
     flexDirection: "row",
-    justifyContent: "space-between",
     borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.2)",
+    borderTopColor: "rgba(255,255,255,0.15)",
     paddingTop: 15,
   },
-  balanceItem: {
+  pointsFooterItem: {
     flex: 1,
     alignItems: "center",
   },
-  balanceItemLabel: {
-    fontSize: 12,
+  pointsFooterLabel: {
+    fontSize: 11,
     color: "#FFB37A",
-    opacity: 0.9,
-    marginBottom: 4,
+    opacity: 0.8,
+    marginTop: 4,
+    marginBottom: 2,
   },
-  balanceItemValue: {
-    fontSize: 16,
-    fontWeight: "600",
+  pointsFooterValue: {
+    fontSize: 18,
+    fontWeight: "bold",
     color: "#FFF",
   },
-  balanceDivider: {
+  pointsFooterDivider: {
     width: 1,
-    backgroundColor: "rgba(255,255,255,0.2)",
+    backgroundColor: "rgba(255,255,255,0.15)",
   },
-  actionGrid: {
+  quickActions: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    padding: 20,
-    gap: 12,
+    justifyContent: "space-around",
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    gap: 10,
   },
-  actionButton: {
-    width: "22%",
+  quickAction: {
     alignItems: "center",
+    flex: 1,
   },
-  actionIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+  quickActionGradient: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  actionText: {
-    fontSize: 11,
+  quickActionText: {
+    fontSize: 12,
     color: "#333",
-    textAlign: "center",
+    fontWeight: "500",
   },
-  referralCard: {
+  tierCard: {
+    backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginTop: 5,
+    padding: 20,
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  tierHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 15,
+  },
+  tierTitle: {
+    fontSize: 14,
+    color: "#666",
+    marginBottom: 4,
+  },
+  tierNameContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#E8F5E9",
-    marginHorizontal: 20,
-    marginBottom: 20,
-    padding: 15,
-    borderRadius: 16,
+    gap: 6,
   },
-  referralIcon: {
-    marginRight: 12,
-  },
-  referralInfo: {
-    flex: 1,
-  },
-  referralTitle: {
-    fontSize: 14,
-    color: "#10B981",
-    fontWeight: "600",
-    marginBottom: 2,
-  },
-  referralValue: {
-    fontSize: 18,
+  tierName: {
+    fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
-    marginBottom: 2,
   },
-  referralCount: {
+  tierBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  tierProgress: {
+    marginBottom: 15,
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 4,
+    marginBottom: 6,
+  },
+  progressFill: {
+    height: 8,
+    borderRadius: 4,
+  },
+  progressLabels: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  progressLabel: {
     fontSize: 11,
     color: "#666",
+  },
+  tierStats: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+    paddingTop: 15,
+  },
+  tierStat: {
+    flex: 1,
+    alignItems: "center",
+  },
+  tierStatValue: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 4,
+  },
+  tierStatLabel: {
+    fontSize: 11,
+    color: "#666",
+  },
+  tierStatDivider: {
+    width: 1,
+    backgroundColor: "#F3F4F6",
   },
   section: {
     backgroundColor: "#FFF",
     marginHorizontal: 20,
-    marginBottom: 20,
-    padding: 15,
-    borderRadius: 16,
+    marginTop: 15,
+    padding: 20,
+    borderRadius: 20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -1466,7 +1494,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#333",
   },
-  seeAllText: {
+  seeAll: {
     fontSize: 14,
     color: "#183B5C",
     fontWeight: "500",
@@ -1475,191 +1503,228 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 30,
   },
-  emptyStateTitle: {
+  emptyStateIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 15,
+  },
+  emptyTitle: {
     fontSize: 16,
     fontWeight: "600",
     color: "#333",
-    marginTop: 10,
+    marginBottom: 6,
   },
-  emptyStateText: {
+  emptyText: {
     fontSize: 14,
     color: "#666",
-    marginTop: 5,
+    textAlign: "center",
+    marginBottom: 15,
   },
-  transactionItem: {
+  emptyStateButton: {
+    backgroundColor: "#183B5C",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  emptyStateButtonText: {
+    color: "#FFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  historyItem: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
-  transactionIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  firstHistoryItem: {
+    paddingTop: 0,
+  },
+  historyIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
   },
-  transactionInfo: {
+  historyInfo: {
     flex: 1,
   },
-  transactionType: {
+  historyTitle: {
     fontSize: 14,
     fontWeight: "500",
     color: "#333",
-    marginBottom: 2,
-  },
-  transactionDate: {
-    fontSize: 12,
-    color: "#999",
-  },
-  transactionRef: {
-    fontSize: 10,
-    color: "#666",
-    marginTop: 2,
-  },
-  transactionAmount: {
-    alignItems: "flex-end",
-  },
-  transactionAmountText: {
-    fontSize: 14,
-    fontWeight: "600",
     marginBottom: 4,
   },
-  positiveAmount: {
+  historyDate: {
+    fontSize: 11,
+    color: "#999",
+  },
+  historyAmount: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  earnedAmount: {
     color: "#10B981",
   },
-  negativeAmount: {
+  redeemedAmount: {
     color: "#EF4444",
   },
-  refundAmount: {
-    color: "#F59E0B",
-  },
-  bonusAmount: {
-    color: "#8B5CF6",
-  },
-  transactionStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  statusCompleted: {
-    backgroundColor: "#D1FAE5",
-  },
-  statusPending: {
-    backgroundColor: "#FEF3C7",
-  },
-  statusFailed: {
-    backgroundColor: "#FEE2E2",
-  },
-  transactionStatusText: {
-    fontSize: 10,
-    fontWeight: "500",
-    textTransform: "capitalize",
-  },
-  bookingItem: {
+  tripItem: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
-  bookingIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  firstTripItem: {
+    paddingTop: 0,
+  },
+  tripIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: "#F3F4F6",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
   },
-  bookingInfo: {
+  tripInfo: {
     flex: 1,
   },
-  bookingReference: {
+  tripRoute: {
     fontSize: 14,
     fontWeight: "500",
     color: "#333",
-    marginBottom: 2,
+    marginBottom: 4,
   },
-  bookingRoute: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 2,
+  tripMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
-  bookingDate: {
+  tripDate: {
     fontSize: 11,
     color: "#999",
   },
-  bookingAmount: {
+  pointsBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 2,
+  },
+  pointsBadgeText: {
+    fontSize: 9,
+    color: "#F59E0B",
+    fontWeight: "600",
+  },
+  cashBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#E8F5E9",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 2,
+  },
+  cashBadgeText: {
+    fontSize: 9,
+    color: "#10B981",
+    fontWeight: "600",
+  },
+  tripAmount: {
     alignItems: "flex-end",
   },
-  bookingAmountText: {
+  tripFare: {
     fontSize: 14,
     fontWeight: "600",
     color: "#333",
-    marginBottom: 2,
+    marginBottom: 4,
   },
   pointsEarned: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 2,
   },
   pointsEarnedText: {
     fontSize: 10,
-    color: "#FFB37A",
+    color: "#F59E0B",
     fontWeight: "600",
-    marginLeft: 2,
   },
-  statsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+  infoCard: {
+    backgroundColor: "#F0F9FF",
     marginHorizontal: 20,
-    marginBottom: 20,
-    gap: 10,
+    marginTop: 15,
+    marginBottom: 30,
+    padding: 20,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
   },
-  statCard: {
-    flex: 1,
-    minWidth: "45%",
-    backgroundColor: "#FFF",
-    padding: 15,
-    borderRadius: 16,
+  infoHeader: {
+    flexDirection: "row",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    marginBottom: 15,
+    gap: 6,
   },
-  statValue: {
-    fontSize: 18,
+  infoTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#183B5C",
+  },
+  infoGrid: {
+    flexDirection: "row",
+    marginBottom: 15,
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 15,
+  },
+  infoGridItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  infoGridDivider: {
+    width: 1,
+    backgroundColor: "#E5E7EB",
+    marginHorizontal: 15,
+  },
+  infoRate: {
+    fontSize: 20,
     fontWeight: "bold",
     color: "#333",
-    marginTop: 8,
     marginBottom: 4,
   },
-  statLabel: {
+  walletRate: {
+    color: "#F59E0B",
+  },
+  infoDesc: {
     fontSize: 12,
     color: "#666",
   },
-  helpSection: {
+  infoNote: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    padding: 20,
-    marginBottom: 20,
+    gap: 6,
   },
-  helpText: {
+  infoNoteText: {
     fontSize: 12,
     color: "#666",
-    marginLeft: 8,
   },
-  helpLink: {
-    color: "#183B5C",
-    fontWeight: "600",
-    textDecorationLine: "underline",
-  },
-  // Modal styles
+
+  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -1670,7 +1735,10 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     padding: 20,
-    maxHeight: "80%",
+    maxHeight: "85%",
+  },
+  buyModalContent: {
+    maxHeight: "70%",
   },
   modalHeader: {
     flexDirection: "row",
@@ -1678,132 +1746,275 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
+  modalCloseButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "bold",
     color: "#183B5C",
   },
-  modalLabel: {
+  categoryTabs: {
+    flexDirection: "row",
+    backgroundColor: "#F3F4F6",
+    borderRadius: 25,
+    padding: 4,
+    marginBottom: 20,
+  },
+  categoryTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderRadius: 21,
+  },
+  categoryTabActive: {
+    backgroundColor: "#FFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  categoryTabText: {
     fontSize: 14,
+    fontWeight: "500",
     color: "#666",
-    marginBottom: 8,
   },
-  amountInputContainer: {
-    flexDirection: "row",
+  categoryTabTextActive: {
+    color: "#183B5C",
+  },
+  promoList: {
+    paddingBottom: 20,
+  },
+  emptyPromoContainer: {
     alignItems: "center",
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    marginBottom: 20,
+    padding: 40,
   },
-  currencySymbol: {
-    fontSize: 20,
-    color: "#666",
-    marginRight: 5,
-  },
-  amountInput: {
-    flex: 1,
-    paddingVertical: 15,
-    fontSize: 20,
-    color: "#333",
-  },
-  paymentMethods: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 20,
-  },
-  paymentMethod: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
+  emptyPromoIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: "#F3F4F6",
     justifyContent: "center",
-    backgroundColor: "#F9FAFB",
-    padding: 12,
-    borderRadius: 12,
-    gap: 8,
+    alignItems: "center",
+    marginBottom: 15,
   },
-  paymentMethodSelected: {
-    backgroundColor: "#183B5C",
-  },
-  paymentMethodText: {
-    fontSize: 12,
-    color: "#666",
-  },
-  paymentMethodTextSelected: {
-    color: "#FFF",
-  },
-  gcashInstructions: {
-    backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  cashInstructions: {
-    backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  cardInstructions: {
-    backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  instructionTitle: {
-    fontSize: 14,
+  emptyPromoTitle: {
+    fontSize: 18,
     fontWeight: "600",
     color: "#333",
-    marginBottom: 8,
+    marginBottom: 6,
   },
-  instructionText: {
-    fontSize: 12,
+  emptyPromoText: {
+    fontSize: 14,
     color: "#666",
+    textAlign: "center",
+  },
+  promoCard: {
+    marginBottom: 12,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  promoCardDisabled: {
+    opacity: 0.5,
+  },
+  promoCardGradient: {
+    padding: 15,
+  },
+  promoCardContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  promoIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 15,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  promoInfo: {
+    flex: 1,
+  },
+  promoTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
     marginBottom: 4,
   },
-  instructionNote: {
-    fontSize: 11,
-    color: "#999",
-    fontStyle: "italic",
-    marginTop: 8,
+  promoDescription: {
+    fontSize: 13,
+    color: "#666",
+    marginBottom: 8,
   },
-  uploadButton: {
+  promoRequirement: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#FFF",
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginTop: 10,
     gap: 8,
   },
-  uploadButtonText: {
-    fontSize: 14,
-    color: "#183B5C",
-    fontWeight: "500",
-  },
-  imagePreview: {
+  requirementBadge: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: "#FFF",
-    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
   },
-  previewImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+  requirementText: {
+    fontSize: 11,
+    color: "#666",
+    fontWeight: "500",
+  },
+  availabilityBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  availabilityText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  promoAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  promoActionText: {
+    fontSize: 14,
+    color: "#183B5C",
+    fontWeight: "600",
+  },
+  promoActionDisabled: {
+    color: "#9CA3AF",
+  },
+  buyContainer: {
+    paddingVertical: 10,
+  },
+  promoSummaryCard: {
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
+  },
+  promoSummaryContent: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 15,
+  },
+  promoSummaryIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 15,
+  },
+  promoSummaryInfo: {
+    flex: 1,
+  },
+  promoSummaryTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#FFF",
+    marginBottom: 4,
+  },
+  promoSummaryDescription: {
+    fontSize: 13,
+    color: "#FFF",
+    opacity: 0.9,
+  },
+  promoSummaryDivider: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    marginBottom: 15,
+  },
+  promoSummaryDetails: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  promoSummaryDetail: {
+    alignItems: "center",
+  },
+  promoSummaryDetailLabel: {
+    fontSize: 12,
+    color: "#FFF",
+    opacity: 0.8,
+    marginBottom: 4,
+  },
+  promoSummaryDetailValue: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#FFF",
+  },
+  inputSection: {
+    marginBottom: 20,
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#333",
+    marginBottom: 8,
+  },
+  inputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: 15,
+  },
+  inputIcon: {
+    marginRight: 10,
+  },
+  input: {
+    flex: 1,
+    paddingVertical: 15,
+    fontSize: 16,
+    color: "#333",
+  },
+  inputHint: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 6,
+    marginLeft: 5,
+  },
+  actionButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 15,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    padding: 16,
+    borderRadius: 16,
+    alignItems: "center",
+  },
+  cancelButtonText: {
+    color: "#666",
+    fontSize: 16,
+    fontWeight: "600",
   },
   confirmButton: {
+    flex: 2,
     backgroundColor: "#183B5C",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: "center",
-    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
   },
   confirmButtonDisabled: {
     backgroundColor: "#9CA3AF",
@@ -1813,80 +2024,16 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  promoInput: {
-    backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    fontSize: 16,
-    marginBottom: 20,
-    textAlign: "center",
-    letterSpacing: 2,
-  },
-  availablePromos: {
-    marginBottom: 20,
-  },
-  availablePromosTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 10,
-  },
-  promoItem: {
+  securityNote: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F9FAFB",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  promoIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#E3F2FD",
     justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
+    gap: 6,
+    paddingVertical: 10,
   },
-  promoInfo: {
-    flex: 1,
-  },
-  promoCode: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#183B5C",
-    marginBottom: 2,
-  },
-  promoDescription: {
-    fontSize: 11,
-    color: "#666",
-  },
-  usePromoButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: "#183B5C",
-    borderRadius: 15,
-  },
-  usePromoText: {
-    color: "#FFF",
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  applyButton: {
-    backgroundColor: "#183B5C",
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  applyButtonDisabled: {
-    backgroundColor: "#9CA3AF",
-  },
-  applyButtonText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "600",
+  securityNoteText: {
+    fontSize: 12,
+    color: "#10B981",
+    fontWeight: "500",
   },
 });
-
-
-// Recent TRansaction

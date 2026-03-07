@@ -28,7 +28,6 @@ import PaymentScreen from "./app/commuter/PaymentScreen.js";
 import MapPickerScreen from "./app/commuter/MapPickerScreen.js";
 import TransactionHistory from "./app/commuter/TransactionHistory.js";
 import PaymentMethods from './app/commuter/PaymentMethods.js';
-import Promos from './app/commuter/Promos.js';
 import PointsRewards from './app/commuter/PointsRewards.js';
 import BookingDetails from './app/commuter/BookingDetails.js';
 import Support from './app/commuter/Support.js';
@@ -37,6 +36,8 @@ import TicketDetails from './app/commuter/TicketDetails.js';
 import HelpCenter from './app/commuter/HelpCenter.js';
 import RateDriver from './app/commuter/RateDriver.js';
 import RateRide from './app/commuter/RateRide';
+import RideHistoryScreen from './app/commuter/RideHistoryScreen.js';
+import ReferralsScreen from './app/commuter/ReferralsScreen.js';
 
 
 /* ============================= */
@@ -84,7 +85,6 @@ export default function App() {
 
           <Stack.Screen name="TransactionHistory" component={TransactionHistory} />
           <Stack.Screen name="PaymentMethods" component={PaymentMethods} />
-          <Stack.Screen name="Promos" component={Promos} />
           <Stack.Screen name="PointsRewards" component={PointsRewards} />
           <Stack.Screen name="BookingDetails" component={BookingDetails} />
           <Stack.Screen name="Support" component={Support} />
@@ -93,6 +93,8 @@ export default function App() {
           <Stack.Screen name="HelpCenter" component={HelpCenter} />
           <Stack.Screen name="RateDriver" component={RateDriver} />
           <Stack.Screen name="RateRide" component={RateRide} />
+          <Stack.Screen name="RideHistoryScreen" component={RideHistoryScreen} />
+          <Stack.Screen name="ReferralsScreen" component={ReferralsScreen} />
           
 
 

@@ -2001,4 +2001,3 @@ export default function DriverHomeScreen() {
   );
 }
 
-// Gcash

@@ -60,31 +60,37 @@ export default function DriverTrackRideScreen({ navigation }) {
   const [showPendingRequests, setShowPendingRequests] = useState(true);
   const [cancelledBookingAlert, setCancelledBookingAlert] = useState(null);
 
-  // QR Code related state - Use refs to prevent re-renders
-  const showQRModalRef = useRef(false);
+  // QR Code related state
   const [showQRModal, setShowQRModal] = useState(false);
   const [qrPoints, setQrPoints] = useState(0);
   const [qrFare, setQrFare] = useState(0);
   const [qrValue, setQrValue] = useState('');
   const [waitingForPayment, setWaitingForPayment] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState(null);
+  const [showPaymentSuccessBanner, setShowPaymentSuccessBanner] = useState(false);
   
   // Timer refs
   const timerRef = useRef(null);
   const [timeLeft, setTimeLeft] = useState(300);
+  const navigationCheckIntervalRef = useRef(null);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
-  // Clean up timer on unmount
+  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+      if (navigationCheckIntervalRef.current) {
+        clearInterval(navigationCheckIntervalRef.current);
+      }
     };
   }, []);
 
-  // Timer effect - separated to prevent re-renders
+  // Timer effect for QR code expiration
   useEffect(() => {
     if (showQRModal && timeLeft > 0 && !isProcessingPayment) {
       timerRef.current = setInterval(() => {
@@ -112,16 +118,112 @@ export default function DriverTrackRideScreen({ navigation }) {
         }
       };
     }
-  }, [showQRModal, isProcessingPayment]); // Removed timeLeft from dependencies
+  }, [showQRModal, timeLeft, isProcessingPayment]);
 
-  // Update showQRModalRef whenever showQRModal changes
+  // Auto-hide payment success banner after 5 seconds
   useEffect(() => {
-    showQRModalRef.current = showQRModal;
-  }, [showQRModal]);
+    if (showPaymentSuccessBanner) {
+      const timeout = setTimeout(() => {
+        setShowPaymentSuccessBanner(false);
+      }, 5000);
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [showPaymentSuccessBanner]);
+
+  // FIXED: Immediately set navigation state when activeBooking is accepted
+  useEffect(() => {
+    if (activeBooking && activeBooking.status === "accepted") {
+      console.log("🎯 Active booking detected - setting navigation state");
+      setIsNavigating(true);
+      setShowPendingRequests(false);
+      
+      // Check if driver has already arrived
+      if (activeBooking.driver_arrived_at) {
+        console.log("📍 Driver already arrived at pickup");
+        setHasArrivedAtPickup(true);
+        setNavigationDestination('dropoff');
+        
+        // If ride has also started
+        if (activeBooking.ride_started_at) {
+          console.log("🚗 Ride already started");
+          setRideStarted(true);
+        }
+      } else {
+        // Default to heading to pickup
+        console.log("🚗 Setting destination to pickup");
+        setNavigationDestination('pickup');
+        setHasArrivedAtPickup(false);
+        setRideStarted(false);
+      }
+      
+      // Calculate route if we have driver location
+      if (driverLocation) {
+        if (activeBooking.driver_arrived_at) {
+          // Already at pickup, show route to dropoff
+          calculateRouteToDropoff(
+            { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+            { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+          );
+        } else {
+          // Heading to pickup
+          calculateRouteToPickup(driverLocation, {
+            latitude: activeBooking.pickup_latitude,
+            longitude: activeBooking.pickup_longitude
+          });
+        }
+      }
+    }
+  }, [activeBooking]); // This runs whenever activeBooking changes
+
+  // FIXED: Continuously check if we need to update navigation state
+  useEffect(() => {
+    if (!activeBooking || !driverLocation) return;
+
+    // Clear any existing interval
+    if (navigationCheckIntervalRef.current) {
+      clearInterval(navigationCheckIntervalRef.current);
+    }
+
+    // Set up interval to check if we need to update route
+    navigationCheckIntervalRef.current = setInterval(() => {
+      if (!activeBooking || !driverLocation) return;
+
+      // If we haven't arrived at pickup yet, update route to pickup
+      if (!hasArrivedAtPickup && !activeBooking.driver_arrived_at) {
+        calculateRouteToPickup(driverLocation, {
+          latitude: activeBooking.pickup_latitude,
+          longitude: activeBooking.pickup_longitude
+        });
+      }
+      // If we're at pickup but ride hasn't started, keep showing route to dropoff
+      else if (hasArrivedAtPickup && !rideStarted && navigationDestination === 'dropoff') {
+        calculateRouteToDropoff(
+          { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+          { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+        );
+      }
+      // If ride has started, show route to dropoff
+      else if (rideStarted) {
+        calculateRouteToDropoff(
+          { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+          { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+        );
+      }
+    }, 5000); // Update every 5 seconds
+
+    return () => {
+      if (navigationCheckIntervalRef.current) {
+        clearInterval(navigationCheckIntervalRef.current);
+      }
+    };
+  }, [activeBooking, driverLocation, hasArrivedAtPickup, rideStarted, navigationDestination]);
 
   // Listen for payment confirmation from commuter via real-time subscription
   useEffect(() => {
-    if (!activeBooking || !waitingForPayment || isProcessingPayment) return;
+    if (!activeBooking) return;
+
+    console.log("📡 Setting up payment listener for booking:", activeBooking.id);
 
     const paymentSubscription = supabase
       .channel(`payment-${activeBooking.id}`)
@@ -137,26 +239,51 @@ export default function DriverTrackRideScreen({ navigation }) {
           console.log("💳 Payment update received:", payload);
           
           // Check if payment status changed to paid
-          if (payload.new.payment_status === 'paid' && waitingForPayment && !isProcessingPayment) {
+          if (payload.new.payment_status === 'paid') {
+            console.log("✅ Payment confirmed! Processing...");
+            
+            // Don't process if already processing
+            if (isProcessingPayment) {
+              console.log("⚠️ Already processing payment, skipping...");
+              return;
+            }
+            
             setIsProcessingPayment(true);
+            setPaymentSuccess(true);
+            setPaymentMethod(payload.new.payment_type || 'wallet');
+            setShowPaymentSuccessBanner(true);
+            
+            // Close modal immediately when payment is received
+            setShowQRModal(false);
+            setWaitingForPayment(false);
+            
+            // Show success indicator
+            Alert.alert(
+              "✅ Payment Received!",
+              `The passenger has successfully paid ₱${activeBooking.fare?.toFixed(2)} using ${qrPoints || payload.new.points_used || 0} points.`,
+              [{ text: "OK" }]
+            );
             
             // Complete the trip
             completeTripWithPayment(
               payload.new.actual_fare || activeBooking.fare,
-              "points",
-              qrPoints
+              "wallet",
+              qrPoints || payload.new.points_used || 0
             ).finally(() => {
               setIsProcessingPayment(false);
             });
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("📡 Payment subscription status:", status);
+      });
 
     return () => {
+      console.log("🧹 Cleaning up payment subscription");
       paymentSubscription.unsubscribe();
     };
-  }, [activeBooking, waitingForPayment, qrPoints, isProcessingPayment]);
+  }, [activeBooking?.id]); // Only depend on booking ID, not the whole object
 
   useEffect(() => {
     if (pendingRequests.length > 0 && !selectedRequest && !activeBooking) {
@@ -212,7 +339,7 @@ export default function DriverTrackRideScreen({ navigation }) {
       
       const { data, error } = await supabase
         .from("bookings")
-        .select("id, status, driver_arrived_at, ride_started_at, payment_status")
+        .select("id, status, driver_arrived_at, ride_started_at, payment_status, payment_type, points_used")
         .eq("driver_id", driverId)
         .in("status", ["accepted", "pending"])
         .order("created_at", { ascending: false })
@@ -229,20 +356,36 @@ export default function DriverTrackRideScreen({ navigation }) {
         if (data.status === "accepted" && !activeBooking) {
           await fetchActiveBooking(driverId);
         } else if (data.status === "accepted" && activeBooking) {
+          // FIXED: Update navigation state based on booking data
           if (data.driver_arrived_at && !hasArrivedAtPickup) {
+            console.log("📍 Driver has arrived at pickup (from periodic check)");
             setHasArrivedAtPickup(true);
             setNavigationDestination('dropoff');
           }
           if (data.ride_started_at && !rideStarted) {
+            console.log("🚗 Ride has started (from periodic check)");
             setRideStarted(true);
           }
           // Check if payment was completed while waiting
-          if (data.payment_status === 'paid' && waitingForPayment && !isProcessingPayment) {
+          if (data.payment_status === 'paid' && !paymentSuccess && !isProcessingPayment) {
+            console.log("✅ Payment detected in periodic check!");
             setIsProcessingPayment(true);
+            setPaymentSuccess(true);
+            setPaymentMethod(data.payment_type || 'wallet');
+            setShowPaymentSuccessBanner(true);
+            setShowQRModal(false);
+            setWaitingForPayment(false);
+            
+            Alert.alert(
+              "✅ Payment Received!",
+              `The passenger has successfully paid ₱${activeBooking?.fare?.toFixed(2)} using ${data.points_used || qrPoints || 0} points.`,
+              [{ text: "OK" }]
+            );
+            
             completeTripWithPayment(
-              activeBooking.fare,
-              "points",
-              qrPoints
+              activeBooking?.fare || 0,
+              "wallet",
+              data.points_used || qrPoints || 0
             ).finally(() => {
               setIsProcessingPayment(false);
             });
@@ -260,8 +403,70 @@ export default function DriverTrackRideScreen({ navigation }) {
   useEffect(() => {
     if (!driverId) return;
 
-    const bookingRequestsSubscription = supabase
-      .channel('driver-booking-requests')
+    console.log("📡 Setting up main booking subscription for driver:", driverId);
+
+    const bookingsSubscription = supabase
+      .channel('driver-bookings')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'bookings',
+          filter: `driver_id=eq.${driverId}`,
+        },
+        (payload) => {
+          console.log("📅 Booking updated in main subscription:", payload);
+          
+          if (activeBooking && payload.new.id === activeBooking.id) {
+            if (payload.new.status === 'cancelled') {
+              handleActiveTripCancelled(payload.new);
+            } else {
+              setActiveBooking(prev => ({
+                ...prev,
+                ...payload.new
+              }));
+              
+              // FIXED: Update navigation state based on real-time updates
+              if (payload.new.driver_arrived_at && !hasArrivedAtPickup) {
+                console.log("📍 Driver has arrived at pickup (real-time)");
+                setHasArrivedAtPickup(true);
+                setNavigationDestination('dropoff');
+              }
+              
+              if (payload.new.ride_started_at && !rideStarted) {
+                console.log("🚗 Ride has started (real-time)");
+                setRideStarted(true);
+              }
+
+              // If payment was completed while waiting
+              if (payload.new.payment_status === 'paid' && !paymentSuccess && !isProcessingPayment) {
+                console.log("✅ Payment detected in main subscription!");
+                setIsProcessingPayment(true);
+                setPaymentSuccess(true);
+                setPaymentMethod(payload.new.payment_type || 'wallet');
+                setShowPaymentSuccessBanner(true);
+                setShowQRModal(false);
+                setWaitingForPayment(false);
+                
+                Alert.alert(
+                  "✅ Payment Received!",
+                  `The passenger has successfully paid ₱${activeBooking?.fare?.toFixed(2)} using ${payload.new.points_used || qrPoints || 0} points.`,
+                  [{ text: "OK" }]
+                );
+                
+                completeTripWithPayment(
+                  activeBooking?.fare || 0,
+                  "wallet",
+                  payload.new.points_used || qrPoints || 0
+                ).finally(() => {
+                  setIsProcessingPayment(false);
+                });
+              }
+            }
+          }
+        }
+      )
       .on(
         'postgres_changes',
         {
@@ -315,96 +520,15 @@ export default function DriverTrackRideScreen({ navigation }) {
           fetchPendingRequests(driverId);
         }
       )
-      .subscribe();
-
-    const bookingsSubscription = supabase
-      .channel('driver-bookings')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'bookings',
-          filter: `driver_id=eq.${driverId}`,
-        },
-        (payload) => {
-          console.log("📅 Booking updated:", payload);
-          
-          if (activeBooking && payload.new.id === activeBooking.id) {
-            if (payload.new.status === 'cancelled') {
-              handleActiveTripCancelled(payload.new);
-            } else {
-              setActiveBooking(prev => ({
-                ...prev,
-                ...payload.new
-              }));
-              
-              if (payload.new.driver_arrived_at && !hasArrivedAtPickup) {
-                setHasArrivedAtPickup(true);
-                setNavigationDestination('dropoff');
-              }
-              
-              if (payload.new.ride_started_at && !rideStarted) {
-                setRideStarted(true);
-              }
-
-              // If payment was completed while waiting
-              if (payload.new.payment_status === 'paid' && waitingForPayment && !isProcessingPayment) {
-                setIsProcessingPayment(true);
-                setShowQRModal(false);
-                Alert.alert(
-                  "✅ Payment Received",
-                  "The passenger has successfully paid with points.",
-                  [{ text: "OK" }]
-                );
-                completeTripWithPayment(
-                  activeBooking.fare,
-                  "points",
-                  qrPoints
-                ).finally(() => {
-                  setIsProcessingPayment(false);
-                });
-              }
-            }
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'bookings',
-        },
-        (payload) => {
-          if (payload.eventType === 'UPDATE' && payload.new.status === 'cancelled') {
-            const isInPending = pendingRequests.some(req => req.id === payload.new.id);
-            if (isInPending) {
-              fetchBookingDetails(payload.new.id).then(booking => {
-                if (booking) {
-                  const cancelledBy = booking.cancelled_by || 'commuter';
-                  const reason = booking.cancellation_reason || 'No reason provided';
-                  
-                  Alert.alert(
-                    "❌ Booking Cancelled",
-                    `A booking request has been cancelled by the ${cancelledBy}.`,
-                    [{ text: "OK" }]
-                  );
-                  
-                  fetchPendingRequests(driverId);
-                }
-              });
-            }
-          }
-        }
-      )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("📡 Main subscription status:", status);
+      });
 
     return () => {
-      bookingRequestsSubscription.unsubscribe();
+      console.log("🧹 Cleaning up main subscription");
       bookingsSubscription.unsubscribe();
     };
-  }, [driverId, activeBooking, pendingRequests, hasArrivedAtPickup, rideStarted, waitingForPayment, isProcessingPayment]);
+  }, [driverId, activeBooking, hasArrivedAtPickup, rideStarted, paymentSuccess, isProcessingPayment]);
 
   // ================= HELPER FUNCTIONS =================
   const fetchBookingDetails = async (bookingId) => {
@@ -454,6 +578,9 @@ export default function DriverTrackRideScreen({ navigation }) {
     setWaitingForPayment(false);
     setShowQRModal(false);
     setIsProcessingPayment(false);
+    setPaymentSuccess(false);
+    setPaymentMethod(null);
+    setShowPaymentSuccessBanner(false);
     
     setTimeout(() => {
       setCancelledBookingAlert(null);
@@ -554,35 +681,49 @@ export default function DriverTrackRideScreen({ navigation }) {
         setBookingStatus(data.status);
         setShowPendingRequests(false);
         
-        if (data.status === "accepted") {
-          if (data.driver_arrived_at) {
-            setHasArrivedAtPickup(true);
-            setNavigationDestination('dropoff');
-            setIsNavigating(true);
-            
-            if (data.ride_started_at) {
-              setRideStarted(true);
-            }
-            
-            if (driverLocation) {
-              calculateRouteToDropoff(
-                { latitude: data.pickup_latitude, longitude: data.pickup_longitude },
-                { latitude: data.dropoff_latitude, longitude: data.dropoff_longitude }
-              );
-            }
-          } else {
-            setNavigationDestination('pickup');
-            setIsNavigating(true);
-            setHasArrivedAtPickup(false);
-            setRideStarted(false);
-            
-            if (driverLocation) {
-              calculateRouteToPickup(driverLocation, {
-                latitude: data.pickup_latitude,
-                longitude: data.pickup_longitude
-              });
-            }
+        // FIXED: Immediately set navigation state when booking is found
+        setIsNavigating(true);
+        
+        // Check if driver has already arrived
+        if (data.driver_arrived_at) {
+          console.log("📍 Driver already arrived at pickup");
+          setHasArrivedAtPickup(true);
+          setNavigationDestination('dropoff');
+          
+          if (data.ride_started_at) {
+            console.log("🚗 Ride already started");
+            setRideStarted(true);
           }
+          
+          // Show route to dropoff
+          if (driverLocation) {
+            calculateRouteToDropoff(
+              { latitude: data.pickup_latitude, longitude: data.pickup_longitude },
+              { latitude: data.dropoff_latitude, longitude: data.dropoff_longitude }
+            );
+          }
+        } else {
+          // Default to heading to pickup
+          console.log("🚗 Setting destination to pickup");
+          setNavigationDestination('pickup');
+          setHasArrivedAtPickup(false);
+          setRideStarted(false);
+          
+          // Calculate route to pickup
+          if (driverLocation) {
+            calculateRouteToPickup(driverLocation, {
+              latitude: data.pickup_latitude,
+              longitude: data.pickup_longitude
+            });
+          }
+        }
+        
+        // Check if payment was already completed
+        if (data.payment_status === 'paid') {
+          console.log("✅ Booking already has payment completed");
+          setPaymentSuccess(true);
+          setPaymentMethod(data.payment_type);
+          setShowPaymentSuccessBanner(true);
         }
       } else {
         console.log("❌ No active booking found");
@@ -590,6 +731,8 @@ export default function DriverTrackRideScreen({ navigation }) {
         setCommuter(null);
         setIsNavigating(false);
         setShowPendingRequests(true);
+        setHasArrivedAtPickup(false);
+        setRideStarted(false);
       }
     } catch (err) {
       console.log("❌ Error fetching booking:", err);
@@ -598,6 +741,8 @@ export default function DriverTrackRideScreen({ navigation }) {
 
   const calculateRouteToPickup = async (driverLoc, pickupLoc) => {
     try {
+      if (!driverLoc || !pickupLoc) return;
+      
       const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${driverLoc.latitude},${driverLoc.longitude}&destination=${pickupLoc.latitude},${pickupLoc.longitude}&key=${googleApiKey}&mode=driving`;
       
       const response = await fetch(url);
@@ -629,6 +774,8 @@ export default function DriverTrackRideScreen({ navigation }) {
 
   const calculateRouteToDropoff = async (pickupLoc, dropoffLoc) => {
     try {
+      if (!pickupLoc || !dropoffLoc) return;
+      
       const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${pickupLoc.latitude},${pickupLoc.longitude}&destination=${dropoffLoc.latitude},${dropoffLoc.longitude}&key=${googleApiKey}&mode=driving`;
       
       const response = await fetch(url);
@@ -873,6 +1020,21 @@ export default function DriverTrackRideScreen({ navigation }) {
       return;
     }
 
+    if (paymentSuccess) {
+      Alert.alert(
+        "Payment Already Completed",
+        "This trip has already been paid for. Would you like to complete the trip?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Complete Trip",
+            onPress: () => completeTripWithPayment(activeBooking.fare, paymentMethod, qrPoints)
+          }
+        ]
+      );
+      return;
+    }
+
     Alert.alert(
       "Payment Method",
       "How would the passenger like to pay?",
@@ -883,7 +1045,7 @@ export default function DriverTrackRideScreen({ navigation }) {
           onPress: () => processCashPayment()
         },
         {
-          text: "⭐ Points",
+          text: "⭐ Points (Wallet)",
           onPress: () => checkCommuterPoints()
         }
       ]
@@ -954,6 +1116,10 @@ export default function DriverTrackRideScreen({ navigation }) {
 
       console.log(`💵 Added ₱${actualFare} to cash_earnings. New total: ₱${newCashEarnings}`);
 
+      setPaymentSuccess(true);
+      setPaymentMethod('cash');
+      setShowPaymentSuccessBanner(true);
+      
       await completeTripWithPayment(actualFare, "cash");
 
     } catch (err) {
@@ -985,8 +1151,6 @@ export default function DriverTrackRideScreen({ navigation }) {
       const currentPoints = commuterWallet?.points || 0;
 
       if (currentPoints >= pointsNeeded) {
-        setQrPoints(pointsNeeded);
-        setQrFare(actualFare);
         showQRCodeForPoints(pointsNeeded, actualFare);
       } else {
         Alert.alert(
@@ -1024,33 +1188,40 @@ export default function DriverTrackRideScreen({ navigation }) {
       expires_at: expiryTime.toISOString()
     });
 
+    // Set all states before showing modal
     setQrValue(qrDataValue);
+    setQrPoints(pointsNeeded);
+    setQrFare(fare);
     setWaitingForPayment(true);
-    setShowQRModal(true);
     setTimeLeft(300);
+    setShowQRModal(true);
     
-    // Also update the booking to indicate points payment is pending
+    // Update booking to indicate wallet payment is pending
     supabase
       .from("bookings")
       .update({
-        payment_type: "points",
+        payment_type: "wallet",
         payment_status: "pending",
+        points_used: pointsNeeded,
         updated_at: new Date()
       })
       .eq("id", activeBooking.id)
       .then(({ error }) => {
         if (error) console.log("❌ Error updating payment status:", error);
+        else console.log("✅ Payment status updated to pending");
       });
   };
 
   const completeTripWithPayment = async (actualFare, paymentMethod, pointsUsed = 0) => {
     try {
+      console.log("🎉 Completing trip with payment:", { actualFare, paymentMethod, pointsUsed });
+      
       const { error: bookingError } = await supabase
         .from("bookings")
         .update({ 
           status: "completed",
           actual_fare: actualFare,
-          payment_type: paymentMethod,
+          payment_type: paymentMethod === "points" ? "wallet" : paymentMethod,
           payment_status: "paid",
           ride_completed_at: new Date(),
           updated_at: new Date()
@@ -1092,9 +1263,13 @@ export default function DriverTrackRideScreen({ navigation }) {
         console.log("❌ Transaction error:", transactionError);
       }
 
-      const paymentDetails = paymentMethod === "points"
-        ? `   Points Used: ${pointsUsed}\n   Fare: ₱${actualFare.toFixed(2)}`
-        : `   Cash Received: ₱${actualFare.toFixed(2)}`;
+      const paymentDetails = paymentMethod === "points" || paymentMethod === "wallet"
+        ? `   ⭐ Points Used: ${pointsUsed}\n   💰 Fare: ₱${actualFare.toFixed(2)}`
+        : `   💵 Cash Received: ₱${actualFare.toFixed(2)}`;
+
+      const paymentMethodDisplay = paymentMethod === "points" || paymentMethod === "wallet" 
+        ? "Wallet Points" 
+        : "Cash";
 
       const successMessage = `
 ━━━━━━━━━━━━━━━━━━━━━
@@ -1105,6 +1280,7 @@ export default function DriverTrackRideScreen({ navigation }) {
 📍 To: ${activeBooking.dropoff_location?.split(",")[0] || "Dropoff"}
 
 💰 PAYMENT DETAILS:
+   Method: ${paymentMethodDisplay}
 ${paymentDetails}
 
 📊 YOUR EARNINGS:
@@ -1130,12 +1306,19 @@ Thank you for driving with SakayNA!
       setWaitingForPayment(false);
       setShowQRModal(false);
       setIsProcessingPayment(false);
+      setPaymentSuccess(true);
+      setShowPaymentSuccessBanner(true);
 
       Alert.alert(
         "🎉 Trip Completed!",
         successMessage,
         [{ text: "OK" }]
       );
+
+      // Hide banner after 5 seconds
+      setTimeout(() => {
+        setShowPaymentSuccessBanner(false);
+      }, 5000);
 
     } catch (err) {
       console.log("❌ Error completing trip:", err);
@@ -1182,6 +1365,9 @@ Thank you for driving with SakayNA!
               setWaitingForPayment(false);
               setShowQRModal(false);
               setIsProcessingPayment(false);
+              setPaymentSuccess(false);
+              setPaymentMethod(null);
+              setShowPaymentSuccessBanner(false);
 
               Alert.alert(
                 "❌ Trip Cancelled",
@@ -1219,6 +1405,7 @@ Thank you for driving with SakayNA!
               .update({
                 payment_type: null,
                 payment_status: null,
+                points_used: null,
                 updated_at: new Date()
               })
               .eq("id", activeBooking.id)
@@ -1348,13 +1535,16 @@ Thank you for driving with SakayNA!
           setDriverLocation(updatedLocation);
           await updateDriverLocation(updatedLocation);
 
+          // FIXED: Update route based on current navigation state
           if (isNavigating && activeBooking) {
-            if (navigationDestination === 'pickup' && !hasArrivedAtPickup) {
+            if (!hasArrivedAtPickup && !activeBooking.driver_arrived_at) {
+              // Still heading to pickup
               calculateRouteToPickup(updatedLocation, {
                 latitude: activeBooking.pickup_latitude,
                 longitude: activeBooking.pickup_longitude
               });
-            } else if (navigationDestination === 'dropoff') {
+            } else {
+              // Already at pickup or heading to dropoff
               calculateRouteToDropoff(
                 { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
                 { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
@@ -1520,98 +1710,6 @@ Thank you for driving with SakayNA!
     }
   };
 
-  // Memoized QR Code Modal Component to prevent unnecessary re-renders
-  const QRCodeModal = useMemo(() => {
-    return ({ visible, qrValue, points, fare }) => {
-      if (!visible) return null;
-
-      const minutes = Math.floor(timeLeft / 60);
-      const seconds = timeLeft % 60;
-
-      return (
-        <Modal
-          visible={visible}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => {}} // Prevent closing by tapping outside or back button
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Points Payment QR Code</Text>
-              </View>
-
-              <View style={styles.qrCodeContainer}>
-                {qrValue ? (
-                  <View style={styles.qrWrapper}>
-                    <QRCode
-                      value={qrValue}
-                      size={220}
-                      color="#000"
-                      backgroundColor="#FFF"
-                    />
-                  </View>
-                ) : (
-                  <View style={styles.qrPlaceholder}>
-                    <ActivityIndicator size="large" color="#183B5C" />
-                    <Text style={styles.qrPlaceholderText}>Generating QR Code...</Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.paymentDetailsContainer}>
-                <View style={styles.paymentDetailRow}>
-                  <Text style={styles.paymentDetailLabel}>Fare Amount:</Text>
-                  <Text style={styles.paymentDetailValue}>₱{fare.toFixed(2)}</Text>
-                </View>
-                
-                <View style={styles.paymentDetailRow}>
-                  <Text style={styles.paymentDetailLabel}>Points Required:</Text>
-                  <Text style={[styles.paymentDetailValue, { color: "#F59E0B" }]}>
-                    {points} points
-                  </Text>
-                </View>
-
-                <View style={styles.paymentDetailRow}>
-                  <Text style={styles.paymentDetailLabel}>Rate:</Text>
-                  <Text style={styles.paymentDetailSubtext}>10 points = ₱1</Text>
-                </View>
-              </View>
-
-              <View style={styles.timerContainer}>
-                <Ionicons name="time-outline" size={20} color="#666" />
-                <Text style={styles.timerText}>
-                  QR Code expires in {minutes}:{seconds.toString().padStart(2, '0')}
-                </Text>
-              </View>
-
-              <View style={styles.instructionContainer}>
-                <Ionicons name="information-circle" size={20} color="#3B82F6" />
-                <Text style={styles.instructionText}>
-                  Ask the passenger to scan this QR code with their app to complete the payment.
-                </Text>
-              </View>
-
-              <View style={styles.waitingContainer}>
-                <ActivityIndicator size="small" color="#10B981" />
-                <Text style={styles.waitingText}>Waiting for passenger to scan...</Text>
-              </View>
-
-              <View style={styles.modalActions}>
-                <Pressable 
-                  style={[styles.modalButton, styles.cancelModalButton]} 
-                  onPress={handleCancelQRPayment}
-                >
-                  <Text style={styles.cancelModalButtonText}>Cancel Payment</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      );
-    };
-  }, [timeLeft]); // Only re-create when timeLeft changes
-
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -1624,13 +1722,106 @@ Thank you for driving with SakayNA!
   if (activeBooking) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        {/* QR Code Modal - Memoized to prevent flickering */}
-        <QRCodeModal
-          visible={showQRModal}
-          qrValue={qrValue}
-          points={qrPoints}
-          fare={qrFare}
-        />
+        {/* Payment Success Banner */}
+        {showPaymentSuccessBanner && paymentSuccess && (
+          <View style={styles.paymentSuccessBanner}>
+            <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+            <View style={styles.paymentSuccessBannerText}>
+              <Text style={styles.paymentSuccessTitle}>Payment Received!</Text>
+              <Text style={styles.paymentSuccessMessage}>
+                {paymentMethod === 'wallet' 
+                  ? `Passenger paid ₱${activeBooking.fare?.toFixed(2)} using ${qrPoints} points`
+                  : `Cash payment of ₱${activeBooking.fare?.toFixed(2)} received`}
+              </Text>
+            </View>
+            <Pressable onPress={() => setShowPaymentSuccessBanner(false)}>
+              <Ionicons name="close" size={20} color="#666" />
+            </Pressable>
+          </View>
+        )}
+
+        {/* QR Code Modal */}
+        {showQRModal && (
+          <Modal
+            visible={showQRModal}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => {}}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Points Payment QR Code</Text>
+                </View>
+
+                <View style={styles.qrCodeContainer}>
+                  {qrValue ? (
+                    <View style={styles.qrWrapper}>
+                      <QRCode
+                        value={qrValue}
+                        size={220}
+                        color="#000"
+                        backgroundColor="#FFF"
+                      />
+                    </View>
+                  ) : (
+                    <View style={styles.qrPlaceholder}>
+                      <ActivityIndicator size="large" color="#183B5C" />
+                      <Text style={styles.qrPlaceholderText}>Generating QR Code...</Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.paymentDetailsContainer}>
+                  <View style={styles.paymentDetailRow}>
+                    <Text style={styles.paymentDetailLabel}>Fare Amount:</Text>
+                    <Text style={styles.paymentDetailValue}>₱{qrFare.toFixed(2)}</Text>
+                  </View>
+                  
+                  <View style={styles.paymentDetailRow}>
+                    <Text style={styles.paymentDetailLabel}>Points Required:</Text>
+                    <Text style={[styles.paymentDetailValue, { color: "#F59E0B" }]}>
+                      {qrPoints} points
+                    </Text>
+                  </View>
+
+                  <View style={styles.paymentDetailRow}>
+                    <Text style={styles.paymentDetailLabel}>Rate:</Text>
+                    <Text style={styles.paymentDetailSubtext}>10 points = ₱1</Text>
+                  </View>
+                </View>
+
+                <View style={styles.timerContainer}>
+                  <Ionicons name="time-outline" size={20} color="#666" />
+                  <Text style={styles.timerText}>
+                    QR Code expires in {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                  </Text>
+                </View>
+
+                <View style={styles.instructionContainer}>
+                  <Ionicons name="information-circle" size={20} color="#3B82F6" />
+                  <Text style={styles.instructionText}>
+                    Ask the passenger to scan this QR code with their app to complete the payment.
+                  </Text>
+                </View>
+
+                <View style={styles.waitingContainer}>
+                  <ActivityIndicator size="small" color="#10B981" />
+                  <Text style={styles.waitingText}>Waiting for passenger to scan...</Text>
+                </View>
+
+                <View style={styles.modalActions}>
+                  <Pressable 
+                    style={[styles.modalButton, styles.cancelModalButton]} 
+                    onPress={handleCancelQRPayment}
+                  >
+                    <Text style={styles.cancelModalButtonText}>Cancel Payment</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </View>
+          </Modal>
+        )}
 
         {/* Cancelled Trip Banner */}
         {cancelledBookingAlert && (
@@ -1816,8 +2007,27 @@ Thank you for driving with SakayNA!
             </View>
           </View>
 
+          {/* Payment Status Indicator */}
+          {paymentSuccess && paymentMethod === 'wallet' && (
+            <View style={styles.paymentStatusContainer}>
+              <Ionicons name="wallet" size={20} color="#10B981" />
+              <Text style={styles.paymentStatusText}>
+                Paid with Wallet Points • {qrPoints} points used
+              </Text>
+            </View>
+          )}
+
+          {paymentSuccess && paymentMethod === 'cash' && (
+            <View style={styles.paymentStatusContainer}>
+              <Ionicons name="cash" size={20} color="#10B981" />
+              <Text style={styles.paymentStatusText}>
+                Cash Payment Received • ₱{activeBooking.fare?.toFixed(2)}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.actionContainer}>
-            {!hasArrivedAtPickup && !rideStarted && (
+            {!hasArrivedAtPickup && !rideStarted && !paymentSuccess && (
               <>
                 <Pressable style={styles.arrivedButton} onPress={handleArrivedAtPickup}>
                   <Ionicons name="location" size={20} color="#FFF" />
@@ -1830,7 +2040,7 @@ Thank you for driving with SakayNA!
               </>
             )}
 
-            {hasArrivedAtPickup && !rideStarted && (
+            {hasArrivedAtPickup && !rideStarted && !paymentSuccess && (
               <>
                 <Pressable style={styles.startRideButton} onPress={handleStartRide}>
                   <Ionicons name="play" size={20} color="#FFF" />
@@ -1843,7 +2053,7 @@ Thank you for driving with SakayNA!
               </>
             )}
 
-            {hasArrivedAtPickup && rideStarted && (
+            {hasArrivedAtPickup && rideStarted && !paymentSuccess && (
               <>
                 <Pressable style={styles.completeButton} onPress={handleCompleteTrip}>
                   <Ionicons name="checkmark-circle" size={20} color="#FFF" />
@@ -1855,9 +2065,16 @@ Thank you for driving with SakayNA!
                 </Pressable>
               </>
             )}
+
+            {paymentSuccess && (
+              <Pressable style={styles.completeButton} onPress={() => completeTripWithPayment(activeBooking.fare, paymentMethod, qrPoints)}>
+                <Ionicons name="checkmark-circle" size={20} color="#FFF" />
+                <Text style={styles.completeButtonText}>Complete Trip</Text>
+              </Pressable>
+            )}
           </View>
 
-          {!hasArrivedAtPickup && !rideStarted && (
+          {!hasArrivedAtPickup && !rideStarted && !paymentSuccess && (
             <Pressable
               style={styles.navigationButton}
               onPress={() => openMaps(
@@ -1871,7 +2088,7 @@ Thank you for driving with SakayNA!
             </Pressable>
           )}
 
-          {(hasArrivedAtPickup || rideStarted) && (
+          {(hasArrivedAtPickup || rideStarted) && !paymentSuccess && (
             <Pressable
               style={styles.navigationButton}
               onPress={() => openMaps(
@@ -2374,6 +2591,52 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
     color: "#333",
+  },
+  paymentStatusContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#E8F5E9",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 8,
+  },
+  paymentStatusText: {
+    fontSize: 14,
+    color: "#2E7D32",
+    fontWeight: "500",
+    flex: 1,
+  },
+  paymentSuccessBanner: {
+    backgroundColor: "#E8F5E9",
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#A5D6A7",
+    position: 'absolute',
+    top: 80,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    elevation: 100,
+  },
+  paymentSuccessBannerText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  paymentSuccessTitle: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#2E7D32",
+    marginBottom: 2,
+  },
+  paymentSuccessMessage: {
+    fontSize: 12,
+    color: "#1B5E20",
   },
   actionContainer: {
     flexDirection: "row",

@@ -10,6 +10,7 @@ import {
   Linking,
   Platform,
   Image,
+  ScrollView,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -19,11 +20,13 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import Constants from "expo-constants";
+import { CameraView, useCameraPermissions } from 'expo-camera';
 
 export default function TrackRide({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
   const mapRef = useRef(null);
+  const scanTimeoutRef = useRef(null);
   
   // Get params with fallback
   const [bookingId, setBookingId] = useState(route.params?.bookingId || null);
@@ -56,7 +59,155 @@ export default function TrackRide({ navigation, route }) {
   // Location tracking
   const [locationSubscription, setLocationSubscription] = useState(null);
 
+  // QR Code Scanning
+  const [permission, requestPermission] = useCameraPermissions();
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [processingPayment, setProcessingPayment] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  
+  // Points related states
+  const [pointsBalance, setPointsBalance] = useState(0);
+  const [pointsEarned, setPointsEarned] = useState(null);
+  const [pointsEarningRate, setPointsEarningRate] = useState(null);
+  const [potentialPoints, setPotentialPoints] = useState(0);
+  const [pointsConfig, setPointsConfig] = useState({
+    cashRate: 0.05,
+    walletRate: 0.10,
+    minFare: 20,
+    rounding: 'floor'
+  });
+
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+
+  // Cleanup scan timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (scanTimeoutRef.current) {
+        clearTimeout(scanTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Fetch points configuration
+  const fetchPointsConfig = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("system_settings")
+        .select("key, value")
+        .in("key", [
+          'points_earning_rate_cash',
+          'points_earning_rate_wallet',
+          'min_fare_for_points',
+          'points_rounding'
+        ])
+        .eq("category", "points");
+
+      if (error) throw error;
+
+      const config = { ...pointsConfig };
+      data?.forEach(item => {
+        switch(item.key) {
+          case 'points_earning_rate_cash':
+            config.cashRate = parseFloat(item.value);
+            break;
+          case 'points_earning_rate_wallet':
+            config.walletRate = parseFloat(item.value);
+            break;
+          case 'min_fare_for_points':
+            config.minFare = parseInt(item.value);
+            break;
+          case 'points_rounding':
+            config.rounding = item.value;
+            break;
+        }
+      });
+      setPointsConfig(config);
+    } catch (err) {
+      console.log("❌ Error fetching points config:", err);
+    }
+  };
+
+  // Calculate potential points for current ride
+  const calculatePotentialPoints = () => {
+    if (!booking?.fare) return 0;
+    
+    const rate = booking.payment_type === 'wallet' 
+      ? pointsConfig.walletRate 
+      : pointsConfig.cashRate;
+    
+    let points = booking.fare * rate;
+    
+    switch(pointsConfig.rounding) {
+      case 'ceil':
+        points = Math.ceil(points);
+        break;
+      case 'round':
+        points = Math.round(points);
+        break;
+      default:
+        points = Math.floor(points);
+    }
+    
+    return points;
+  };
+
+  // Fetch points earned for completed booking - FIXED to show points for both payment types
+  const fetchPointsEarnedForBooking = async () => {
+    if (!bookingId || status !== "completed" || !commuterId) return;
+    
+    try {
+      console.log("🔍 Fetching points earned for booking:", bookingId);
+      
+      // Try points_conversion_logs first
+      const { data, error } = await supabase
+        .from("points_conversion_logs")
+        .select("points_converted, conversion_rate")
+        .eq("booking_id", bookingId)
+        .eq("commuter_id", commuterId)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) throw error;
+      
+      if (data && data.points_converted > 0) {
+        console.log("✅ Found points in conversion logs:", data);
+        setPointsEarned(data.points_converted);
+        setPointsEarningRate(data.conversion_rate);
+      } else {
+        // Fallback to commuter_points_history
+        console.log("🔄 Checking commuter_points_history...");
+        const { data: historyData, error: historyError } = await supabase
+          .from("commuter_points_history")
+          .select("points, description, source")
+          .eq("source_id", bookingId)
+          .eq("commuter_id", commuterId)
+          .eq("type", "earned")
+          .in("source", ["trip", "trip_cash", "trip_wallet"])
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (!historyError && historyData) {
+          console.log("✅ Found points in history:", historyData);
+          setPointsEarned(historyData.points);
+          // Determine rate from description or source
+          if (historyData.source === 'trip_wallet' || historyData.description?.includes('wallet')) {
+            setPointsEarningRate(0.10);
+          } else {
+            setPointsEarningRate(0.05);
+          }
+        } else {
+          console.log("ℹ️ No points found for this booking");
+          setPointsEarned(0);
+        }
+      }
+    } catch (err) {
+      console.log("❌ Error fetching points earned:", err);
+      setPointsEarned(0);
+    }
+  };
 
   // Reset state when screen focuses
   useFocusEffect(
@@ -74,6 +225,13 @@ export default function TrackRide({ navigation, route }) {
       setRouteCoordinates([]);
       setTripRouteCoordinates([]);
       setDriverETA(null);
+      setShowScanner(false);
+      setScanned(false);
+      setPaymentSuccess(false);
+      setPointsEarned(null);
+      
+      // Fetch points configuration
+      fetchPointsConfig();
       
       // Check for active booking
       checkForActiveBooking();
@@ -83,22 +241,52 @@ export default function TrackRide({ navigation, route }) {
         if (locationSubscription) {
           locationSubscription.remove();
         }
+        setShowScanner(false);
+        if (scanTimeoutRef.current) {
+          clearTimeout(scanTimeoutRef.current);
+        }
       };
     }, [])
   );
+
+  // Update potential points when booking or points config changes
+  useEffect(() => {
+    if (booking?.fare) {
+      setPotentialPoints(calculatePotentialPoints());
+    }
+  }, [booking, pointsConfig]);
+
+  // Fetch points earned when booking is completed
+  useEffect(() => {
+    if (status === "completed" && bookingId && commuterId) {
+      // Add a small delay to ensure database has updated
+      const timer = setTimeout(() => {
+        fetchPointsEarnedForBooking();
+      }, 1000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [status, bookingId, commuterId]);
 
   const checkForActiveBooking = async () => {
     try {
       setLoading(true);
       
+      // Get user ID from AsyncStorage (your custom OTP auth)
       const id = await AsyncStorage.getItem("user_id");
+      
       if (!id) {
+        console.log("❌ No user ID found in AsyncStorage");
         setNoRideAvailable(true);
         setLoading(false);
         return;
       }
 
+      console.log("✅ User ID from AsyncStorage:", id);
       setCommuterId(id);
+
+      // Fetch commuter points balance
+      await fetchPointsBalance(id);
 
       // First, check if there's a booking ID from params
       if (route.params?.bookingId) {
@@ -135,7 +323,9 @@ export default function TrackRide({ navigation, route }) {
           duration_minutes,
           passenger_count,
           pickup_details,
-          dropoff_details
+          dropoff_details,
+          payment_type,
+          payment_status
         `)
         .eq("commuter_id", id)
         .eq("status", "accepted")
@@ -199,7 +389,10 @@ export default function TrackRide({ navigation, route }) {
             dropoff_longitude,
             distance_km,
             duration_minutes,
-            passenger_count
+            passenger_count,
+            payment_type,
+            payment_status,
+            points_used
           `)
           .eq("commuter_id", id)
           .in("status", ["completed", "cancelled"])
@@ -220,6 +413,13 @@ export default function TrackRide({ navigation, route }) {
             fetchDriverDetails(completedData.driver_id);
           }
           
+          // Fetch points for this completed booking
+          setTimeout(() => {
+            if (commuterId) {
+              fetchPointsEarnedForBooking();
+            }
+          }, 500);
+          
           // Calculate trip route for completed ride
           if (completedData.pickup_latitude && completedData.pickup_longitude && 
               completedData.dropoff_latitude && completedData.dropoff_longitude) {
@@ -238,6 +438,40 @@ export default function TrackRide({ navigation, route }) {
       setNoRideAvailable(true);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchPointsBalance = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from("commuter_wallets")
+        .select("points")
+        .eq("commuter_id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      
+      // If no wallet exists, create one
+      if (!data) {
+        console.log("📝 Creating wallet for user:", userId);
+        const { data: newWallet, error: createError } = await supabase
+          .from("commuter_wallets")
+          .insert({
+            commuter_id: userId,
+            points: 0,
+            balance: 0,
+            updated_at: new Date()
+          })
+          .select()
+          .single();
+
+        if (createError) throw createError;
+        setPointsBalance(newWallet?.points || 0);
+      } else {
+        setPointsBalance(data?.points || 0);
+      }
+    } catch (err) {
+      console.log("❌ Error fetching points balance:", err);
     }
   };
 
@@ -366,9 +600,13 @@ export default function TrackRide({ navigation, route }) {
               if (locationSubscription) {
                 locationSubscription.remove();
               }
+              
+              // Show points earned in alert
+              const pointsToShow = potentialPoints > 0 ? `\n\n⭐ You earned ${potentialPoints} points for this ride!` : '';
+              
               Alert.alert(
                 "🎉 Trip Completed!",
-                "You have reached your destination. Thank you for riding with us!",
+                `You have reached your destination. Thank you for riding with us!${pointsToShow}`,
                 [
                   { 
                     text: "Rate Driver", 
@@ -381,12 +619,29 @@ export default function TrackRide({ navigation, route }) {
                   }
                 ]
               );
+              
+              // Fetch points after completion
+              setTimeout(() => {
+                if (commuterId) {
+                  fetchPointsEarnedForBooking();
+                }
+              }, 1000);
             } else if (payload.new.status === "cancelled") {
               setShowCompletedUI(true);
               Alert.alert(
                 "❌ Trip Cancelled",
                 payload.new.cancellation_reason || "The trip has been cancelled.",
                 [{ text: "OK", onPress: () => navigation.goBack() }]
+              );
+            }
+
+            // Check if payment status changed (for wallet payment)
+            if (payload.new.payment_status === 'paid' && payload.new.payment_type === 'wallet') {
+              setPaymentSuccess(true);
+              Alert.alert(
+                "✅ Payment Successful!",
+                `Your payment of ₱${payload.new.fare?.toFixed(2)} has been processed successfully.`,
+                [{ text: "OK" }]
               );
             }
           }
@@ -680,6 +935,299 @@ export default function TrackRide({ navigation, route }) {
     }
   };
 
+  // ================= QR CODE SCANNING FUNCTIONS - FIXED =================
+  const handlePayWithPoints = () => {
+    Alert.alert(
+      "Pay with Points",
+      `Your current points balance: ${pointsBalance}\n\nScan the driver's QR code to pay with your points. (10 points = ₱1)`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Continue", onPress: openScanner }
+      ]
+    );
+  };
+
+  const openScanner = async () => {
+    try {
+      // Request camera permission if not granted
+      if (!permission?.granted) {
+        const { granted } = await requestPermission();
+        if (!granted) {
+          Alert.alert(
+            "Camera Permission Required",
+            "We need camera access to scan the driver's QR code.",
+            [{ text: "OK" }]
+          );
+          return;
+        }
+      }
+      
+      setScanned(false);
+      setShowScanner(true);
+    } catch (err) {
+      console.log("❌ Error opening scanner:", err);
+    }
+  };
+
+  const handleBarCodeScanned = async ({ type, data }) => {
+    // Prevent multiple scans
+    if (scanned || processingPayment) return;
+    
+    // Set scanned immediately to prevent multiple triggers
+    setScanned(true);
+    
+    // Clear any existing timeout
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+    }
+    
+    try {
+      // Parse QR code data
+      const qrData = JSON.parse(data);
+      console.log("📱 QR Code scanned:", qrData);
+      
+      // Validate QR code data
+      if (qrData.type !== 'points_payment') {
+        Alert.alert(
+          "Invalid QR Code",
+          "This is not a valid payment QR code.",
+          [{ text: "OK", onPress: () => {
+            // Allow scanning again after 2 seconds
+            scanTimeoutRef.current = setTimeout(() => {
+              setScanned(false);
+              scanTimeoutRef.current = null;
+            }, 2000);
+          }}]
+        );
+        return;
+      }
+      
+      // Check if this QR code is for this booking
+      if (qrData.booking_id !== bookingId) {
+        Alert.alert(
+          "Invalid QR Code",
+          "This QR code is for a different booking.",
+          [{ text: "OK", onPress: () => {
+            // Allow scanning again after 2 seconds
+            scanTimeoutRef.current = setTimeout(() => {
+              setScanned(false);
+              scanTimeoutRef.current = null;
+            }, 2000);
+          }}]
+        );
+        return;
+      }
+      
+      // Check if QR code has expired
+      const expiresAt = new Date(qrData.expires_at);
+      if (expiresAt < new Date()) {
+        Alert.alert(
+          "QR Code Expired",
+          "This payment QR code has expired. Please ask the driver to generate a new one.",
+          [{ text: "OK", onPress: () => {
+            setShowScanner(false);
+          }}]
+        );
+        return;
+      }
+      
+      // Process the payment
+      await processPointsPayment(qrData);
+      
+    } catch (err) {
+      console.log("❌ Error processing QR code:", err);
+      Alert.alert(
+        "Invalid QR Code",
+        "Could not read the QR code. Please try again.",
+        [{ text: "OK", onPress: () => {
+          // Allow scanning again after 2 seconds
+          scanTimeoutRef.current = setTimeout(() => {
+            setScanned(false);
+            scanTimeoutRef.current = null;
+          }, 2000);
+        }}]
+      );
+    }
+  };
+
+  const processPointsPayment = async (qrData) => {
+    try {
+      setProcessingPayment(true);
+      
+      // Get user ID from AsyncStorage
+      const userId = await AsyncStorage.getItem("user_id");
+      
+      if (!userId) {
+        console.log("❌ No user ID found in AsyncStorage");
+        throw new Error("Not authenticated");
+      }
+
+      console.log("✅ User ID from AsyncStorage:", userId);
+
+      // Verify this matches the commuter ID we have
+      if (userId !== commuterId) {
+        console.log("⚠️ User ID mismatch - updating commuterId");
+        setCommuterId(userId);
+      }
+
+      // Check commuter's points balance
+      const { data: wallet, error: walletError } = await supabase
+        .from("commuter_wallets")
+        .select("points")
+        .eq("commuter_id", userId)
+        .maybeSingle();
+
+      if (walletError) throw walletError;
+
+      let currentWallet = wallet;
+
+      // If no wallet exists, create one
+      if (!currentWallet) {
+        console.log("📝 Creating wallet for user:", userId);
+        const { data: newWallet, error: createError } = await supabase
+          .from("commuter_wallets")
+          .insert({
+            commuter_id: userId,
+            points: 0,
+            balance: 0,
+            updated_at: new Date()
+          })
+          .select()
+          .single();
+
+        if (createError) throw createError;
+        currentWallet = newWallet;
+      }
+
+      if (currentWallet.points < qrData.points) {
+        Alert.alert(
+          "Insufficient Points",
+          `You need ${qrData.points} points to pay ₱${qrData.amount}. Your current balance: ${currentWallet.points || 0} points.\n\nWould you like to inform the driver to switch to cash payment?`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => {
+              setShowScanner(false);
+              setProcessingPayment(false);
+              // Allow scanning again
+              scanTimeoutRef.current = setTimeout(() => {
+                setScanned(false);
+                scanTimeoutRef.current = null;
+              }, 1000);
+            }},
+            { 
+              text: "Notify Driver", 
+              onPress: () => {
+                setShowScanner(false);
+                setProcessingPayment(false);
+                Alert.alert("Please inform the driver that you'll pay with cash instead.");
+                // Allow scanning again
+                scanTimeoutRef.current = setTimeout(() => {
+                  setScanned(false);
+                  scanTimeoutRef.current = null;
+                }, 1000);
+              }
+            }
+          ]
+        );
+        return;
+      }
+
+      // Deduct points from commuter wallet
+      const newPoints = currentWallet.points - qrData.points;
+      
+      const { error: updateError } = await supabase
+        .from("commuter_wallets")
+        .update({ 
+          points: newPoints,
+          updated_at: new Date()
+        })
+        .eq("commuter_id", userId);
+
+      if (updateError) throw updateError;
+
+      // Record points history
+      const { error: historyError } = await supabase
+        .from("commuter_points_history")
+        .insert({
+          commuter_id: userId,
+          points: qrData.points,
+          type: 'redeemed',
+          source: 'trip',
+          source_id: bookingId,
+          description: `Points payment for trip to ${booking?.dropoff_location || 'destination'}`,
+          created_at: new Date()
+        });
+
+      if (historyError) {
+        console.log("❌ Error recording points history:", historyError);
+      }
+
+      // Update booking payment status
+      const { error: bookingError } = await supabase
+        .from("bookings")
+        .update({
+          payment_status: "paid",
+          payment_type: "wallet",
+          actual_fare: qrData.amount,
+          points_used: qrData.points,
+          updated_at: new Date()
+        })
+        .eq("id", bookingId);
+
+      if (bookingError) throw bookingError;
+
+      // Update local points balance
+      setPointsBalance(newPoints);
+      
+      // Success!
+      setPaymentSuccess(true);
+      setShowScanner(false);
+      
+      Alert.alert(
+        "✅ Payment Successful!",
+        `You have successfully paid ₱${qrData.amount.toFixed(2)} using ${qrData.points} points.\n\nRemaining points: ${newPoints}`,
+        [{ text: "Great!" }]
+      );
+
+    } catch (err) {
+      console.log("❌ Error processing payment:", err);
+      
+      let errorMessage = "There was an error processing your payment. Please try again or pay with cash.";
+      
+      if (err.message === "Not authenticated") {
+        errorMessage = "Your session has expired. Please log in again and try the payment.";
+      }
+      
+      Alert.alert(
+        "Payment Failed",
+        errorMessage,
+        [{ text: "OK", onPress: () => {
+          setShowScanner(false);
+          // Allow scanning again
+          scanTimeoutRef.current = setTimeout(() => {
+            setScanned(false);
+            scanTimeoutRef.current = null;
+          }, 1000);
+          // If session expired, navigate to login
+          if (err.message === "Not authenticated") {
+            navigation.replace("Login");
+          }
+        }}]
+      );
+    } finally {
+      setProcessingPayment(false);
+    }
+  };
+
+  const handleCancelScanning = () => {
+    setShowScanner(false);
+    setScanned(false);
+    setProcessingPayment(false);
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+  };
+
   const handleCancelRide = () => {
     Alert.alert(
       "Cancel Ride",
@@ -805,10 +1353,69 @@ export default function TrackRide({ navigation, route }) {
   const showRouteToDriver = status === "accepted" && !driverArrived && !rideStarted && routeCoordinates.length > 0 && !showCompletedUI;
   const showTripRoute = (rideStarted || driverArrived || status === "completed") && tripRouteCoordinates.length > 0 && !showCompletedUI;
 
+  // Check if wallet payment is available
+  const showPointsPayment = status === "accepted" && 
+                           rideStarted && 
+                           booking?.payment_type === 'wallet' && 
+                           booking?.payment_status === 'pending' &&
+                           !paymentSuccess;
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#183B5C" />
+      </View>
+    );
+  }
+
+  // QR Code Scanner Modal
+  if (showScanner) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.scannerHeader}>
+          <Pressable onPress={handleCancelScanning} style={styles.scannerBackButton}>
+            <Ionicons name="close" size={28} color="#FFF" />
+          </Pressable>
+          <Text style={styles.scannerTitle}>Scan Driver's QR Code</Text>
+          <View style={{ width: 40 }} />
+        </View>
+
+        <View style={styles.scannerContainer}>
+          <CameraView
+            style={styles.scanner}
+            facing="back"
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+            barcodeScannerSettings={{
+              barcodeTypes: ['qr'],
+            }}
+          >
+            <View style={styles.scannerOverlay}>
+              <View style={styles.scanArea}>
+                <View style={styles.scanCorner} />
+                <View style={[styles.scanCorner, styles.scanCornerTopRight]} />
+                <View style={[styles.scanCorner, styles.scanCornerBottomLeft]} />
+                <View style={[styles.scanCorner, styles.scanCornerBottomRight]} />
+              </View>
+              
+              <Text style={styles.scannerInstruction}>
+                Position the QR code within the frame
+              </Text>
+              
+              {processingPayment && (
+                <View style={styles.processingContainer}>
+                  <ActivityIndicator size="large" color="#FFF" />
+                  <Text style={styles.processingText}>Processing payment...</Text>
+                </View>
+              )}
+            </View>
+          </CameraView>
+        </View>
+
+        <View style={styles.scannerFooter}>
+          <Text style={styles.scannerFooterText}>
+            Make sure the QR code is clearly visible and well-lit
+          </Text>
+        </View>
       </View>
     );
   }
@@ -866,10 +1473,6 @@ export default function TrackRide({ navigation, route }) {
             <Ionicons name="bicycle" size={24} color="#FFF" />
             <Text style={styles.bookRideButtonText}>Book a Ride Now</Text>
           </Pressable>
-
-          <Pressable style={styles.historyButton} onPress={() => navigation.navigate("RideHistory")}>
-            <Text style={styles.historyButtonText}>View Ride History</Text>
-          </Pressable>
         </View>
       </View>
     );
@@ -891,11 +1494,11 @@ export default function TrackRide({ navigation, route }) {
           </View>
         </View>
 
-        <View style={styles.completedContainer}>
+        <ScrollView style={styles.completedContainer} showsVerticalScrollIndicator={false}>
           <View style={styles.completedIconContainer}>
             <Ionicons 
               name={status === "completed" ? "checkmark-circle" : "close-circle"} 
-              size={80} 
+              size={50} 
               color={status === "completed" ? "#10B981" : "#EF4444"} 
             />
           </View>
@@ -911,6 +1514,57 @@ export default function TrackRide({ navigation, route }) {
                 : "How was your ride? Rate your driver to help improve our service."
               : "This ride has been cancelled."}
           </Text>
+
+          {/* Payment Info for Completed Rides */}
+          {status === "completed" && booking?.payment_type && (
+            <View style={styles.completedPaymentCard}>
+              <Text style={styles.completedPaymentTitle}>Payment Details</Text>
+              <View style={styles.completedPaymentRow}>
+                <Text style={styles.completedPaymentLabel}>Method:</Text>
+                <Text style={styles.completedPaymentValue}>
+                  {booking.payment_type === 'wallet' ? '⭐ Points' : '💵 Cash'}
+                </Text>
+              </View>
+              <View style={styles.completedPaymentRow}>
+                <Text style={styles.completedPaymentLabel}>Amount:</Text>
+                <Text style={styles.completedPaymentValue}>₱{booking.fare?.toFixed(2) || "0.00"}</Text>
+              </View>
+              {booking.points_used > 0 && (
+                <View style={styles.completedPaymentRow}>
+                  <Text style={styles.completedPaymentLabel}>Points Used:</Text>
+                  <Text style={styles.completedPaymentValue}>{booking.points_used}</Text>
+                </View>
+              )}
+              
+              {/* Points Earned Section - FIXED to show for both payment types */}
+              {pointsEarned !== null && pointsEarned > 0 && (
+                <View style={styles.pointsEarnedContainer}>
+                  <View style={styles.pointsEarnedDivider} />
+                  <View style={styles.completedPaymentRow}>
+                    <Text style={styles.completedPaymentLabel}>⭐ Points Earned:</Text>
+                    <Text style={[styles.completedPaymentValue, styles.pointsEarnedValue]}>
+                      +{pointsEarned}
+                    </Text>
+                  </View>
+                  <Text style={styles.pointsEarnedNote}>
+                    {booking.payment_type === 'wallet' 
+                      ? `Earned ${pointsConfig.walletRate * 100}% of fare as points (Wallet bonus!)` 
+                      : `Earned ${pointsConfig.cashRate * 100}% of fare as points`}
+                  </Text>
+                </View>
+              )}
+              
+              {/* Show message if no points earned but fare qualifies */}
+              {pointsEarned === 0 && booking.fare >= pointsConfig.minFare && (
+                <View style={styles.pointsEarnedContainer}>
+                  <View style={styles.pointsEarnedDivider} />
+                  <Text style={styles.noPointsText}>
+                    No points earned for this ride
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
 
           {/* Driver Info */}
           {driver && (
@@ -950,10 +1604,6 @@ export default function TrackRide({ navigation, route }) {
                   {booking.dropoff_location}
                 </Text>
               </View>
-              <View style={styles.completedFareRow}>
-                <Text style={styles.completedFareLabel}>Fare Paid:</Text>
-                <Text style={styles.completedFareAmount}>₱{booking.fare?.toFixed(2) || "0.00"}</Text>
-              </View>
             </View>
           )}
 
@@ -976,7 +1626,7 @@ export default function TrackRide({ navigation, route }) {
           <Pressable style={styles.completedHistoryButton} onPress={() => navigation.navigate("RideHistory")}>
             <Text style={styles.completedHistoryButtonText}>View Ride History</Text>
           </Pressable>
-        </View>
+        </ScrollView>
       </View>
     );
   }
@@ -1084,7 +1734,7 @@ export default function TrackRide({ navigation, route }) {
       </View>
 
       {/* Bottom Sheet */}
-      <View style={styles.bottomSheet}>
+      <ScrollView style={styles.bottomSheet} showsVerticalScrollIndicator={false}>
         {/* Status Card */}
         <View style={styles.statusCard}>
           <View style={[styles.statusIcon, { backgroundColor: getStatusColor() + "20" }]}>
@@ -1179,6 +1829,43 @@ export default function TrackRide({ navigation, route }) {
           </View>
         )}
 
+        {/* Points Balance Display */}
+        {pointsBalance > 0 && (
+          <View style={styles.pointsBalanceContainer}>
+            <Ionicons name="star" size={20} color="#F59E0B" />
+            <Text style={styles.pointsBalanceText}>
+              Your points balance: {pointsBalance} (10 points = ₱1)
+            </Text>
+          </View>
+        )}
+
+        {/* Points Preview - Show during active ride */}
+        {rideStarted && booking?.fare > 0 && booking.fare >= pointsConfig.minFare && (
+          <View style={styles.pointsPreviewContainer}>
+            <Ionicons name="star-outline" size={20} color="#F59E0B" />
+            <Text style={styles.pointsPreviewText}>
+              You'll earn{' '}
+              <Text style={styles.pointsPreviewHighlight}>
+                {potentialPoints} points
+              </Text>{' '}
+              for this trip
+              {booking.payment_type === 'wallet' && ' (Wallet bonus! 2x points)'}
+            </Text>
+          </View>
+        )}
+
+        {/* Points Payment Button */}
+        {showPointsPayment && (
+          <Pressable style={styles.pointsPaymentButton} onPress={handlePayWithPoints}>
+            <Ionicons name="qr-code" size={24} color="#FFF" />
+            <View style={styles.pointsPaymentTextContainer}>
+              <Text style={styles.pointsPaymentTitle}>Pay with Points</Text>
+              <Text style={styles.pointsPaymentSubtitle}>Scan driver's QR code</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={24} color="#FFF" />
+          </Pressable>
+        )}
+
         {/* Action Buttons */}
         {canCancel && (
           <Pressable style={styles.cancelButton} onPress={handleCancelRide}>
@@ -1208,7 +1895,7 @@ export default function TrackRide({ navigation, route }) {
             <Text style={styles.shareButtonText}>Share Trip</Text>
           </Pressable>
         )}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -1304,6 +1991,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 10,
+    maxHeight: "50%",
   },
   statusCard: {
     flexDirection: "row",
@@ -1418,6 +2106,79 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#333",
     marginTop: 2,
+  },
+  // Points Balance
+  pointsBalanceContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 8,
+  },
+  pointsBalanceText: {
+    fontSize: 14,
+    color: "#F59E0B",
+    fontWeight: "600",
+  },
+  // Points Preview
+  pointsPreviewContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 8,
+  },
+  pointsPreviewText: {
+    fontSize: 14,
+    color: "#333",
+    flex: 1,
+  },
+  pointsPreviewHighlight: {
+    fontWeight: "bold",
+    color: "#F59E0B",
+  },
+  // Points Payment Button
+  pointsPaymentButton: {
+    backgroundColor: "#F59E0B",
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 12,
+  },
+  pointsPaymentTextContainer: {
+    flex: 1,
+  },
+  pointsPaymentTitle: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  pointsPaymentSubtitle: {
+    color: "#FFF",
+    fontSize: 12,
+    opacity: 0.9,
+  },
+  // Scan QR Button
+  scanQRButton: {
+    backgroundColor: "#3B82F6",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 8,
+  },
+  scanQRButtonText: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "600",
   },
   cancelButton: {
     backgroundColor: "#FEE2E2",
@@ -1568,13 +2329,13 @@ const styles = StyleSheet.create({
   // Completed/Cancelled UI Styles
   completedContainer: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
     paddingHorizontal: 20,
     backgroundColor: "#F5F7FA",
+    marginTop: 20,
   },
   completedIconContainer: {
-    marginBottom: 20,
+    alignItems: "center",
+    marginBottom: 10,
   },
   completedTitle: {
     fontSize: 24,
@@ -1589,6 +2350,53 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 30,
     lineHeight: 22,
+  },
+  completedPaymentCard: {
+    backgroundColor: "#F0F9FF",
+    borderRadius: 16,
+    padding: 15,
+    width: "100%",
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+  },
+  completedPaymentTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#183B5C",
+    marginBottom: 8,
+  },
+  completedPaymentRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  completedPaymentLabel: {
+    fontSize: 14,
+    color: "#666",
+  },
+  completedPaymentValue: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+  },
+  pointsEarnedContainer: {
+    marginTop: 8,
+  },
+  pointsEarnedDivider: {
+    height: 1,
+    backgroundColor: "#E5E7EB",
+    marginVertical: 8,
+  },
+  pointsEarnedValue: {
+    color: "#F59E0B",
+    fontWeight: "bold",
+  },
+  pointsEarnedNote: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    marginTop: 2,
+    fontStyle: "italic",
   },
   completedDriverCard: {
     flexDirection: "row",
@@ -1646,24 +2454,6 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 8,
   },
-  completedFareRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-  },
-  completedFareLabel: {
-    fontSize: 14,
-    color: "#666",
-  },
-  completedFareAmount: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#183B5C",
-  },
   completedRateButton: {
     backgroundColor: "#183B5C",
     flexDirection: "row",
@@ -1702,12 +2492,111 @@ const styles = StyleSheet.create({
   },
   completedHistoryButton: {
     paddingVertical: 12,
+    marginBottom: 20,
   },
   completedHistoryButtonText: {
     color: "#183B5C",
     fontSize: 14,
     fontWeight: "500",
     textDecorationLine: "underline",
+    textAlign: "center",
+  },
+  // Scanner Styles
+  scannerHeader: {
+    backgroundColor: "#183B5C",
+    paddingTop: 60,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  scannerBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  scannerTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#FFF",
+  },
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+  scanner: {
+    flex: 1,
+  },
+  scannerOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  scanArea: {
+    width: 250,
+    height: 250,
+    position: "relative",
+  },
+  scanCorner: {
+    position: "absolute",
+    width: 40,
+    height: 40,
+    borderColor: "#FFF",
+    borderTopWidth: 4,
+    borderLeftWidth: 4,
+    top: 0,
+    left: 0,
+  },
+  scanCornerTopRight: {
+    right: 0,
+    left: "auto",
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+  },
+  scanCornerBottomLeft: {
+    bottom: 0,
+    top: "auto",
+    borderTopWidth: 0,
+    borderBottomWidth: 4,
+  },
+  scanCornerBottomRight: {
+    bottom: 0,
+    top: "auto",
+    right: 0,
+    left: "auto",
+    borderTopWidth: 0,
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+    borderBottomWidth: 4,
+  },
+  scannerInstruction: {
+    color: "#FFF",
+    fontSize: 16,
+    marginTop: 30,
+    textAlign: "center",
+  },
+  processingContainer: {
+    marginTop: 30,
+    alignItems: "center",
+  },
+  processingText: {
+    color: "#FFF",
+    fontSize: 16,
+    marginTop: 10,
+  },
+  scannerFooter: {
+    backgroundColor: "#183B5C",
+    padding: 20,
+    alignItems: "center",
+  },
+  scannerFooterText: {
+    color: "#FFF",
+    fontSize: 14,
+    textAlign: "center",
   },
 });
-

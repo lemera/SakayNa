@@ -8,54 +8,48 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-  Linking,
   Image,
+  Linking,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
-import Constants from "expo-constants";
 
-export default function BookingDetailsScreen() {
+export default function BookingDetails() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const route = useRoute();
-  const { id } = route.params || {};
+  const { id } = route.params || {}; // Add fallback empty object
 
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState(null);
   const [driver, setDriver] = useState(null);
-  const [commuter, setCommuter] = useState(null);
-  const [routeCoordinates, setRouteCoordinates] = useState([]);
-  const [showFullMap, setShowFullMap] = useState(false);
-
-  const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+  const [vehicle, setVehicle] = useState(null);
+  const [pointsEarned, setPointsEarned] = useState(0);
+  const [commuterRating, setCommuterRating] = useState(null);
 
   useEffect(() => {
-    if (id) {
-      fetchBookingDetails();
+    // Check if id exists before fetching
+    if (!id) {
+      console.log("No booking ID provided");
+      Alert.alert("Error", "No booking ID provided");
+      navigation.goBack();
+      return;
     }
+    
+    fetchBookingDetails();
   }, [id]);
 
   const fetchBookingDetails = async () => {
     try {
-      const { data, error } = await supabase
+      // Fetch booking details
+      const { data: bookingData, error: bookingError } = await supabase
         .from("bookings")
         .select(`
           *,
-          driver:drivers (
-            id,
-            first_name,
-            last_name,
-            phone,
-            profile_picture,
-            vehicle_model,
-            vehicle_color,
-            vehicle_plate
-          ),
           commuter:commuters (
             id,
             first_name,
@@ -67,82 +61,92 @@ export default function BookingDetailsScreen() {
         .eq("id", id)
         .single();
 
-      if (error) throw error;
+      if (bookingError) throw bookingError;
+      
+      // Check if booking data exists
+      if (!bookingData) {
+        Alert.alert("Error", "Booking not found");
+        navigation.goBack();
+        return;
+      }
+      
+      setBooking(bookingData);
 
-      setBooking(data);
-      setDriver(data.driver);
-      setCommuter(data.commuter);
+      // If there's a driver, fetch driver details and vehicle
+      if (bookingData.driver_id) {
+        // Fetch driver details
+        const { data: driverData, error: driverError } = await supabase
+          .from("drivers")
+          .select(`
+            id,
+            first_name,
+            last_name,
+            phone,
+            profile_picture
+          `)
+          .eq("id", bookingData.driver_id)
+          .single();
 
-      if (data.pickup_latitude && data.pickup_longitude && 
-          data.dropoff_latitude && data.dropoff_longitude) {
-        calculateRoute(
-          {
-            latitude: data.pickup_latitude,
-            longitude: data.pickup_longitude,
-          },
-          {
-            latitude: data.dropoff_latitude,
-            longitude: data.dropoff_longitude,
-          }
-        );
+        if (driverError) {
+          console.log("Error fetching driver:", driverError);
+        } else if (driverData) {
+          setDriver(driverData);
+        }
+
+        // Fetch vehicle details separately
+        const { data: vehicleData, error: vehicleError } = await supabase
+          .from("driver_vehicles")
+          .select(`
+            vehicle_type,
+            vehicle_color,
+            plate_number
+          `)
+          .eq("driver_id", bookingData.driver_id)
+          .maybeSingle();
+
+        if (!vehicleError && vehicleData) {
+          setVehicle(vehicleData);
+        }
+      }
+
+      // Fetch points earned for this booking
+      const { data: pointsData } = await supabase
+        .from("commuter_points_history")
+        .select("points")
+        .eq("source_id", id)
+        .eq("type", "earned")
+        .maybeSingle();
+
+      if (pointsData) {
+        setPointsEarned(pointsData.points);
+      }
+
+      // Fetch commuter's rating for this driver (if any)
+      if (bookingData.driver_id) {
+        const { data: ratingData } = await supabase
+          .from("driver_reviews")
+          .select("rating, comment")
+          .eq("booking_id", id)
+          .maybeSingle();
+
+        if (ratingData) {
+          setCommuterRating(ratingData);
+        }
       }
 
     } catch (err) {
-      console.log("Error fetching booking:", err);
+      console.log("Error fetching booking details:", err);
       Alert.alert("Error", "Failed to load booking details");
     } finally {
       setLoading(false);
     }
   };
 
-  const calculateRoute = async (startCoords, endCoords) => {
-    try {
-      const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${startCoords.latitude},${startCoords.longitude}&destination=${endCoords.latitude},${endCoords.longitude}&key=${googleApiKey}&mode=driving`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === "OK" && data.routes[0]) {
-        const points = decodePolyline(data.routes[0].overview_polyline.points);
-        setRouteCoordinates(points);
-      }
-    } catch (err) {
-      console.log("Error calculating route:", err);
-    }
-  };
-
-  const decodePolyline = (encoded) => {
-    const points = [];
-    let index = 0, lat = 0, lng = 0;
-
-    while (index < encoded.length) {
-      let b, shift = 0, result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
-    }
-    return points;
-  };
-
   const formatDate = (dateString) => {
+    if (!dateString) return "N/A";
     const date = new Date(dateString);
     return date.toLocaleDateString("en-US", {
+      weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
@@ -157,37 +161,33 @@ export default function BookingDetailsScreen() {
 
   const getStatusColor = (status) => {
     switch (status) {
-      case "pending":
-        return { bg: "#FEF3C7", text: "#F59E0B" };
-      case "accepted":
-        return { bg: "#E3F2FD", text: "#3B82F6" };
-      case "started":
-        return { bg: "#D1FAE5", text: "#10B981" };
       case "completed":
-        return { bg: "#D1FAE5", text: "#10B981" };
+        return "#10B981";
       case "cancelled":
-        return { bg: "#FEE2E2", text: "#EF4444" };
+        return "#EF4444";
+      case "accepted":
+        return "#3B82F6";
       default:
-        return { bg: "#F3F4F6", text: "#6B7280" };
+        return "#F59E0B";
     }
   };
 
-  const getPaymentStatusColor = (status) => {
+  const getStatusIcon = (status) => {
     switch (status) {
-      case "paid":
-        return { bg: "#D1FAE5", text: "#10B981" };
-      case "pending":
-        return { bg: "#FEF3C7", text: "#F59E0B" };
-      case "failed":
-        return { bg: "#FEE2E2", text: "#EF4444" };
+      case "completed":
+        return "checkmark-circle";
+      case "cancelled":
+        return "close-circle";
+      case "accepted":
+        return "car";
       default:
-        return { bg: "#F3F4F6", text: "#6B7280" };
+        return "time";
     }
   };
 
   const callDriver = () => {
     if (!driver?.phone) {
-      Alert.alert("Error", "No phone number available");
+      Alert.alert("Error", "Driver phone number not available");
       return;
     }
     Linking.openURL(`tel:${driver.phone}`);
@@ -195,22 +195,23 @@ export default function BookingDetailsScreen() {
 
   const messageDriver = () => {
     if (!driver?.phone) {
-      Alert.alert("Error", "No phone number available");
+      Alert.alert("Error", "Driver phone number not available");
       return;
     }
     Linking.openURL(`sms:${driver.phone}`);
   };
 
-  const openMaps = (lat, lng, label) => {
+  const openInMaps = (lat, lng, label) => {
+    if (!lat || !lng) {
+      Alert.alert("Error", "Location coordinates not available");
+      return;
+    }
+    
     const scheme = Platform.select({
-      ios: `maps://0?q=${label}&ll=${lat},${lng}`,
-      android: `geo:${lat},${lng}?q=${lat},${lng}(${label})`,
+      ios: `maps:0,0?q=${label}@${lat},${lng}`,
+      android: `geo:0,0?q=${lat},${lng}(${label})`,
     });
     Linking.openURL(scheme);
-  };
-
-  const handleSupport = () => {
-    navigation.navigate("Support", { bookingId: id });
   };
 
   if (loading) {
@@ -223,24 +224,15 @@ export default function BookingDetailsScreen() {
 
   if (!booking) {
     return (
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#183B5C" />
-          </Pressable>
-          <Text style={styles.headerTitle}>Booking Details</Text>
-          <View style={{ width: 40 }} />
-        </View>
-        <View style={styles.emptyState}>
-          <Ionicons name="document-text-outline" size={64} color="#D1D5DB" />
-          <Text style={styles.emptyStateTitle}>Booking Not Found</Text>
-        </View>
+      <View style={styles.errorContainer}>
+        <Ionicons name="alert-circle" size={60} color="#EF4444" />
+        <Text style={styles.errorText}>Booking not found</Text>
+        <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.backButtonText}>Go Back</Text>
+        </Pressable>
       </View>
     );
   }
-
-  const statusColors = getStatusColor(booking.status);
-  const paymentColors = getPaymentStatusColor(booking.payment_status);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -250,315 +242,281 @@ export default function BookingDetailsScreen() {
           <Ionicons name="arrow-back" size={24} color="#183B5C" />
         </Pressable>
         <Text style={styles.headerTitle}>Booking Details</Text>
-        <Pressable onPress={handleSupport} style={styles.supportButton}>
-          <Ionicons name="help-circle" size={24} color="#183B5C" />
-        </Pressable>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Map Preview */}
-        {booking.pickup_latitude && booking.dropoff_latitude && (
-          <Pressable
-            style={styles.mapPreview}
-            onPress={() => setShowFullMap(!showFullMap)}
-          >
-            <MapView
-              style={[styles.map, showFullMap ? styles.mapFull : styles.mapSmall]}
-              provider={PROVIDER_GOOGLE}
-              initialRegion={{
-                latitude: booking.pickup_latitude,
-                longitude: booking.pickup_longitude,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-              }}
-              scrollEnabled={showFullMap}
-              zoomEnabled={showFullMap}
-              pitchEnabled={false}
-              rotateEnabled={false}
-            >
-              <Marker
-                coordinate={{
-                  latitude: booking.pickup_latitude,
-                  longitude: booking.pickup_longitude,
-                }}
-                title="Pickup"
-              >
-                <View style={styles.pickupMarker}>
-                  <Ionicons name="location" size={12} color="#FFF" />
-                </View>
-              </Marker>
-              <Marker
-                coordinate={{
-                  latitude: booking.dropoff_latitude,
-                  longitude: booking.dropoff_longitude,
-                }}
-                title="Dropoff"
-              >
-                <View style={styles.dropoffMarker}>
-                  <Ionicons name="flag" size={12} color="#FFF" />
-                </View>
-              </Marker>
-              {routeCoordinates.length > 0 && (
-                <Polyline
-                  coordinates={routeCoordinates}
-                  strokeColor="#3B82F6"
-                  strokeWidth={3}
-                />
-              )}
-            </MapView>
-            <View style={styles.mapOverlay}>
-              <Ionicons
-                name={showFullMap ? "contract" : "expand"}
-                size={20}
-                color="#FFF"
-              />
+        {/* Status Card */}
+        <View style={styles.statusCard}>
+          <View style={[styles.statusIcon, { backgroundColor: getStatusColor(booking.status) + "20" }]}>
+            <Ionicons name={getStatusIcon(booking.status)} size={32} color={getStatusColor(booking.status)} />
+          </View>
+          <View style={styles.statusInfo}>
+            <Text style={styles.statusLabel}>Status</Text>
+            <Text style={[styles.statusValue, { color: getStatusColor(booking.status) }]}>
+              {booking.status?.toUpperCase() || "UNKNOWN"}
+            </Text>
+          </View>
+          <Text style={styles.bookingRef}>#{booking.booking_reference?.slice(-6) || "N/A"}</Text>
+        </View>
+
+        {/* Date */}
+        <View style={styles.dateCard}>
+          <Ionicons name="calendar" size={20} color="#666" />
+          <Text style={styles.dateText}>{formatDate(booking.created_at)}</Text>
+        </View>
+
+        {/* Locations */}
+        <View style={styles.locationsCard}>
+          <View style={styles.locationRow}>
+            <View style={styles.locationIcon}>
+              <View style={[styles.dot, { backgroundColor: "#10B981" }]} />
             </View>
-          </Pressable>
-        )}
-
-        {/* Status Cards */}
-        <View style={styles.statusContainer}>
-          <View style={[styles.statusCard, { backgroundColor: statusColors.bg }]}>
-            <Text style={[styles.statusText, { color: statusColors.text }]}>
-              {booking.status?.toUpperCase()}
-            </Text>
+            <View style={styles.locationContent}>
+              <Text style={styles.locationLabel}>PICKUP</Text>
+              <Text style={styles.locationAddress}>{booking.pickup_location || "N/A"}</Text>
+              {booking.pickup_details && (
+                <Text style={styles.locationDetails}>📝 {booking.pickup_details}</Text>
+              )}
+              {booking.pickup_latitude && booking.pickup_longitude && (
+                <Pressable
+                  style={styles.mapLink}
+                  onPress={() => openInMaps(
+                    booking.pickup_latitude,
+                    booking.pickup_longitude,
+                    "Pickup Location"
+                  )}
+                >
+                  <Ionicons name="map" size={14} color="#3B82F6" />
+                  <Text style={styles.mapLinkText}>Open in Maps</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
-          <View style={[styles.statusCard, { backgroundColor: paymentColors.bg }]}>
-            <Text style={[styles.statusText, { color: paymentColors.text }]}>
-              {booking.payment_status?.toUpperCase()}
-            </Text>
+
+          <View style={styles.locationLine} />
+
+          <View style={styles.locationRow}>
+            <View style={styles.locationIcon}>
+              <View style={[styles.dot, { backgroundColor: "#EF4444" }]} />
+            </View>
+            <View style={styles.locationContent}>
+              <Text style={styles.locationLabel}>DROPOFF</Text>
+              <Text style={styles.locationAddress}>{booking.dropoff_location || "N/A"}</Text>
+              {booking.dropoff_details && (
+                <Text style={styles.locationDetails}>📝 {booking.dropoff_details}</Text>
+              )}
+              {booking.dropoff_latitude && booking.dropoff_longitude && (
+                <Pressable
+                  style={styles.mapLink}
+                  onPress={() => openInMaps(
+                    booking.dropoff_latitude,
+                    booking.dropoff_longitude,
+                    "Dropoff Location"
+                  )}
+                >
+                  <Ionicons name="map" size={14} color="#3B82F6" />
+                  <Text style={styles.mapLinkText}>Open in Maps</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         </View>
 
-        {/* Booking Reference */}
-        <View style={styles.referenceCard}>
-          <Text style={styles.referenceLabel}>Booking Reference</Text>
-          <Text style={styles.referenceValue}>
-            {booking.booking_reference || "N/A"}
-          </Text>
-        </View>
-
-        {/* Driver Info (if assigned) */}
+        {/* Driver Info (if available) */}
         {driver && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Driver Details</Text>
-            <View style={styles.driverCard}>
+          <View style={styles.driverCard}>
+            <Text style={styles.cardTitle}>Driver</Text>
+            <View style={styles.driverContent}>
               <View style={styles.driverAvatar}>
                 {driver.profile_picture ? (
                   <Image source={{ uri: driver.profile_picture }} style={styles.driverImage} />
                 ) : (
-                  <Ionicons name="person" size={30} color="#9CA3AF" />
+                  <Ionicons name="person-circle" size={60} color="#9CA3AF" />
                 )}
               </View>
               <View style={styles.driverInfo}>
                 <Text style={styles.driverName}>
                   {driver.first_name} {driver.last_name}
                 </Text>
-                <Text style={styles.driverVehicle}>
-                  {driver.vehicle_model || "Vehicle"} • {driver.vehicle_color || "N/A"} • {driver.vehicle_plate || "N/A"}
-                </Text>
+                {vehicle && (
+                  <View style={styles.vehicleInfo}>
+                    <Text style={styles.vehicleText}>
+                      {vehicle.vehicle_color || ''} {vehicle.vehicle_type || ''}
+                    </Text>
+                    <Text style={styles.plateText}>{vehicle.plate_number || ''}</Text>
+                  </View>
+                )}
+                {booking.status === "completed" && commuterRating && (
+                  <View style={styles.ratingContainer}>
+                    <Ionicons name="star" size={16} color="#FFB37A" />
+                    <Text style={styles.ratingText}>{commuterRating.rating.toFixed(1)}</Text>
+                  </View>
+                )}
               </View>
-              <View style={styles.driverActions}>
-                <Pressable style={styles.callButton} onPress={callDriver}>
-                  <Ionicons name="call" size={20} color="#FFF" />
-                </Pressable>
-                <Pressable style={styles.messageButton} onPress={messageDriver}>
-                  <Ionicons name="chatbubble" size={20} color="#183B5C" />
-                </Pressable>
-              </View>
+              {booking.status !== "cancelled" && (
+                <View style={styles.driverActions}>
+                  <Pressable style={styles.callButton} onPress={callDriver}>
+                    <Ionicons name="call" size={20} color="#FFF" />
+                  </Pressable>
+                  <Pressable style={styles.messageButton} onPress={messageDriver}>
+                    <Ionicons name="chatbubble" size={20} color="#183B5C" />
+                  </Pressable>
+                </View>
+              )}
             </View>
           </View>
         )}
 
         {/* Trip Details */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Trip Details</Text>
+        <View style={styles.detailsCard}>
+          <Text style={styles.cardTitle}>Trip Details</Text>
           
-          <View style={styles.detailCard}>
-            <View style={styles.detailRow}>
-              <Ionicons name="location" size={20} color="#10B981" />
-              <View style={styles.detailContent}>
-                <Text style={styles.detailLabel}>PICKUP</Text>
-                <Text style={styles.detailText}>{booking.pickup_location}</Text>
-                {booking.pickup_details && (
-                  <Text style={styles.detailSubtext}>📍 {booking.pickup_details}</Text>
-                )}
-              </View>
+          <View style={styles.detailsGrid}>
+            <View style={styles.detailItem}>
+              <Ionicons name="people" size={20} color="#666" />
+              <Text style={styles.detailLabel}>Passengers</Text>
+              <Text style={styles.detailValue}>{booking.passenger_count || 1}</Text>
             </View>
 
-            <View style={styles.detailRow}>
-              <Ionicons name="flag" size={20} color="#EF4444" />
-              <View style={styles.detailContent}>
-                <Text style={styles.detailLabel}>DROPOFF</Text>
-                <Text style={styles.detailText}>{booking.dropoff_location}</Text>
-                {booking.dropoff_details && (
-                  <Text style={styles.detailSubtext}>📍 {booking.dropoff_details}</Text>
-                )}
-              </View>
+            <View style={styles.detailItem}>
+              <Ionicons name="map" size={20} color="#666" />
+              <Text style={styles.detailLabel}>Distance</Text>
+              <Text style={styles.detailValue}>{booking.distance_km || "?"} km</Text>
             </View>
 
-            <View style={styles.detailDivider} />
-
-            <View style={styles.statsGrid}>
-              <View style={styles.statItem}>
-                <Ionicons name="people" size={16} color="#666" />
-                <Text style={styles.statLabel}>Passengers</Text>
-                <Text style={styles.statValue}>{booking.passenger_count || 1}</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Ionicons name="map" size={16} color="#666" />
-                <Text style={styles.statLabel}>Distance</Text>
-                <Text style={styles.statValue}>{booking.distance_km || "?"} km</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Ionicons name="time" size={16} color="#666" />
-                <Text style={styles.statLabel}>Duration</Text>
-                <Text style={styles.statValue}>{booking.duration_minutes || "?"} min</Text>
-              </View>
+            <View style={styles.detailItem}>
+              <Ionicons name="time" size={20} color="#666" />
+              <Text style={styles.detailLabel}>Duration</Text>
+              <Text style={styles.detailValue}>{booking.duration_minutes || "?"} min</Text>
             </View>
           </View>
         </View>
 
         {/* Payment Details */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Payment Details</Text>
-          
-          <View style={styles.paymentCard}>
+        <View style={styles.paymentCard}>
+          <Text style={styles.cardTitle}>Payment Details</Text>
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Base Fare</Text>
+            <Text style={styles.paymentValue}>{formatCurrency(booking.base_fare || 15)}</Text>
+          </View>
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Per KM Rate</Text>
+            <Text style={styles.paymentValue}>{formatCurrency(booking.per_km_rate || 15)}/km</Text>
+          </View>
+
+          {booking.distance_km > 0 && (
             <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Payment Method</Text>
+              <Text style={styles.paymentLabel}>Distance Charge</Text>
               <Text style={styles.paymentValue}>
-                {booking.payment_type?.toUpperCase() || "CASH"}
+                {formatCurrency((booking.per_km_rate || 15) * booking.distance_km)}
               </Text>
             </View>
-            
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Base Fare</Text>
-              <Text style={styles.paymentValue}>{formatCurrency(booking.base_fare || 15)}</Text>
-            </View>
-            
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Distance Fare</Text>
-              <Text style={styles.paymentValue}>
-                {formatCurrency((booking.per_km_rate || 15) * Math.ceil(booking.distance_km || 0))}
-              </Text>
-            </View>
-            
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Passengers</Text>
-              <Text style={styles.paymentValue}>× {booking.passenger_count || 1}</Text>
-            </View>
-            
-            <View style={styles.paymentDivider} />
-            
-            <View style={styles.paymentTotal}>
-              <Text style={styles.paymentTotalLabel}>Total Fare</Text>
-              <Text style={styles.paymentTotalValue}>{formatCurrency(booking.fare)}</Text>
-            </View>
-
-            {booking.payment_status === "paid" && (
-              <View style={styles.paidBadge}>
-                <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-                <Text style={styles.paidText}>Paid via {booking.payment_type}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Timeline */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Timeline</Text>
-          
-          <View style={styles.timelineCard}>
-            <View style={styles.timelineItem}>
-              <View style={styles.timelineLeft}>
-                <View style={styles.timelineDot} />
-                <View style={styles.timelineLine} />
-              </View>
-              <View style={styles.timelineContent}>
-                <Text style={styles.timelineTitle}>Booking Created</Text>
-                <Text style={styles.timelineTime}>{formatDate(booking.created_at)}</Text>
-              </View>
-            </View>
-
-            {booking.accepted_at && (
-              <View style={styles.timelineItem}>
-                <View style={styles.timelineLeft}>
-                  <View style={[styles.timelineDot, styles.timelineDotActive]} />
-                  <View style={styles.timelineLine} />
-                </View>
-                <View style={styles.timelineContent}>
-                  <Text style={styles.timelineTitle}>Driver Accepted</Text>
-                  <Text style={styles.timelineTime}>{formatDate(booking.accepted_at)}</Text>
-                </View>
-              </View>
-            )}
-
-            {booking.ride_started_at && (
-              <View style={styles.timelineItem}>
-                <View style={styles.timelineLeft}>
-                  <View style={[styles.timelineDot, styles.timelineDotActive]} />
-                  <View style={styles.timelineLine} />
-                </View>
-                <View style={styles.timelineContent}>
-                  <Text style={styles.timelineTitle}>Trip Started</Text>
-                  <Text style={styles.timelineTime}>{formatDate(booking.ride_started_at)}</Text>
-                </View>
-              </View>
-            )}
-
-            {booking.ride_completed_at && (
-              <View style={styles.timelineItem}>
-                <View style={styles.timelineLeft}>
-                  <View style={[styles.timelineDot, styles.timelineDotActive]} />
-                </View>
-                <View style={styles.timelineContent}>
-                  <Text style={styles.timelineTitle}>Trip Completed</Text>
-                  <Text style={styles.timelineTime}>{formatDate(booking.ride_completed_at)}</Text>
-                </View>
-              </View>
-            )}
-
-            {booking.cancelled_at && (
-              <View style={styles.timelineItem}>
-                <View style={styles.timelineLeft}>
-                  <View style={[styles.timelineDot, styles.timelineDotCancelled]} />
-                </View>
-                <View style={styles.timelineContent}>
-                  <Text style={styles.timelineTitle}>Trip Cancelled</Text>
-                  <Text style={styles.timelineTime}>{formatDate(booking.cancelled_at)}</Text>
-                  {booking.cancellation_reason && (
-                    <Text style={styles.timelineReason}>Reason: {booking.cancellation_reason}</Text>
-                  )}
-                </View>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Action Buttons */}
-        <View style={styles.actionContainer}>
-          {booking.status === "completed" && booking.commuter_rating === null && (
-            <Pressable
-              style={styles.rateButton}
-              onPress={() => navigation.navigate("RateDriver", { bookingId: id })}
-            >
-              <Ionicons name="star" size={20} color="#FFF" />
-              <Text style={styles.rateButtonText}>Rate Your Driver</Text>
-            </Pressable>
           )}
 
-          <Pressable
-            style={styles.mapButton}
-            onPress={() => openMaps(
-              booking.pickup_latitude,
-              booking.pickup_longitude,
-              "Pickup Location"
-            )}
-          >
-            <Ionicons name="map" size={20} color="#183B5C" />
-            <Text style={styles.mapButtonText}>Open in Maps</Text>
-          </Pressable>
+          <View style={styles.paymentDivider} />
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.totalLabel}>Total Fare</Text>
+            <Text style={styles.totalValue}>{formatCurrency(booking.fare)}</Text>
+          </View>
+
+          {/* Payment Method */}
+          <View style={styles.paymentMethodRow}>
+            <Text style={styles.paymentLabel}>Payment Method</Text>
+            <View style={[
+              styles.paymentMethodBadge,
+              booking.payment_type === 'wallet' ? styles.walletBadge : styles.cashBadge
+            ]}>
+              <Ionicons 
+                name={booking.payment_type === 'wallet' ? 'star' : 'cash'} 
+                size={14} 
+                color={booking.payment_type === 'wallet' ? "#F59E0B" : "#10B981"} 
+              />
+              <Text style={[
+                styles.paymentMethodText,
+                booking.payment_type === 'wallet' ? styles.walletText : styles.cashText
+              ]}>
+                {booking.payment_type === 'wallet' ? 'Paid with Points' : 'Cash'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Points Used (if any) */}
+          {booking.points_used > 0 && (
+            <View style={styles.pointsUsedRow}>
+              <Ionicons name="star" size={16} color="#F59E0B" />
+              <Text style={styles.pointsUsedText}>
+                {booking.points_used} points used (worth {formatCurrency(booking.points_used * 0.1)})
+              </Text>
+            </View>
+          )}
+
+          {/* Points Earned (if completed) */}
+          {booking.status === "completed" && pointsEarned > 0 && (
+            <View style={styles.pointsEarnedRow}>
+              <Ionicons name="star" size={16} color="#10B981" />
+              <Text style={styles.pointsEarnedText}>
+                You earned {pointsEarned} points from this trip!
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.paymentStatus}>
+            <Text style={styles.paymentStatusLabel}>Status</Text>
+            <View style={[
+              styles.statusBadge,
+              booking.payment_status === "paid" ? styles.paidBadge : styles.pendingBadge
+            ]}>
+              <Text style={[
+                styles.statusBadgeText,
+                booking.payment_status === "paid" ? styles.paidText : styles.pendingText
+              ]}>
+                {booking.payment_status === "paid" ? "PAID" : "PENDING"}
+              </Text>
+            </View>
+          </View>
         </View>
+
+        {/* Action Buttons for Active Rides */}
+        {booking.status === "accepted" && (
+          <View style={styles.actionButtons}>
+            <Pressable
+              style={styles.trackButton}
+              onPress={() => navigation.navigate("TrackRide", { bookingId: booking.id })}
+            >
+              <Ionicons name="navigate" size={20} color="#FFF" />
+              <Text style={styles.trackButtonText}>Track Ride</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Rate Button for Completed Rides (if not rated) */}
+        {booking.status === "completed" && !booking.commuter_rating && (
+          <Pressable
+            style={styles.rateButton}
+            onPress={() => navigation.navigate("RateRide", { 
+              bookingId: booking.id,
+              driverId: booking.driver_id 
+            })}
+          >
+            <Ionicons name="star" size={20} color="#FFF" />
+            <Text style={styles.rateButtonText}>Rate Your Driver</Text>
+          </Pressable>
+        )}
+
+        {/* Cancellation Info */}
+        {booking.status === "cancelled" && booking.cancellation_reason && (
+          <View style={styles.cancellationCard}>
+            <Ionicons name="information-circle" size={20} color="#EF4444" />
+            <View style={styles.cancellationInfo}>
+              <Text style={styles.cancellationLabel}>Cancelled by {booking.cancelled_by || "system"}</Text>
+              <Text style={styles.cancellationReason}>{booking.cancellation_reason}</Text>
+            </View>
+          </View>
+        )}
       </ScrollView>
     </View>
   );
@@ -574,134 +532,190 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  errorText: {
+    fontSize: 18,
+    color: "#333",
+    marginTop: 10,
+    marginBottom: 20,
+  },
   header: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 20,
     paddingVertical: 15,
     backgroundColor: "#FFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+    borderBottomColor: "#F0F0F0",
   },
   backButton: {
     padding: 8,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
+  backButtonText: {
     color: "#183B5C",
+    fontSize: 16,
+    fontWeight: "600",
   },
-  supportButton: {
-    padding: 8,
-  },
-  mapPreview: {
-    height: 200,
-    position: "relative",
-  },
-  map: {
-    width: "100%",
-  },
-  mapSmall: {
-    height: 200,
-  },
-  mapFull: {
-    height: 400,
-  },
-  mapOverlay: {
-    position: "absolute",
-    bottom: 10,
-    right: 10,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    borderRadius: 20,
-    padding: 8,
-  },
-  pickupMarker: {
-    backgroundColor: "#10B981",
-    padding: 6,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: "#FFF",
-  },
-  dropoffMarker: {
-    backgroundColor: "#EF4444",
-    padding: 6,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: "#FFF",
-  },
-  statusContainer: {
-    flexDirection: "row",
-    padding: 20,
-    gap: 10,
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#183B5C",
   },
   statusCard: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  referenceCard: {
-    backgroundColor: "#FFF",
-    marginHorizontal: 20,
-    marginBottom: 20,
-    padding: 15,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  referenceLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 4,
-  },
-  referenceValue: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#183B5C",
-  },
-  section: {
-    marginBottom: 20,
-    paddingHorizontal: 20,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 10,
-  },
-  driverCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFF",
+    margin: 20,
+    marginBottom: 10,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowRadius: 8,
     elevation: 2,
   },
-  driverAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#F3F4F6",
+  statusIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
   },
+  statusInfo: {
+    flex: 1,
+  },
+  statusLabel: {
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 2,
+  },
+  statusValue: {
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  bookingRef: {
+    fontSize: 12,
+    color: "#999",
+  },
+  dateCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 15,
+    borderRadius: 16,
+    gap: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  dateText: {
+    fontSize: 14,
+    color: "#333",
+    flex: 1,
+  },
+  locationsCard: {
+    backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 15,
+    borderRadius: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  locationRow: {
+    flexDirection: "row",
+  },
+  locationIcon: {
+    width: 30,
+    alignItems: "center",
+  },
+  dot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  locationLine: {
+    width: 2,
+    height: 30,
+    backgroundColor: "#E5E7EB",
+    marginLeft: 14,
+  },
+  locationContent: {
+    flex: 1,
+    marginLeft: 8,
+  },
+  locationLabel: {
+    fontSize: 11,
+    color: "#999",
+    marginBottom: 2,
+  },
+  locationAddress: {
+    fontSize: 14,
+    color: "#333",
+    marginBottom: 4,
+  },
+  locationDetails: {
+    fontSize: 12,
+    color: "#666",
+    fontStyle: "italic",
+    marginBottom: 4,
+  },
+  mapLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  mapLinkText: {
+    fontSize: 12,
+    color: "#3B82F6",
+  },
+  driverCard: {
+    backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 15,
+    borderRadius: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 12,
+  },
+  driverContent: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  driverAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    marginRight: 12,
+  },
   driverImage: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
   },
   driverInfo: {
     flex: 1,
@@ -710,10 +724,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#333",
-    marginBottom: 2,
+    marginBottom: 4,
   },
-  driverVehicle: {
+  vehicleInfo: {
+    marginBottom: 4,
+  },
+  vehicleText: {
+    fontSize: 13,
+    color: "#666",
+  },
+  plateText: {
     fontSize: 12,
+    color: "#999",
+    marginTop: 2,
+  },
+  ratingContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  ratingText: {
+    fontSize: 14,
     color: "#666",
   },
   driverActions: {
@@ -736,74 +767,52 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  detailCard: {
+  detailsCard: {
     backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginBottom: 10,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowRadius: 8,
     elevation: 2,
   },
-  detailRow: {
-    flexDirection: "row",
-    marginBottom: 15,
-  },
-  detailContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  detailLabel: {
-    fontSize: 10,
-    color: "#666",
-    marginBottom: 2,
-  },
-  detailText: {
-    fontSize: 14,
-    color: "#333",
-    marginBottom: 4,
-  },
-  detailSubtext: {
-    fontSize: 12,
-    color: "#FFB37A",
-  },
-  detailDivider: {
-    height: 1,
-    backgroundColor: "#F3F4F6",
-    marginVertical: 15,
-  },
-  statsGrid: {
+  detailsGrid: {
     flexDirection: "row",
     justifyContent: "space-around",
   },
-  statItem: {
+  detailItem: {
     alignItems: "center",
   },
-  statLabel: {
+  detailLabel: {
     fontSize: 11,
     color: "#666",
     marginTop: 4,
+    marginBottom: 2,
   },
-  statValue: {
+  detailValue: {
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: "600",
     color: "#333",
   },
   paymentCard: {
     backgroundColor: "#FFF",
+    marginHorizontal: 20,
+    marginBottom: 10,
     padding: 15,
-    borderRadius: 12,
+    borderRadius: 16,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowRadius: 8,
     elevation: 2,
   },
   paymentRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: 8,
   },
   paymentLabel: {
     fontSize: 14,
@@ -812,107 +821,137 @@ const styles = StyleSheet.create({
   paymentValue: {
     fontSize: 14,
     color: "#333",
-    fontWeight: "500",
   },
   paymentDivider: {
     height: 1,
     backgroundColor: "#F3F4F6",
-    marginVertical: 10,
+    marginVertical: 8,
   },
-  paymentTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 10,
-  },
-  paymentTotalLabel: {
+  totalLabel: {
     fontSize: 16,
     fontWeight: "600",
     color: "#333",
   },
-  paymentTotalValue: {
+  totalValue: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#183B5C",
   },
-  paidBadge: {
+  paymentMethodRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  paymentMethodBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 15,
+    gap: 4,
+  },
+  walletBadge: {
+    backgroundColor: "#FEF3C7",
+  },
+  cashBadge: {
+    backgroundColor: "#E8F5E9",
+  },
+  paymentMethodText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  walletText: {
+    color: "#F59E0B",
+  },
+  cashText: {
+    color: "#10B981",
+  },
+  pointsUsedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
     padding: 10,
     borderRadius: 8,
+    marginTop: 8,
     gap: 8,
   },
-  paidText: {
+  pointsUsedText: {
+    fontSize: 12,
+    color: "#F59E0B",
+    flex: 1,
+  },
+  pointsEarnedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#E8F5E9",
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 8,
+    gap: 8,
+  },
+  pointsEarnedText: {
     fontSize: 12,
     color: "#10B981",
-    fontWeight: "500",
+    flex: 1,
   },
-  timelineCard: {
-    backgroundColor: "#FFF",
-    padding: 15,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  timelineItem: {
+  paymentStatus: {
     flexDirection: "row",
-    minHeight: 60,
-  },
-  timelineLeft: {
-    width: 30,
+    justifyContent: "space-between",
     alignItems: "center",
+    marginTop: 12,
   },
-  timelineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: "#D1D5DB",
-    marginTop: 4,
-  },
-  timelineDotActive: {
-    backgroundColor: "#10B981",
-  },
-  timelineDotCancelled: {
-    backgroundColor: "#EF4444",
-  },
-  timelineLine: {
-    width: 2,
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    marginVertical: 4,
-  },
-  timelineContent: {
-    flex: 1,
-    marginLeft: 10,
-    paddingBottom: 20,
-  },
-  timelineTitle: {
+  paymentStatusLabel: {
     fontSize: 14,
-    fontWeight: "500",
-    color: "#333",
-    marginBottom: 2,
+    color: "#666",
   },
-  timelineTime: {
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 15,
+  },
+  paidBadge: {
+    backgroundColor: "#D1FAE5",
+  },
+  pendingBadge: {
+    backgroundColor: "#FEF3C7",
+  },
+  statusBadgeText: {
     fontSize: 12,
-    color: "#999",
+    fontWeight: "600",
   },
-  timelineReason: {
-    fontSize: 12,
-    color: "#EF4444",
-    marginTop: 4,
+  paidText: {
+    color: "#10B981",
   },
-  actionContainer: {
-    padding: 20,
-    gap: 10,
+  pendingText: {
+    color: "#F59E0B",
   },
-  rateButton: {
+  actionButtons: {
+    marginHorizontal: 20,
+    marginBottom: 10,
+  },
+  trackButton: {
+    backgroundColor: "#3B82F6",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    padding: 16,
+    borderRadius: 12,
+    gap: 8,
+  },
+  trackButtonText: {
+    color: "#FFF",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  rateButton: {
     backgroundColor: "#183B5C",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginHorizontal: 20,
+    marginBottom: 20,
     padding: 16,
     borderRadius: 12,
     gap: 8,
@@ -922,30 +961,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  mapButton: {
+  cancellationCard: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#F3F4F6",
-    padding: 16,
+    backgroundColor: "#FEE2E2",
+    marginHorizontal: 20,
+    marginBottom: 20,
+    padding: 15,
     borderRadius: 12,
-    gap: 8,
+    gap: 12,
   },
-  mapButtonText: {
-    color: "#183B5C",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  emptyState: {
+  cancellationInfo: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 40,
   },
-  emptyStateTitle: {
-    fontSize: 18,
+  cancellationLabel: {
+    fontSize: 14,
     fontWeight: "600",
-    color: "#333",
-    marginTop: 20,
+    color: "#B91C1C",
+    marginBottom: 4,
+  },
+  cancellationReason: {
+    fontSize: 13,
+    color: "#7F1D1D",
   },
 });

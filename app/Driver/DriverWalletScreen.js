@@ -28,7 +28,7 @@ export default function DriverWalletScreen({ navigation }) {
   const [driverId, setDriverId] = useState(null);
   const [driverName, setDriverName] = useState("");
   
-  // Wallet data - initialize with default values
+  // Wallet data
   const [walletData, setWalletData] = useState({
     balance: 0,
     total_deposits: 0,
@@ -38,24 +38,25 @@ export default function DriverWalletScreen({ navigation }) {
     wallet_earnings: 0,
   });
   
-  // Computed values
-  const [totalEarnings, setTotalEarnings] = useState(0);
+  // Points data
+  const [pointsData, setPointsData] = useState({
+    total_points_earned: 0,
+    points_from_rides: 0,
+    points_from_referrals: 0,
+    points_from_bonuses: 0,
+    points_value: 0,
+  });
   
   const [recentTransactions, setRecentTransactions] = useState([]);
   const [weeklyEarnings, setWeeklyEarnings] = useState([0, 0, 0, 0, 0, 0, 0]);
   const [monthlyEarnings, setMonthlyEarnings] = useState(0);
+  const [totalTrips, setTotalTrips] = useState(0);
   
   // Withdrawal modal
   const [withdrawModal, setWithdrawModal] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawMethod, setWithdrawMethod] = useState("gcash");
   const [gcashNumber, setGcashNumber] = useState("");
-  
-  // Statistics
-  const [totalTrips, setTotalTrips] = useState(0);
-  const [averageFare, setAverageFare] = useState(0);
-  const [peakDay, setPeakDay] = useState("");
-  const [peakEarnings, setPeakEarnings] = useState(0);
 
   // Fetch driver ID
   useFocusEffect(
@@ -63,11 +64,8 @@ export default function DriverWalletScreen({ navigation }) {
       const getDriverId = async () => {
         try {
           const id = await AsyncStorage.getItem("user_id");
-          console.log("Driver ID from storage:", id);
           setDriverId(id);
-          if (id) {
-            await fetchDriverName(id);
-          }
+          if (id) await fetchDriverName(id);
         } catch (error) {
           console.log("Error getting driver ID:", error);
         }
@@ -78,10 +76,7 @@ export default function DriverWalletScreen({ navigation }) {
 
   // Fetch all data when driverId changes
   useEffect(() => {
-    if (driverId) {
-      console.log("Loading wallet data for driver:", driverId);
-      loadWalletData();
-    }
+    if (driverId) loadWalletData();
   }, [driverId]);
 
   const fetchDriverName = async (id) => {
@@ -93,9 +88,7 @@ export default function DriverWalletScreen({ navigation }) {
         .single();
 
       if (error) throw error;
-      if (data) {
-        setDriverName(`${data.first_name} ${data.last_name}`);
-      }
+      if (data) setDriverName(`${data.first_name} ${data.last_name}`);
     } catch (err) {
       console.log("Error fetching driver name:", err.message);
     }
@@ -106,6 +99,7 @@ export default function DriverWalletScreen({ navigation }) {
       setLoading(true);
       await Promise.all([
         fetchWalletBalance(),
+        fetchPointsData(),
         fetchTransactions(),
         fetchWeeklyEarnings(),
         fetchStatistics(),
@@ -125,8 +119,6 @@ export default function DriverWalletScreen({ navigation }) {
 
   const fetchWalletBalance = async () => {
     try {
-      console.log("Fetching wallet for driver:", driverId);
-      
       const { data, error } = await supabase
         .from("driver_wallets")
         .select("*")
@@ -135,47 +127,29 @@ export default function DriverWalletScreen({ navigation }) {
 
       if (error) throw error;
       
-      console.log("Wallet data received:", data);
-      
       if (data) {
-        // Ensure all numeric values are properly parsed
-        const wallet = {
+        setWalletData({
           balance: Number(data.balance) || 0,
           total_deposits: Number(data.total_deposits) || 0,
           total_withdrawals: Number(data.total_withdrawals) || 0,
           cash_earnings: Number(data.cash_earnings) || 0,
           gcash_earnings: Number(data.gcash_earnings) || 0,
           wallet_earnings: Number(data.wallet_earnings) || 0,
-        };
-        
-        setWalletData(wallet);
-        
-        // Calculate total earnings
-        const total = wallet.cash_earnings + wallet.gcash_earnings + wallet.wallet_earnings;
-        setTotalEarnings(total);
-        
-        console.log("Wallet state updated:", wallet);
-        console.log("Total earnings:", total);
+        });
       } else {
-        console.log("No wallet found, creating new wallet");
         // Create wallet if it doesn't exist
-        const { error: insertError } = await supabase
-          .from("driver_wallets")
-          .insert({
-            driver_id: driverId,
-            balance: 0,
-            total_deposits: 0,
-            total_withdrawals: 0,
-            cash_earnings: 0,
-            gcash_earnings: 0,
-            wallet_earnings: 0,
-            created_at: new Date(),
-            updated_at: new Date()
-          });
-
-        if (insertError) throw insertError;
+        await supabase.from("driver_wallets").insert({
+          driver_id: driverId,
+          balance: 0,
+          total_deposits: 0,
+          total_withdrawals: 0,
+          cash_earnings: 0,
+          gcash_earnings: 0,
+          wallet_earnings: 0,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
         
-        // Set default values
         setWalletData({
           balance: 0,
           total_deposits: 0,
@@ -184,18 +158,42 @@ export default function DriverWalletScreen({ navigation }) {
           gcash_earnings: 0,
           wallet_earnings: 0,
         });
-        setTotalEarnings(0);
       }
     } catch (err) {
       console.log("Error fetching wallet:", err.message);
     }
   };
 
+  const fetchPointsData = async () => {
+    try {
+      const { data: walletPayments, error: paymentsError } = await supabase
+        .from("bookings")
+        .select("points_used")
+        .eq("driver_id", driverId)
+        .eq("status", "completed")
+        .eq("payment_type", "wallet");
+
+      if (paymentsError) throw paymentsError;
+      
+      const pointsFromRides = walletPayments?.reduce((sum, b) => sum + (Number(b.points_used) || 0), 0) || 0;
+      const pointsValue = pointsFromRides * 0.1;
+      
+      setPointsData({
+        total_points_earned: pointsFromRides,
+        points_from_rides: pointsFromRides,
+        points_from_referrals: 0,
+        points_from_bonuses: 0,
+        points_value: pointsValue,
+      });
+      
+    } catch (err) {
+      console.log("Error fetching points data:", err.message);
+    }
+  };
+
   const fetchTransactions = async () => {
     try {
-      console.log("Fetching transactions for driver:", driverId);
-      
-      // Get completed bookings (earnings)
+      // Get completed bookings
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
         .select(`
@@ -204,10 +202,8 @@ export default function DriverWalletScreen({ navigation }) {
           created_at,
           pickup_location,
           dropoff_location,
-          status,
-          payment_method,
           payment_type,
-          distance_km
+          points_used
         `)
         .eq("driver_id", driverId)
         .eq("status", "completed")
@@ -215,27 +211,29 @@ export default function DriverWalletScreen({ navigation }) {
         .limit(50);
 
       if (bookingsError) throw bookingsError;
-      console.log("Bookings found:", bookings?.length || 0);
 
       // Format booking transactions
       const bookingTransactions = (bookings || []).map(b => {
-        const paymentMethod = b.payment_type || b.payment_method || "cash";
+        const paymentMethod = b.payment_type || "cash";
+        const pointsUsed = Number(b.points_used) || 0;
+        
+        let description = `${(b.pickup_location || "Pickup").split(",")[0]} → ${(b.dropoff_location || "Dropoff").split(",")[0]}`;
+        if (paymentMethod === "wallet" && pointsUsed > 0) {
+          description += ` (${pointsUsed} pts)`;
+        }
+        
         return {
           id: `booking-${b.id}`,
           type: "earning",
-          category: "trip",
           amount: Number(b.actual_fare) || 0,
-          description: `${(b.pickup_location || "Pickup").split(",")[0]} → ${(b.dropoff_location || "Dropoff").split(",")[0]}`,
+          description,
           date: b.created_at,
-          status: "completed",
-          paymentMethod: paymentMethod,
-          paymentIcon: paymentMethod === "gcash" ? "phone-portrait" : paymentMethod === "cash" ? "cash" : "wallet",
-          paymentColor: paymentMethod === "gcash" ? "#00579F" : paymentMethod === "cash" ? "#10B981" : "#183B5C",
-          distance: b.distance_km,
+          paymentMethod,
+          points: pointsUsed,
         };
       });
 
-      // Get transactions from transactions table
+      // Get other transactions
       const { data: transactions, error: transError } = await supabase
         .from("transactions")
         .select("*")
@@ -245,28 +243,26 @@ export default function DriverWalletScreen({ navigation }) {
         .limit(50);
 
       if (transError) throw transError;
-      console.log("Transactions found:", transactions?.length || 0);
 
       // Format transaction records
       const transactionItems = (transactions || []).map(t => {
         const metadata = t.metadata || {};
+        const pointsInvolved = metadata.points_used || 0;
+        
+        let description = t.type === "topup" ? "Added via GCash" :
+                         t.type === "withdrawal" ? `Withdrawn to ${metadata.method || "GCash"}` :
+                         t.type === "mission_bonus" ? "🏆 Weekly Mission Bonus" : 
+                         t.type === "points_earning" ? `⭐ Earned ${pointsInvolved} points` :
+                         t.description || t.type;
+        
         return {
           id: `trans-${t.id}`,
           type: t.type,
-          category: t.type === "topup" ? "balance" : t.type === "withdrawal" ? "balance" : "other",
           amount: t.type === "withdrawal" ? -Number(t.amount) : Number(t.amount),
-          description: t.type === "topup" ? `Added via ${metadata.method || "GCash"}` :
-                       t.type === "withdrawal" ? `Withdrawn to ${metadata.method || "GCash"}` :
-                       t.type === "mission_bonus" ? "🏆 Weekly Mission Bonus" : t.description || t.type,
+          description,
           date: t.created_at,
-          status: t.status || "completed",
           paymentMethod: metadata.method || "gcash",
-          paymentIcon: t.type === "topup" ? "arrow-up-outline" : 
-                       t.type === "withdrawal" ? "arrow-down-outline" :
-                       t.type === "mission_bonus" ? "trophy" : "card",
-          paymentColor: t.type === "topup" ? "#10B981" : 
-                        t.type === "withdrawal" ? "#EF4444" :
-                        t.type === "mission_bonus" ? "#F59E0B" : "#666",
+          points: pointsInvolved,
         };
       });
 
@@ -276,7 +272,6 @@ export default function DriverWalletScreen({ navigation }) {
         ...transactionItems
       ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-      console.log("Total transactions:", allTransactions.length);
       setRecentTransactions(allTransactions);
     } catch (err) {
       console.log("Error fetching transactions:", err.message);
@@ -290,43 +285,28 @@ export default function DriverWalletScreen({ navigation }) {
       startOfWeek.setDate(today.getDate() - today.getDay() + 1);
       startOfWeek.setHours(0, 0, 0, 0);
 
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(startOfWeek.getDate() + 7);
-
       const { data, error } = await supabase
         .from("bookings")
         .select("actual_fare, ride_completed_at")
         .eq("driver_id", driverId)
         .eq("status", "completed")
         .gte("ride_completed_at", startOfWeek.toISOString())
-        .lt("ride_completed_at", endOfWeek.toISOString())
         .order("ride_completed_at", { ascending: true });
 
       if (error) throw error;
 
       const dailyEarnings = [0, 0, 0, 0, 0, 0, 0];
-      let total = 0;
 
       data?.forEach(booking => {
         if (booking.ride_completed_at) {
           const date = new Date(booking.ride_completed_at);
           let dayIndex = date.getDay();
           dayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-          const amount = Number(booking.actual_fare) || 0;
-          dailyEarnings[dayIndex] += amount;
-          total += amount;
+          dailyEarnings[dayIndex] += Number(booking.actual_fare) || 0;
         }
       });
 
-      console.log("Weekly earnings:", dailyEarnings);
       setWeeklyEarnings(dailyEarnings);
-      
-      // Find peak day
-      const maxEarnings = Math.max(...dailyEarnings);
-      const maxIndex = dailyEarnings.indexOf(maxEarnings);
-      const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-      setPeakDay(days[maxIndex] || "");
-      setPeakEarnings(maxEarnings);
     } catch (err) {
       console.log("Error fetching weekly earnings:", err.message);
     }
@@ -350,20 +330,15 @@ export default function DriverWalletScreen({ navigation }) {
       const monthlyTotal = monthlyData?.reduce((sum, b) => sum + (Number(b.actual_fare) || 0), 0) || 0;
       setMonthlyEarnings(monthlyTotal);
 
-      // Get total trips and average fare
+      // Get total trips
       const { data: tripsData, error: tripsError } = await supabase
         .from("bookings")
-        .select("actual_fare")
+        .select("id")
         .eq("driver_id", driverId)
         .eq("status", "completed");
 
       if (tripsError) throw tripsError;
-
-      const tripCount = tripsData?.length || 0;
-      const totalFare = tripsData?.reduce((sum, b) => sum + (Number(b.actual_fare) || 0), 0) || 0;
-      
-      setTotalTrips(tripCount);
-      setAverageFare(tripCount > 0 ? totalFare / tripCount : 0);
+      setTotalTrips(tripsData?.length || 0);
 
     } catch (err) {
       console.log("Error fetching statistics:", err.message);
@@ -373,12 +348,7 @@ export default function DriverWalletScreen({ navigation }) {
   const handleWithdraw = () => {
     const amount = parseFloat(withdrawAmount);
     
-    if (!withdrawAmount || isNaN(amount) || amount <= 0) {
-      Alert.alert("Error", "Please enter a valid amount");
-      return;
-    }
-
-    if (amount < 100) {
+    if (!withdrawAmount || isNaN(amount) || amount < 100) {
       Alert.alert("Error", "Minimum withdrawal is ₱100");
       return;
     }
@@ -388,34 +358,25 @@ export default function DriverWalletScreen({ navigation }) {
       return;
     }
 
-    if (withdrawMethod === "gcash") {
-      if (!gcashNumber) {
-        Alert.alert("Error", "Please enter your GCash number");
-        return;
-      }
-      if (!/^09\d{9}$/.test(gcashNumber)) {
-        Alert.alert("Error", "Please enter a valid GCash number (11 digits starting with 09)");
-        return;
-      }
+    if (withdrawMethod === "gcash" && !/^09\d{9}$/.test(gcashNumber)) {
+      Alert.alert("Error", "Please enter a valid GCash number (11 digits starting with 09)");
+      return;
     }
 
     Alert.alert(
       "Confirm Withdrawal",
-      `Withdraw ₱${amount.toFixed(2)} from your balance to ${withdrawMethod === "gcash" ? `GCash (${gcashNumber})` : "Cash (Pick up at branch)"}?`,
+      `Withdraw ₱${amount.toFixed(2)} to ${withdrawMethod === "gcash" ? `GCash (${gcashNumber})` : "Cash (Pick up at branch)"}?`,
       [
         { text: "Cancel", style: "cancel" },
-        {
-          text: "Confirm",
-          onPress: () => processWithdrawal(amount),
-        },
+        { text: "Confirm", onPress: () => processWithdrawal(amount) },
       ]
     );
   };
 
   const processWithdrawal = async (amount) => {
     try {
-      // Update wallet balance
-      const { error: updateError } = await supabase
+      // Update wallet
+      await supabase
         .from("driver_wallets")
         .update({
           balance: walletData.balance - amount,
@@ -424,10 +385,8 @@ export default function DriverWalletScreen({ navigation }) {
         })
         .eq("driver_id", driverId);
 
-      if (updateError) throw updateError;
-
-      // Create transaction record
-      const { error: transactionError } = await supabase
+      // Create transaction
+      await supabase
         .from("transactions")
         .insert({
           user_id: driverId,
@@ -439,45 +398,14 @@ export default function DriverWalletScreen({ navigation }) {
           metadata: {
             method: withdrawMethod,
             gcash_number: withdrawMethod === "gcash" ? gcashNumber : null,
-            status: "pending"
           },
         });
 
-      if (transactionError) throw transactionError;
-
-      // Create notification
-      const { error: notifError } = await supabase
-        .from("notifications")
-        .insert({
-          user_id: driverId,
-          user_type: "driver",
-          type: "payment",
-          title: "Withdrawal Request Submitted",
-          message: `Your withdrawal request of ₱${amount.toFixed(2)} to ${withdrawMethod === "gcash" ? "GCash" : "Cash"} is being processed.`,
-          data: { 
-            amount, 
-            method: withdrawMethod,
-            gcash_number: withdrawMethod === "gcash" ? gcashNumber : null
-          },
-          created_at: new Date()
-        });
-
-      if (notifError) throw notifError;
-
-      // Update local state
-      const newBalance = walletData.balance - amount;
-      
-      Alert.alert(
-        "✅ Withdrawal Request Submitted", 
-        `Amount: ₱${amount.toFixed(2)}\nMethod: ${withdrawMethod === "gcash" ? "GCash" : "Cash"}\n\n` +
-        `Your request is being processed.`
-      );
+      Alert.alert("✅ Withdrawal Request Submitted", `Amount: ₱${amount.toFixed(2)} will be processed.`);
       
       setWithdrawModal(false);
       setWithdrawAmount("");
       setGcashNumber("");
-      
-      // Refresh data
       await loadWalletData();
     } catch (err) {
       console.log("Withdrawal error:", err.message);
@@ -487,34 +415,23 @@ export default function DriverWalletScreen({ navigation }) {
 
   const formatDate = (dateString) => {
     if (!dateString) return "";
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
     
-    try {
-      const date = new Date(dateString);
-      const now = new Date();
-      const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
-      
-      if (diffDays === 0) return "Today";
-      if (diffDays === 1) return "Yesterday";
-      if (diffDays < 7) return `${diffDays} days ago`;
-      return date.toLocaleDateString("en-PH", {
-        month: "short",
-        day: "numeric",
-        year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
-      });
-    } catch (e) {
-      return "";
-    }
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 7) return `${diffDays} days ago`;
+    return date.toLocaleDateString("en-PH", { month: "short", day: "numeric" });
   };
 
-  const getTransactionIcon = (type, paymentMethod, category) => {
-    if (type === "earning" || category === "trip") {
+  const getTransactionIcon = (type, paymentMethod) => {
+    if (type === "earning") {
       switch (paymentMethod) {
-        case "gcash":
-          return { name: "phone-portrait", color: "#00579F", bg: "#E6F0FF" };
-        case "cash":
-          return { name: "cash", color: "#10B981", bg: "#D1FAE5" };
-        default:
-          return { name: "wallet", color: "#183B5C", bg: "#E6E9F0" };
+        case "gcash": return { name: "phone-portrait", color: "#00579F", bg: "#E6F0FF" };
+        case "cash": return { name: "cash", color: "#10B981", bg: "#D1FAE5" };
+        case "wallet": return { name: "star", color: "#F59E0B", bg: "#FEF3C7" };
+        default: return { name: "wallet", color: "#183B5C", bg: "#E6E9F0" };
       }
     } else if (type === "topup") {
       return { name: "arrow-up-outline", color: "#10B981", bg: "#D1FAE5" };
@@ -523,9 +440,11 @@ export default function DriverWalletScreen({ navigation }) {
     } else if (type === "mission_bonus") {
       return { name: "trophy", color: "#F59E0B", bg: "#FEF3C7" };
     } else {
-      return { name: "card", color: "#EF4444", bg: "#FEE2E2" };
+      return { name: "star", color: "#F59E0B", bg: "#FEF3C7" };
     }
   };
+
+  const totalEarnings = walletData.cash_earnings + walletData.wallet_earnings;
 
   if (loading && !refreshing) {
     return (
@@ -539,41 +458,61 @@ export default function DriverWalletScreen({ navigation }) {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: "#F5F7FA" }}
-      contentContainerStyle={{ paddingBottom: 30 }}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       {/* Header */}
-      <View
-        style={{
-          backgroundColor: "#183B5C",
-          paddingTop: insets.top + 20,
-          paddingBottom: 30,
-          paddingHorizontal: 20,
-          borderBottomLeftRadius: 30,
-          borderBottomRightRadius: 30,
-        }}
-      >
-        <Pressable
-          onPress={() => navigation.goBack()}
-          style={{ position: "absolute", top: insets.top + 10, left: 20, zIndex: 10 }}
-        >
+      <View style={{
+        backgroundColor: "#183B5C",
+        paddingTop: insets.top + 20,
+        paddingBottom: 30,
+        paddingHorizontal: 20,
+        borderBottomLeftRadius: 30,
+        borderBottomRightRadius: 30,
+      }}>
+        <Pressable onPress={() => navigation.goBack()} style={{ position: "absolute", top: insets.top + 10, left: 20 }}>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </Pressable>
-
-        <Text style={{ fontSize: 24, fontWeight: "bold", color: "#FFF", marginTop: 20 }}>
-          My Wallet
-        </Text>
-        <Text style={{ fontSize: 14, color: "#FFB37A", marginTop: 5 }}>
-          {driverName || "Driver"}
-        </Text>
+        <Text style={{ fontSize: 24, fontWeight: "bold", color: "#FFF", marginTop: 20 }}>My Wallet</Text>
+        <Text style={{ fontSize: 14, color: "#FFB37A", marginTop: 5 }}>{driverName || "Driver"}</Text>
       </View>
 
-      {/* Balance Card */}
+      {/* Points Card */}
+      {pointsData.total_points_earned > 0 && (
+        <View style={{
+          marginHorizontal: 20,
+          marginTop: -20,
+          marginBottom: 15,
+          backgroundColor: "#FEF3C7",
+          borderRadius: 24,
+          padding: 20,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 12,
+          elevation: 5,
+          borderWidth: 1,
+          borderColor: "#F59E0B",
+        }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <View>
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Ionicons name="star" size={20} color="#F59E0B" />
+                <Text style={{ fontSize: 14, color: "#92400E", marginLeft: 5, fontWeight: "600" }}>Points Earned</Text>
+              </View>
+              <Text style={{ fontSize: 32, fontWeight: "bold", color: "#F59E0B" }}>
+                {pointsData.total_points_earned.toLocaleString()}
+              </Text>
+              <Text style={{ fontSize: 12, color: "#92400E", marginTop: 5 }}>
+                Value: ₱{pointsData.points_value.toFixed(2)}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* Main Balance Card */}
       <View style={{
         marginHorizontal: 20,
-        marginTop: -20,
         backgroundColor: "#FFF",
         borderRadius: 24,
         padding: 20,
@@ -583,136 +522,39 @@ export default function DriverWalletScreen({ navigation }) {
         shadowRadius: 12,
         elevation: 5,
       }}>
+        {/* Balance */}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <View>
-            <Text style={{ fontSize: 14, color: "#666", marginBottom: 5 }}>
-              Available Balance
-            </Text>
+            <Text style={{ fontSize: 14, color: "#666" }}>Available Balance</Text>
             <Text style={{ fontSize: 36, fontWeight: "bold", color: "#183B5C" }}>
               ₱{(walletData.balance || 0).toFixed(2)}
             </Text>
           </View>
-          <View style={{
-            backgroundColor: "#E6F7E6",
-            paddingHorizontal: 12,
-            paddingVertical: 6,
-            borderRadius: 20,
-          }}>
-            <Text style={{ fontSize: 12, color: "#2E7D32", fontWeight: "600" }}>
-              Can Withdraw
-            </Text>
-          </View>
-        </View>
-        
-        {/* Balance Breakdown */}
-        <View style={{
-          marginTop: 10,
-          flexDirection: "row",
-          justifyContent: "space-between",
-        }}>
-          <View>
-            <Text style={{ fontSize: 11, color: "#666" }}>Total Top-ups</Text>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#10B981" }}>
-              ₱{(walletData.total_deposits || 0).toFixed(2)}
-            </Text>
-          </View>
-          <View>
-            <Text style={{ fontSize: 11, color: "#666" }}>Total Withdrawn</Text>
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#EF4444" }}>
-              ₱{(walletData.total_withdrawals || 0).toFixed(2)}
-            </Text>
+          <View style={{ backgroundColor: "#E6F7E6", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}>
+            <Text style={{ fontSize: 12, color: "#2E7D32", fontWeight: "600" }}>Can Withdraw</Text>
           </View>
         </View>
 
-        {/* Earnings Section */}
-        <View style={{
-          marginTop: 20,
-          padding: 15,
-          backgroundColor: "#F9FAFB",
-          borderRadius: 16,
-        }}>
-          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
-            <Ionicons name="stats-chart" size={20} color="#183B5C" />
-            <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginLeft: 8 }}>
-              Total Earnings from Trips
-            </Text>
-          </View>
-          
-          <Text style={{ fontSize: 28, fontWeight: "bold", color: "#183B5C", marginBottom: 15 }}>
-            ₱{(totalEarnings || 0).toFixed(2)}
-          </Text>
-          
-          <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-            <View style={{ alignItems: "center" }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#10B981", marginRight: 4 }} />
-                <Text style={{ fontSize: 11, color: "#666" }}>Cash</Text>
-              </View>
-              <Text style={{ fontSize: 16, fontWeight: "600", color: "#10B981" }}>
-                ₱{(walletData.cash_earnings || 0).toFixed(0)}
-              </Text>
-            </View>
-
-            {/* <View style={{ alignItems: "center" }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#00579F", marginRight: 4 }} />
-                <Text style={{ fontSize: 11, color: "#666" }}>GCash</Text>
-              </View>
-              <Text style={{ fontSize: 16, fontWeight: "600", color: "#00579F" }}>
-                ₱{(walletData.gcash_earnings || 0).toFixed(0)}
-              </Text>
-            </View> */}
-
-            <View style={{ alignItems: "center" }}>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: "#183B5C", marginRight: 4 }} />
-                <Text style={{ fontSize: 11, color: "#666" }}>Wallet</Text>
-              </View>
-              <Text style={{ fontSize: 16, fontWeight: "600", color: "#183B5C" }}>
-                ₱{(walletData.wallet_earnings || 0).toFixed(0)}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Quick Stats */}
-        <View style={{
-          flexDirection: "row",
-          marginTop: 15,
-          paddingTop: 15,
-          borderTopWidth: 1,
-          borderTopColor: "#F3F4F6",
-        }}>
+        {/* Quick Stats Row */}
+        <View style={{ flexDirection: "row", marginTop: 20, paddingTop: 15, borderTopWidth: 1, borderTopColor: "#F3F4F6" }}>
           <View style={{ flex: 1, alignItems: "center" }}>
             <Text style={{ fontSize: 12, color: "#666" }}>Total Trips</Text>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>{totalTrips || 0}</Text>
-          </View>
-          <View style={{ flex: 1, alignItems: "center" }}>
-            <Text style={{ fontSize: 12, color: "#666" }}>Avg. Fare</Text>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
-              ₱{(averageFare || 0).toFixed(0)}
-            </Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>{totalTrips}</Text>
           </View>
           <View style={{ flex: 1, alignItems: "center" }}>
             <Text style={{ fontSize: 12, color: "#666" }}>This Month</Text>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
-              ₱{(monthlyEarnings || 0).toFixed(0)}
-            </Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>₱{(monthlyEarnings || 0).toFixed(0)}</Text>
+          </View>
+          <View style={{ flex: 1, alignItems: "center" }}>
+            <Text style={{ fontSize: 12, color: "#666" }}>Total Earnings</Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>₱{(totalEarnings || 0).toFixed(0)}</Text>
           </View>
         </View>
 
         {/* Action Buttons */}
         <View style={{ flexDirection: "row", marginTop: 20, gap: 10 }}>
           <Pressable
-            style={{
-              flex: 1,
-              backgroundColor: "#183B5C",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              flexDirection: "row",
-              justifyContent: "center",
-            }}
+            style={{ flex: 1, backgroundColor: "#183B5C", padding: 12, borderRadius: 12, alignItems: "center", flexDirection: "row", justifyContent: "center" }}
             onPress={() => setWithdrawModal(true)}
           >
             <Ionicons name="arrow-down-outline" size={18} color="#FFF" />
@@ -720,20 +562,8 @@ export default function DriverWalletScreen({ navigation }) {
           </Pressable>
           
           <Pressable
-            style={{
-              flex: 1,
-              backgroundColor: "#FFB37A",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              flexDirection: "row",
-              justifyContent: "center",
-            }}
-            onPress={() => Alert.alert(
-              "Top-up Feature",
-              "To add funds to your wallet, please visit our office or contact support.",
-              [{ text: "OK" }]
-            )}
+            style={{ flex: 1, backgroundColor: "#FFB37A", padding: 12, borderRadius: 12, alignItems: "center", flexDirection: "row", justifyContent: "center" }}
+            onPress={() => Alert.alert("Top-up", "Please visit our office to add funds.")}
           >
             <Ionicons name="arrow-up-outline" size={18} color="#183B5C" />
             <Text style={{ color: "#183B5C", fontWeight: "600", marginLeft: 5 }}>Top Up</Text>
@@ -742,250 +572,116 @@ export default function DriverWalletScreen({ navigation }) {
       </View>
 
       {/* Earnings Chart */}
-      <View style={{
-        marginHorizontal: 20,
-        marginTop: 20,
-        backgroundColor: "#FFF",
-        borderRadius: 24,
-        padding: 20,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-      }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
-          <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
-            Weekly Trip Earnings
-          </Text>
-          {peakEarnings > 0 && (
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Ionicons name="trending-up" size={16} color="#10B981" />
-              <Text style={{ fontSize: 12, color: "#666", marginLeft: 4 }}>
-                Peak: {peakDay || ""} (₱{(peakEarnings || 0).toFixed(0)})
-              </Text>
-            </View>
-          )}
-        </View>
-
+      <View style={{ marginHorizontal: 20, marginTop: 20, backgroundColor: "#FFF", borderRadius: 24, padding: 20 }}>
+        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>Weekly Earnings</Text>
         {weeklyEarnings.some(day => day > 0) ? (
           <LineChart
             data={{
-              labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-              datasets: [{
-                data: weeklyEarnings,
-                color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
-                strokeWidth: 2,
-              }],
+              labels: ["M", "T", "W", "T", "F", "S", "S"],
+              datasets: [{ data: weeklyEarnings }],
             }}
             width={screenWidth}
-            height={180}
+            height={160}
             yAxisLabel="₱"
             chartConfig={{
               backgroundColor: "#FFF",
               backgroundGradientFrom: "#FFF",
               backgroundGradientTo: "#FFF",
               decimalPlaces: 0,
-              color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
-              labelColor: (opacity = 1) => `rgba(0,0,0,${opacity})`,
+              color: () => `#183B5C`,
               style: { borderRadius: 16 },
-              propsForDots: { r: "4", strokeWidth: "2", stroke: "#FFB37A" },
             }}
             bezier
-            style={{ marginVertical: 8, borderRadius: 16 }}
+            style={{ borderRadius: 16 }}
           />
         ) : (
-          <View style={{ height: 180, justifyContent: "center", alignItems: "center" }}>
-            <Ionicons name="bar-chart-outline" size={40} color="#D1D5DB" />
-            <Text style={{ marginTop: 10, color: "#9CA3AF" }}>No trip earnings this week</Text>
+          <View style={{ height: 160, justifyContent: "center", alignItems: "center" }}>
+            <Text style={{ color: "#9CA3AF" }}>No earnings this week</Text>
           </View>
         )}
       </View>
 
-      {/* Payment Method Breakdown */}
-      <View style={{
-        marginHorizontal: 20,
-        marginTop: 20,
-        backgroundColor: "#FFF",
-        borderRadius: 24,
-        padding: 20,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-      }}>
-        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>
-          Payment Method Breakdown
-        </Text>
-        
-        <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
-          {/* Cash */}
-          <Pressable 
-            style={{ alignItems: "center", flex: 1 }}
-            onPress={() => Alert.alert(
-              "Cash Earnings", 
-              `Total Cash from Trips: ₱${(walletData.cash_earnings || 0).toFixed(2)}\n\nThis includes all cash payments collected directly from passengers.`
-            )}
-          >
-            <View style={{
-              width: 50,
-              height: 50,
-              borderRadius: 25,
-              backgroundColor: "#D1FAE5",
-              justifyContent: "center",
-              alignItems: "center",
-              marginBottom: 8,
-            }}>
-              <Ionicons name="cash" size={24} color="#10B981" />
-            </View>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#10B981" }}>
-              ₱{(walletData.cash_earnings || 0).toFixed(0)}
-            </Text>
-            <Text style={{ fontSize: 12, color: "#666" }}>Cash</Text>
-          </Pressable>
-
-          {/* GCash
-          <Pressable 
-            style={{ alignItems: "center", flex: 1 }}
-            onPress={() => Alert.alert(
-              "GCash Earnings", 
-              `Total GCash from Trips: ₱${(walletData.gcash_earnings || 0).toFixed(2)}\n\nThis includes all GCash payments from passengers.`
-            )}
-          >
-            <View style={{
-              width: 50,
-              height: 50,
-              borderRadius: 25,
-              backgroundColor: "#E6F0FF",
-              justifyContent: "center",
-              alignItems: "center",
-              marginBottom: 8,
-            }}>
-              <Ionicons name="phone-portrait" size={24} color="#00579F" />
-            </View>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#00579F" }}>
-              ₱{(walletData.gcash_earnings || 0).toFixed(0)}
-            </Text>
-            <Text style={{ fontSize: 12, color: "#666" }}>GCash</Text>
-          </Pressable> */}
-
-          {/* Wallet */}
-          <Pressable 
-            style={{ alignItems: "center", flex: 1 }}
-            onPress={() => Alert.alert(
-              "Wallet Payments", 
-              `Total Wallet from Trips: ₱${(walletData.wallet_earnings || 0).toFixed(2)}\n\nThis includes payments made from commuter's wallet balance.`
-            )}
-          >
-            <View style={{
-              width: 50,
-              height: 50,
-              borderRadius: 25,
-              backgroundColor: "#E6E9F0",
-              justifyContent: "center",
-              alignItems: "center",
-              marginBottom: 8,
-            }}>
-              <Ionicons name="wallet" size={24} color="#183B5C" />
-            </View>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
-              ₱{(walletData.wallet_earnings || 0).toFixed(0)}
-            </Text>
-            <Text style={{ fontSize: 12, color: "#666" }}>Wallet</Text>
-          </Pressable>
-        </View>
+{/* Earnings Breakdown */}
+<View style={{ marginHorizontal: 20, marginTop: 20, backgroundColor: "#FFF", borderRadius: 24, padding: 20 }}>
+  <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>Earnings Breakdown</Text>
+  <View style={{ flexDirection: "row", justifyContent: "space-around" }}>
+    
+    {/* Cash Earnings */}
+    <View style={{ alignItems: "center" }}>
+      <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: "#D1FAE5", justifyContent: "center", alignItems: "center" }}>
+        <Ionicons name="cash" size={24} color="#10B981" />
       </View>
+      <Text style={{ fontSize: 18, fontWeight: "bold", color: "#10B981", marginTop: 8 }}>
+        ₱{(walletData.cash_earnings || 0).toFixed(0)}
+      </Text>
+      <Text style={{ fontSize: 12, color: "#666" }}>Cash Payments</Text>
+    </View>
+
+    {/* Wallet Payments (Cash Value) */}
+    <View style={{ alignItems: "center" }}>
+      <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: "#E6F0FF", justifyContent: "center", alignItems: "center" }}>
+        <Ionicons name="wallet" size={24} color="#00579F" />
+      </View>
+      <Text style={{ fontSize: 18, fontWeight: "bold", color: "#00579F", marginTop: 8 }}>
+        ₱{(walletData.wallet_earnings || 0).toFixed(0)}
+      </Text>
+      <Text style={{ fontSize: 12, color: "#666" }}>Wallet Payments</Text>
+    </View>
+
+    {/* Points Earned (if may points) */}
+    {pointsData.points_from_rides > 0 && (
+      <View style={{ alignItems: "center" }}>
+        <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: "#FEF3C7", justifyContent: "center", alignItems: "center" }}>
+          <Ionicons name="star" size={24} color="#F59E0B" />
+        </View>
+        <Text style={{ fontSize: 18, fontWeight: "bold", color: "#F59E0B", marginTop: 8 }}>
+          {pointsData.points_from_rides}
+        </Text>
+        <Text style={{ fontSize: 12, color: "#666" }}>Points Earned</Text>
+        <Text style={{ fontSize: 10, color: "#F59E0B" }}>(₱{(pointsData.points_value || 0).toFixed(0)} value)</Text>
+      </View>
+    )}
+  </View>
+
+  {/* Explanation */}
+  <View style={{ marginTop: 15, padding: 10, backgroundColor: "#F9FAFB", borderRadius: 12 }}>
+    <Text style={{ fontSize: 12, color: "#4B5563" }}>
+      <Text style={{ fontWeight: "bold" }}>• Cash Payments:</Text> Direct cash from passengers{'\n'}
+      <Text style={{ fontWeight: "bold" }}>• Wallet Payments:</Text> Passengers paid using their wallet balance{'\n'}
+      {pointsData.points_from_rides > 0 && (
+        <><Text style={{ fontWeight: "bold" }}>• Points Earned:</Text> Bonus points from wallet payments (redeemable for rewards)</>
+      )}
+    </Text>
+  </View>
+</View>
 
       {/* Recent Transactions */}
-      <View style={{
-        marginHorizontal: 20,
-        marginTop: 20,
-        backgroundColor: "#FFF",
-        borderRadius: 24,
-        padding: 20,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 2,
-      }}>
-        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 15 }}>
-          <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
-            Recent Activity
-          </Text>
-          <Pressable onPress={() => {}}>
-            <Text style={{ fontSize: 12, color: "#183B5C" }}>See All</Text>
-          </Pressable>
-        </View>
-
-        {!recentTransactions || recentTransactions.length === 0 ? (
+      <View style={{ marginHorizontal: 20, marginTop: 20, backgroundColor: "#FFF", borderRadius: 24, padding: 20 }}>
+        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>Recent Activity</Text>
+        {recentTransactions.length === 0 ? (
           <View style={{ padding: 30, alignItems: "center" }}>
             <Ionicons name="receipt-outline" size={40} color="#D1D5DB" />
-            <Text style={{ marginTop: 10, color: "#9CA3AF", textAlign: "center" }}>
-              No transactions yet
-            </Text>
-            <Text style={{ fontSize: 12, color: "#D1D5DB", marginTop: 4 }}>
-              Complete a booking to see your earnings
-            </Text>
+            <Text style={{ marginTop: 10, color: "#9CA3AF" }}>No transactions yet</Text>
           </View>
         ) : (
-          recentTransactions.slice(0, 10).map((transaction, index) => {
-            const icon = getTransactionIcon(transaction.type, transaction.paymentMethod, transaction.category);
+          recentTransactions.slice(0, 5).map((transaction, index) => {
+            const icon = getTransactionIcon(transaction.type, transaction.paymentMethod);
             return (
-              <View
-                key={transaction.id || index}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingVertical: 12,
-                  borderBottomWidth: index === recentTransactions.slice(0, 10).length - 1 ? 0 : 1,
-                  borderBottomColor: "#F3F4F6",
-                }}
-              >
-                <View style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: icon.bg,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: 12,
-                }}>
+              <View key={transaction.id || index} style={{ flexDirection: "row", alignItems: "center", paddingVertical: 12, borderBottomWidth: index === 4 ? 0 : 1, borderBottomColor: "#F3F4F6" }}>
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: icon.bg, justifyContent: "center", alignItems: "center", marginRight: 12 }}>
                   <Ionicons name={icon.name} size={20} color={icon.color} />
                 </View>
-
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }} numberOfLines={1}>
-                    {transaction.description || "Transaction"}
+                  <Text style={{ fontSize: 14, fontWeight: "500", color: "#333" }} numberOfLines={1}>
+                    {transaction.description}
                   </Text>
-                  <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
-                    <Text style={{ fontSize: 11, color: "#9CA3AF" }}>
-                      {formatDate(transaction.date)}
-                    </Text>
-                    {transaction.category && (
-                      <>
-                        <Text style={{ fontSize: 11, color: "#9CA3AF", marginHorizontal: 4 }}>•</Text>
-                        <Text style={{ 
-                          fontSize: 11, 
-                          color: transaction.category === "balance" ? "#10B981" : 
-                                 transaction.category === "trip" ? "#183B5C" : "#F59E0B",
-                          textTransform: "capitalize"
-                        }}>
-                          {transaction.category}
-                        </Text>
-                      </>
-                    )}
-                  </View>
+                  <Text style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
+                    {formatDate(transaction.date)}
+                    {transaction.points > 0 && ` • ${transaction.points} pts`}
+                  </Text>
                 </View>
-
-                <Text style={{
-                  fontSize: 16,
-                  fontWeight: "bold",
-                  color: (transaction.amount || 0) > 0 ? "#10B981" : "#EF4444",
-                }}>
-                  {(transaction.amount || 0) > 0 ? "+" : ""}
-                  ₱{Math.abs(transaction.amount || 0).toFixed(2)}
+                <Text style={{ fontSize: 16, fontWeight: "bold", color: transaction.amount > 0 ? "#10B981" : "#EF4444" }}>
+                  {transaction.amount > 0 ? "+" : ""}₱{Math.abs(transaction.amount).toFixed(2)}
                 </Text>
               </View>
             );
@@ -993,24 +689,20 @@ export default function DriverWalletScreen({ navigation }) {
         )}
       </View>
 
+      {/* Info Card */}
+      <View style={{ marginHorizontal: 20, marginTop: 20, padding: 15, backgroundColor: "#F0F9FF", borderRadius: 16 }}>
+        <Text style={{ fontSize: 12, color: "#4B5563" }}>
+          • 💰 Balance: withdrawable funds from top-ups{'\n'}
+          • 💵 Cash earnings: collect directly from passengers{'\n'}
+          • ⭐ Points: 1 point = ₱0.10 value for rewards
+        </Text>
+      </View>
+      <View style={{ height: 30 }} />
+
       {/* Withdrawal Modal */}
-      <Modal
-        visible={withdrawModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setWithdrawModal(false)}
-      >
-        <View style={{
-          flex: 1,
-          backgroundColor: "rgba(0,0,0,0.5)",
-          justifyContent: "flex-end",
-        }}>
-          <View style={{
-            backgroundColor: "#FFF",
-            borderTopLeftRadius: 24,
-            borderTopRightRadius: 24,
-            padding: 20,
-          }}>
+      <Modal visible={withdrawModal} transparent animationType="slide">
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}>
+          <View style={{ backgroundColor: "#FFF", borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
               <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>Withdraw Funds</Text>
               <Pressable onPress={() => setWithdrawModal(false)}>
@@ -1018,118 +710,54 @@ export default function DriverWalletScreen({ navigation }) {
               </Pressable>
             </View>
 
-            <Text style={{ fontSize: 14, color: "#666", marginBottom: 5 }}>Available Balance</Text>
+            <Text style={{ fontSize: 14, color: "#666" }}>Available Balance</Text>
             <Text style={{ fontSize: 32, fontWeight: "bold", color: "#183B5C", marginBottom: 20 }}>
               ₱{(walletData.balance || 0).toFixed(2)}
             </Text>
 
-            {/* Note about earnings */}
-            <View style={{
-              backgroundColor: "#F0F9FF",
-              borderRadius: 12,
-              padding: 12,
-              marginBottom: 20,
-              borderWidth: 1,
-              borderColor: "#B2D9FF",
-            }}>
-              <Text style={{ fontSize: 12, color: "#3B82F6", fontWeight: "600" }}>
-                ℹ️ Note: You can only withdraw from your balance (top-ups).
-              </Text>
-            </View>
-
-            {/* Withdrawal Method */}
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 10 }}>
-              Select Method
-            </Text>
+            {/* Method Selection */}
             <View style={{ flexDirection: "row", marginBottom: 20, gap: 10 }}>
               <Pressable
-                style={[
-                  {
-                    flex: 1,
-                    padding: 12,
-                    borderRadius: 12,
-                    borderWidth: 2,
-                    alignItems: "center",
-                  },
-                  withdrawMethod === "gcash" 
-                    ? { borderColor: "#00579F", backgroundColor: "#E6F0FF" }
-                    : { borderColor: "#E5E7EB" }
-                ]}
+                style={[{
+                  flex: 1, padding: 12, borderRadius: 12, borderWidth: 2, alignItems: "center"
+                }, withdrawMethod === "gcash" ? { borderColor: "#00579F", backgroundColor: "#E6F0FF" } : { borderColor: "#E5E7EB" }]}
                 onPress={() => setWithdrawMethod("gcash")}
               >
                 <Ionicons name="phone-portrait" size={24} color={withdrawMethod === "gcash" ? "#00579F" : "#9CA3AF"} />
-                <Text style={{ 
-                  fontSize: 12, 
-                  marginTop: 4,
-                  color: withdrawMethod === "gcash" ? "#00579F" : "#666"
-                }}>GCash</Text>
+                <Text style={{ fontSize: 12, color: withdrawMethod === "gcash" ? "#00579F" : "#666" }}>GCash</Text>
               </Pressable>
-
               <Pressable
-                style={[
-                  {
-                    flex: 1,
-                    padding: 12,
-                    borderRadius: 12,
-                    borderWidth: 2,
-                    alignItems: "center",
-                  },
-                  withdrawMethod === "cash" 
-                    ? { borderColor: "#10B981", backgroundColor: "#D1FAE5" }
-                    : { borderColor: "#E5E7EB" }
-                ]}
+                style={[{
+                  flex: 1, padding: 12, borderRadius: 12, borderWidth: 2, alignItems: "center"
+                }, withdrawMethod === "cash" ? { borderColor: "#10B981", backgroundColor: "#D1FAE5" } : { borderColor: "#E5E7EB" }]}
                 onPress={() => setWithdrawMethod("cash")}
               >
                 <Ionicons name="cash" size={24} color={withdrawMethod === "cash" ? "#10B981" : "#9CA3AF"} />
-                <Text style={{ 
-                  fontSize: 12, 
-                  marginTop: 4,
-                  color: withdrawMethod === "cash" ? "#10B981" : "#666"
-                }}>Cash</Text>
+                <Text style={{ fontSize: 12, color: withdrawMethod === "cash" ? "#10B981" : "#666" }}>Cash</Text>
               </Pressable>
             </View>
 
             {/* GCash Number */}
             {withdrawMethod === "gcash" && (
               <View style={{ marginBottom: 20 }}>
-                <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>
-                  GCash Number
-                </Text>
+                <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>GCash Number</Text>
                 <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#E5E7EB",
-                    borderRadius: 12,
-                    padding: 12,
-                    fontSize: 16,
-                  }}
+                  style={{ borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 12, padding: 12 }}
                   placeholder="0917XXXXXXX"
                   keyboardType="phone-pad"
                   value={gcashNumber}
                   onChangeText={setGcashNumber}
                   maxLength={11}
                 />
-                <Text style={{ fontSize: 10, color: "#9CA3AF", marginTop: 4 }}>
-                  Enter 11-digit GCash number starting with 09
-                </Text>
               </View>
             )}
 
             {/* Amount */}
-            <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>
-              Amount (Min. ₱100)
-            </Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>Amount (Min. ₱100)</Text>
             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 20 }}>
               <Text style={{ fontSize: 24, fontWeight: "bold", color: "#333", marginRight: 8 }}>₱</Text>
               <TextInput
-                style={{
-                  flex: 1,
-                  borderWidth: 1,
-                  borderColor: "#E5E7EB",
-                  borderRadius: 12,
-                  padding: 12,
-                  fontSize: 16,
-                }}
+                style={{ flex: 1, borderWidth: 1, borderColor: "#E5E7EB", borderRadius: 12, padding: 12 }}
                 placeholder="0.00"
                 keyboardType="numeric"
                 value={withdrawAmount}
@@ -1139,18 +767,9 @@ export default function DriverWalletScreen({ navigation }) {
 
             {/* Quick Amounts */}
             <View style={{ flexDirection: "row", marginBottom: 20, gap: 8 }}>
-              {[100, 500, 1000, 2000].map((amount) => (
-                <Pressable
-                  key={amount}
-                  style={{
-                    flex: 1,
-                    padding: 8,
-                    borderRadius: 8,
-                    backgroundColor: "#F3F4F6",
-                    alignItems: "center",
-                  }}
-                  onPress={() => setWithdrawAmount(amount.toString())}
-                >
+              {[100, 500, 1000, 2000].map(amount => (
+                <Pressable key={amount} style={{ flex: 1, padding: 8, backgroundColor: "#F3F4F6", borderRadius: 8, alignItems: "center" }}
+                  onPress={() => setWithdrawAmount(amount.toString())}>
                   <Text style={{ fontSize: 12, color: "#333" }}>₱{amount}</Text>
                 </Pressable>
               ))}
@@ -1163,62 +782,20 @@ export default function DriverWalletScreen({ navigation }) {
                 padding: 16,
                 borderRadius: 12,
                 alignItems: "center",
-                opacity: !withdrawAmount || parseFloat(withdrawAmount) < 100 || parseFloat(withdrawAmount) > (walletData.balance || 0) ? 0.5 : 1,
+                opacity: !withdrawAmount || parseFloat(withdrawAmount) < 100 || parseFloat(withdrawAmount) > walletData.balance ? 0.5 : 1,
               }}
               onPress={handleWithdraw}
-              disabled={!withdrawAmount || parseFloat(withdrawAmount) < 100 || parseFloat(withdrawAmount) > (walletData.balance || 0)}
+              disabled={!withdrawAmount || parseFloat(withdrawAmount) < 100 || parseFloat(withdrawAmount) > walletData.balance}
             >
               <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
                 Withdraw ₱{withdrawAmount ? parseFloat(withdrawAmount).toFixed(2) : "0.00"}
               </Text>
             </Pressable>
-
-            {/* Terms */}
-            <Text style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center", marginTop: 15 }}>
-              Withdrawals to GCash are processed within 24 hours.
-              {"\n"}Cash withdrawals are available for pick up at our office.
-            </Text>
           </View>
         </View>
       </Modal>
-
-      {/* Info Card */}
-      <View style={{
-        marginHorizontal: 20,
-        marginTop: 20,
-        padding: 15,
-        backgroundColor: "#F0F9FF",
-        borderRadius: 16,
-        borderWidth: 1,
-        borderColor: "#B2D9FF",
-      }}>
-        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
-          <Ionicons name="information-circle" size={20} color="#3B82F6" />
-          <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginLeft: 8 }}>
-            Understanding Your Wallet
-          </Text>
-        </View>
-        <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • 💰 **Balance** comes from your top-ups/cash in
-        </Text>
-        <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • 💵 **Cash Earnings** from trips - collect directly
-        </Text>
-        <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • 📱 **GCash Earnings** from trips - auto-added
-        </Text>
-        <Text style={{ fontSize: 12, color: "#4B5563", marginBottom: 5 }}>
-          • 💳 **Wallet Earnings** from commuter wallet payments
-        </Text>
-        <Text style={{ fontSize: 12, color: "#4B5563" }}>
-          • 💰 You can only withdraw from your Balance (top-ups)
-        </Text>
-      </View>
-
-      {/* Footer Space */}
-      <View style={{ height: 20 }} />
     </ScrollView>
   );
 }
 
-// Gcash
+// Points
