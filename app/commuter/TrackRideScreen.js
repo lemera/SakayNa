@@ -27,6 +27,11 @@ export default function TrackRide({ navigation, route }) {
   const isFocused = useIsFocused();
   const mapRef = useRef(null);
   const scanTimeoutRef = useRef(null);
+  const pointsAwardedRef = useRef(false);
+  const subscriptionRetryRef = useRef(null);
+  const statusCheckIntervalRef = useRef(null);
+  const completionAlertShownRef = useRef(false); // NEW: Prevent duplicate completion alerts
+  const pointsAlertShownRef = useRef(false); // NEW: Prevent duplicate points alerts
   
   // Get params with fallback
   const [bookingId, setBookingId] = useState(route.params?.bookingId || null);
@@ -73,21 +78,42 @@ export default function TrackRide({ navigation, route }) {
   const [potentialPoints, setPotentialPoints] = useState(0);
   const [pointsConfig, setPointsConfig] = useState({
     cashRate: 0.05,
-    walletRate: 0.10,
+    walletRate: 0.5,
     minFare: 20,
     rounding: 'floor'
   });
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
-  // Cleanup scan timeout on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (scanTimeoutRef.current) {
         clearTimeout(scanTimeoutRef.current);
       }
+      if (subscriptionRetryRef.current) {
+        clearTimeout(subscriptionRetryRef.current);
+      }
+      if (statusCheckIntervalRef.current) {
+        clearInterval(statusCheckIntervalRef.current);
+      }
     };
   }, []);
+
+  // Reset refs when screen focuses
+  useFocusEffect(
+    React.useCallback(() => {
+      pointsAwardedRef.current = false;
+      completionAlertShownRef.current = false;
+      pointsAlertShownRef.current = false;
+      
+      return () => {
+        pointsAwardedRef.current = false;
+        completionAlertShownRef.current = false;
+        pointsAlertShownRef.current = false;
+      };
+    }, [])
+  );
 
   // Fetch points configuration
   const fetchPointsConfig = async () => {
@@ -123,6 +149,7 @@ export default function TrackRide({ navigation, route }) {
         }
       });
       setPointsConfig(config);
+      console.log("✅ Points config loaded:", config);
     } catch (err) {
       console.log("❌ Error fetching points config:", err);
     }
@@ -152,60 +179,344 @@ export default function TrackRide({ navigation, route }) {
     return points;
   };
 
-  // Fetch points earned for completed booking - FIXED to show points for both payment types
-  const fetchPointsEarnedForBooking = async () => {
-    if (!bookingId || status !== "completed" || !commuterId) return;
+  // Award points for completed ride
+  const awardPointsForCompletedRide = async (completedBooking) => {
+    console.log("🎯 awardPointsForCompletedRide called with:", {
+      bookingId: completedBooking?.id,
+      commuterId,
+      fare: completedBooking?.fare,
+      paymentType: completedBooking?.payment_type
+    });
+    
+    // Get current commuter ID from state or AsyncStorage
+    let currentCommuterId = commuterId;
+    
+    if (!currentCommuterId) {
+      try {
+        const userId = await AsyncStorage.getItem("user_id");
+        if (userId) {
+          currentCommuterId = userId;
+          setCommuterId(userId);
+          console.log("✅ Got commuterId from AsyncStorage:", userId);
+        } else {
+          console.log("❌ No commuter ID found in AsyncStorage");
+          return false;
+        }
+      } catch (err) {
+        console.log("❌ Error getting commuter ID:", err);
+        return false;
+      }
+    }
+    
+    if (!completedBooking || !completedBooking.id || !currentCommuterId) {
+      console.log("❌ Missing required data for awarding points", { 
+        hasBooking: !!completedBooking, 
+        hasId: completedBooking?.id, 
+        hasCommuterId: !!currentCommuterId 
+      });
+      return false;
+    }
+
+    // Prevent duplicate awards
+    if (pointsAwardedRef.current) {
+      console.log("⚠️ Points already being awarded, skipping duplicate call");
+      return false;
+    }
+
+    try {
+      pointsAwardedRef.current = true;
+
+      // Check if points were already awarded
+      const { data: existingPoints, error: checkError } = await supabase
+        .from("commuter_points_history")
+        .select("id, points")
+        .eq("source_id", completedBooking.id)
+        .eq("commuter_id", currentCommuterId)
+        .eq("type", "earned")
+        .maybeSingle();
+
+      if (checkError) {
+        console.log("❌ Error checking existing points:", checkError);
+        pointsAwardedRef.current = false;
+        return false;
+      }
+
+      if (existingPoints) {
+        console.log("✅ Points already awarded for this booking:", existingPoints);
+        setPointsEarned(existingPoints.points);
+        
+        // Also fetch the current balance
+        const { data: wallet } = await supabase
+          .from("commuter_wallets")
+          .select("points")
+          .eq("commuter_id", currentCommuterId)
+          .single();
+        
+        if (wallet) {
+          setPointsBalance(wallet.points);
+        }
+        
+        pointsAwardedRef.current = false;
+        return true;
+      }
+
+      // Calculate points
+      const fare = completedBooking.fare || 0;
+      console.log(`💰 Fare: ₱${fare}, Min Fare: ₱${pointsConfig.minFare}`);
+      
+      if (fare < pointsConfig.minFare) {
+        console.log(`ℹ️ Fare ₱${fare} below minimum ₱${pointsConfig.minFare} - no points awarded`);
+        setPointsEarned(0);
+        pointsAwardedRef.current = false;
+        return false;
+      }
+
+      const rate = completedBooking.payment_type === 'wallet' ? pointsConfig.walletRate : pointsConfig.cashRate;
+      
+      // Use the configured rounding method
+      let pointsToAward;
+      switch(pointsConfig.rounding) {
+        case 'ceil':
+          pointsToAward = Math.ceil(fare * rate);
+          break;
+        case 'round':
+          pointsToAward = Math.round(fare * rate);
+          break;
+        default: // floor
+          pointsToAward = Math.floor(fare * rate);
+      }
+
+      console.log(`⭐ Points calculation: ${fare} × ${rate} = ${pointsToAward} points`);
+
+      if (pointsToAward <= 0) {
+        console.log("ℹ️ No points to award (calculated to 0)");
+        setPointsEarned(0);
+        pointsAwardedRef.current = false;
+        return false;
+      }
+
+      // Get or create wallet
+      let { data: wallet, error: walletError } = await supabase
+        .from("commuter_wallets")
+        .select("*")
+        .eq("commuter_id", currentCommuterId)
+        .maybeSingle();
+
+      if (walletError) {
+        console.log("❌ Error fetching wallet:", walletError);
+        pointsAwardedRef.current = false;
+        return false;
+      }
+
+      let newPointsBalance;
+
+      if (!wallet) {
+        // Create new wallet
+        console.log("📝 Creating new wallet for commuter:", currentCommuterId);
+        const { data: newWallet, error: createError } = await supabase
+          .from("commuter_wallets")
+          .insert({
+            commuter_id: currentCommuterId,
+            points: pointsToAward,
+            balance: 0,
+            created_at: new Date(),
+            updated_at: new Date()
+          })
+          .select()
+          .single();
+
+        if (createError) {
+          console.log("❌ Error creating wallet:", createError);
+          pointsAwardedRef.current = false;
+          return false;
+        }
+
+        newPointsBalance = pointsToAward;
+        console.log("✅ Created new wallet with points:", newPointsBalance);
+      } else {
+        // Update existing wallet
+        newPointsBalance = (wallet.points || 0) + pointsToAward;
+        console.log(`💰 Wallet before: ${wallet.points}, after: ${newPointsBalance}`);
+        
+        const { error: updateError } = await supabase
+          .from("commuter_wallets")
+          .update({
+            points: newPointsBalance,
+            updated_at: new Date()
+          })
+          .eq("commuter_id", currentCommuterId);
+
+        if (updateError) {
+          console.log("❌ Error updating wallet:", updateError);
+          pointsAwardedRef.current = false;
+          return false;
+        }
+
+        console.log("✅ Wallet updated successfully");
+      }
+
+      // Record in points history
+      const sourceType = completedBooking.payment_type === 'wallet' ? 'trip_wallet' : 'trip_cash';
+      
+      const { error: historyError } = await supabase
+        .from("commuter_points_history")
+        .insert({
+          commuter_id: currentCommuterId,
+          points: pointsToAward,
+          type: 'earned',
+          source: sourceType,
+          source_id: completedBooking.id,
+          description: `Earned ${pointsToAward} points from trip to ${completedBooking.dropoff_location?.split(',')[0] || 'destination'}`,
+          created_at: new Date()
+        });
+
+      if (historyError) {
+        console.log("❌ Error recording history:", historyError);
+      } else {
+        console.log("✅ Points history recorded");
+      }
+
+      // Record conversion log for non-wallet payments
+      if (completedBooking.payment_type !== 'wallet') {
+        const { error: conversionError } = await supabase
+          .from("points_conversion_logs")
+          .insert({
+            commuter_id: currentCommuterId,
+            booking_id: completedBooking.id,
+            points_converted: pointsToAward,
+            amount_credited: pointsToAward * 0.1,
+            conversion_rate: rate,
+            created_at: new Date()
+          });
+
+        if (conversionError) {
+          console.log("❌ Error recording points conversion:", conversionError);
+        } else {
+          console.log("✅ Points conversion logged");
+        }
+      }
+
+      // Update local state
+      setPointsBalance(newPointsBalance);
+      setPointsEarned(pointsToAward);
+
+      console.log(`✅ SUCCESS: Awarded ${pointsToAward} points. New balance: ${newPointsBalance}`);
+      
+      // Show success message only once
+      if (!pointsAlertShownRef.current && pointsToAward > 0) {
+        pointsAlertShownRef.current = true;
+        Alert.alert(
+          "⭐ Points Earned!",
+          `You earned ${pointsToAward} points for this ride!\n\nTotal points: ${newPointsBalance}`,
+          [{ text: "Awesome!" }]
+        );
+      }
+
+      pointsAwardedRef.current = false;
+      return true;
+
+    } catch (err) {
+      console.log("❌ Error in awardPointsForCompletedRide:", err);
+      pointsAwardedRef.current = false;
+      return false;
+    }
+  };
+
+  // Fetch points earned for completed booking
+  const fetchPointsEarnedForBooking = async (retryCount = 0) => {
+    // Check if we have both IDs
+    let currentBookingId = bookingId;
+    let currentCommuterId = commuterId;
+    
+    if (!currentBookingId) {
+      console.log("⚠️ No bookingId available for fetchPointsEarnedForBooking");
+      if (route.params?.bookingId) {
+        currentBookingId = route.params.bookingId;
+        console.log("✅ Using bookingId from route params:", currentBookingId);
+      } else {
+        console.log("❌ No bookingId found anywhere");
+        return;
+      }
+    }
+    
+    if (!currentCommuterId) {
+      console.log("⚠️ No commuterId available for fetchPointsEarnedForBooking");
+      try {
+        const userId = await AsyncStorage.getItem("user_id");
+        if (userId) {
+          currentCommuterId = userId;
+          setCommuterId(userId);
+          console.log("✅ Using commuterId from AsyncStorage:", userId);
+        } else {
+          console.log("❌ No commuterId found in AsyncStorage");
+          return;
+        }
+      } catch (err) {
+        console.log("❌ Error getting commuterId from AsyncStorage:", err);
+        return;
+      }
+    }
+    
+    console.log("🔍 Fetching points earned for booking:", { 
+      bookingId: currentBookingId, 
+      commuterId: currentCommuterId 
+    });
     
     try {
-      console.log("🔍 Fetching points earned for booking:", bookingId);
+      // First try commuter_points_history
+      const { data: historyData, error: historyError } = await supabase
+        .from("commuter_points_history")
+        .select("points, description, source, created_at")
+        .eq("source_id", currentBookingId)
+        .eq("commuter_id", currentCommuterId)
+        .eq("type", "earned")
+        .in("source", ["trip_cash", "trip_wallet", "trip"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
       
-      // Try points_conversion_logs first
-      const { data, error } = await supabase
+      if (!historyError && historyData) {
+        console.log("✅ Found points in history:", historyData);
+        setPointsEarned(historyData.points);
+        
+        if (historyData.source === 'trip_wallet') {
+          setPointsEarningRate(0.10);
+        } else {
+          setPointsEarningRate(0.05);
+        }
+        return;
+      }
+      
+      // Try points_conversion_logs as backup
+      const { data: conversionData, error: conversionError } = await supabase
         .from("points_conversion_logs")
         .select("points_converted, conversion_rate")
-        .eq("booking_id", bookingId)
-        .eq("commuter_id", commuterId)
+        .eq("booking_id", currentBookingId)
+        .eq("commuter_id", currentCommuterId)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (error) throw error;
-      
-      if (data && data.points_converted > 0) {
-        console.log("✅ Found points in conversion logs:", data);
-        setPointsEarned(data.points_converted);
-        setPointsEarningRate(data.conversion_rate);
-      } else {
-        // Fallback to commuter_points_history
-        console.log("🔄 Checking commuter_points_history...");
-        const { data: historyData, error: historyError } = await supabase
-          .from("commuter_points_history")
-          .select("points, description, source")
-          .eq("source_id", bookingId)
-          .eq("commuter_id", commuterId)
-          .eq("type", "earned")
-          .in("source", ["trip", "trip_cash", "trip_wallet"])
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        
-        if (!historyError && historyData) {
-          console.log("✅ Found points in history:", historyData);
-          setPointsEarned(historyData.points);
-          // Determine rate from description or source
-          if (historyData.source === 'trip_wallet' || historyData.description?.includes('wallet')) {
-            setPointsEarningRate(0.10);
-          } else {
-            setPointsEarningRate(0.05);
-          }
-        } else {
-          console.log("ℹ️ No points found for this booking");
-          setPointsEarned(0);
-        }
+      if (!conversionError && conversionData) {
+        console.log("✅ Found points in conversion logs:", conversionData);
+        setPointsEarned(conversionData.points_converted);
+        setPointsEarningRate(conversionData.conversion_rate);
+        return;
       }
+      
+      console.log("ℹ️ No points record found in database");
+      setPointsEarned(0);
     } catch (err) {
       console.log("❌ Error fetching points earned:", err);
-      setPointsEarned(0);
+      
+      if (retryCount < 3) {
+        console.log(`🔄 Retrying fetchPointsEarnedForBooking (attempt ${retryCount + 1}/3)`);
+        setTimeout(() => {
+          fetchPointsEarnedForBooking(retryCount + 1);
+        }, 1000 * (retryCount + 1));
+      } else {
+        setPointsEarned(0);
+      }
     }
   };
 
@@ -214,7 +525,6 @@ export default function TrackRide({ navigation, route }) {
     React.useCallback(() => {
       console.log("🎯 TrackRide focused - resetting state");
       
-      // Clear previous state
       setBooking(null);
       setDriver(null);
       setDriverLocation(null);
@@ -225,15 +535,12 @@ export default function TrackRide({ navigation, route }) {
       setRouteCoordinates([]);
       setTripRouteCoordinates([]);
       setDriverETA(null);
-      setShowScanner(false);
+      setShowScanner(false); // IMPORTANT: Ensure scanner is hidden
       setScanned(false);
       setPaymentSuccess(false);
       setPointsEarned(null);
       
-      // Fetch points configuration
       fetchPointsConfig();
-      
-      // Check for active booking
       checkForActiveBooking();
       
       return () => {
@@ -244,6 +551,12 @@ export default function TrackRide({ navigation, route }) {
         setShowScanner(false);
         if (scanTimeoutRef.current) {
           clearTimeout(scanTimeoutRef.current);
+        }
+        if (subscriptionRetryRef.current) {
+          clearTimeout(subscriptionRetryRef.current);
+        }
+        if (statusCheckIntervalRef.current) {
+          clearInterval(statusCheckIntervalRef.current);
         }
       };
     }, [])
@@ -256,23 +569,141 @@ export default function TrackRide({ navigation, route }) {
     }
   }, [booking, pointsConfig]);
 
-  // Fetch points earned when booking is completed
+  // FIXED: Periodic status check for real-time updates (every 2 seconds)
   useEffect(() => {
-    if (status === "completed" && bookingId && commuterId) {
-      // Add a small delay to ensure database has updated
-      const timer = setTimeout(() => {
-        fetchPointsEarnedForBooking();
-      }, 1000);
-      
-      return () => clearTimeout(timer);
+    if (!bookingId || !commuterId || showCompletedUI) return;
+
+    // Clear existing interval
+    if (statusCheckIntervalRef.current) {
+      clearInterval(statusCheckIntervalRef.current);
     }
-  }, [status, bookingId, commuterId]);
+
+    // Set up interval to check booking status
+    statusCheckIntervalRef.current = setInterval(async () => {
+      try {
+        console.log("⏰ Checking booking status for real-time updates:", bookingId);
+        const { data, error } = await supabase
+          .from("bookings")
+          .select(`
+            status, 
+            driver_arrived_at, 
+            ride_started_at, 
+            fare, 
+            payment_type, 
+            dropoff_location,
+            payment_status,
+            points_used,
+            ride_completed_at
+          `)
+          .eq("id", bookingId)
+          .single();
+
+        if (error) throw error;
+
+        // Update driver arrived status
+        if (data.driver_arrived_at && !driverArrived) {
+          console.log("📍 Driver has arrived at pickup! (periodic check)");
+          setDriverArrived(true);
+        }
+
+        // Update ride started status
+        if (data.ride_started_at && !rideStarted) {
+          console.log("🚗 Ride has started! (periodic check)");
+          setRideStarted(true);
+          setDriverArrived(false);
+        }
+
+        // Update booking with latest fare from database
+        if (data.fare && booking?.fare !== data.fare) {
+          console.log(`💰 Fare updated from database: ₱${data.fare}`);
+          setBooking(prev => ({
+            ...prev,
+            fare: data.fare,
+            payment_type: data.payment_type,
+            payment_status: data.payment_status,
+            points_used: data.points_used
+          }));
+        }
+
+        // Check if completed
+        if (data.status === "completed" && status !== "completed") {
+          console.log("🎉 Detected completed status via periodic check!");
+          
+          // IMPORTANT: Hide scanner immediately when trip completes
+          setShowScanner(false);
+          setScanned(false);
+          setProcessingPayment(false);
+          
+          setStatus(data.status);
+          setShowCompletedUI(true);
+          setRideStarted(false);
+          setDriverArrived(false);
+          
+          if (locationSubscription) {
+            locationSubscription.remove();
+          }
+          
+          // Award points if not already awarded
+          if (!pointsAwardedRef.current) {
+            const { data: existingPoints } = await supabase
+              .from("commuter_points_history")
+              .select("id")
+              .eq("source_id", bookingId)
+              .eq("commuter_id", commuterId)
+              .eq("type", "earned")
+              .maybeSingle();
+
+            if (!existingPoints && data.fare >= pointsConfig.minFare) {
+              await awardPointsForCompletedRide({
+                id: bookingId,
+                fare: data.fare,
+                payment_type: data.payment_type,
+                dropoff_location: data.dropoff_location
+              });
+            } else {
+              fetchPointsEarnedForBooking();
+            }
+          }
+          
+          // Show completion alert only once
+          if (!completionAlertShownRef.current) {
+            completionAlertShownRef.current = true;
+            Alert.alert(
+              "🎉 Trip Completed!",
+              "You have reached your destination. Thank you for riding with us!",
+              [
+                { 
+                  text: "Rate Driver", 
+                  onPress: () => navigation.replace("RateRide", { 
+                    bookingId, 
+                    driverId 
+                  })
+                },
+                {
+                  text: "Later",
+                  style: "cancel",
+                  onPress: () => navigation.goBack()
+                }
+              ]
+            );
+          }
+        }
+      } catch (err) {
+        console.log("❌ Error in status check interval:", err);
+      }
+    }, 2000);
+
+    return () => {
+      if (statusCheckIntervalRef.current) {
+        clearInterval(statusCheckIntervalRef.current);
+      }
+    };
+  }, [bookingId, commuterId, status, showCompletedUI, driverArrived, rideStarted, pointsConfig.minFare, booking?.fare]);
 
   const checkForActiveBooking = async () => {
     try {
       setLoading(true);
       
-      // Get user ID from AsyncStorage (your custom OTP auth)
       const id = await AsyncStorage.getItem("user_id");
       
       if (!id) {
@@ -285,25 +716,24 @@ export default function TrackRide({ navigation, route }) {
       console.log("✅ User ID from AsyncStorage:", id);
       setCommuterId(id);
 
-      // Fetch commuter points balance
       await fetchPointsBalance(id);
 
-      // First, check if there's a booking ID from params
       if (route.params?.bookingId) {
         console.log("📦 Using booking from params:", route.params.bookingId);
         setBookingId(route.params.bookingId);
         setDriverId(route.params.driverId);
-        
-        // Fetch this specific booking
         await fetchBookingDetails(route.params.bookingId);
+        
+        setTimeout(() => {
+          fetchPointsEarnedForBooking();
+        }, 1000);
+        
         setLoading(false);
         return;
       }
 
-      // Otherwise, look for any ACCEPTED booking
-      console.log("🔍 Looking for active booking for commuter:", id);
-      
-      const { data, error } = await supabase
+      // First check for active booking
+      const { data: activeData, error: activeError } = await supabase
         .from("bookings")
         .select(`
           id,
@@ -325,7 +755,8 @@ export default function TrackRide({ navigation, route }) {
           pickup_details,
           dropoff_details,
           payment_type,
-          payment_status
+          payment_status,
+          points_used
         `)
         .eq("commuter_id", id)
         .eq("status", "accepted")
@@ -333,47 +764,41 @@ export default function TrackRide({ navigation, route }) {
         .limit(1)
         .maybeSingle();
 
-      if (error) throw error;
+      if (activeError) throw activeError;
 
-      if (data) {
-        console.log("✅ Found active booking:", data);
-        setBookingId(data.id);
-        setDriverId(data.driver_id);
-        setBooking(data);
-        setStatus(data.status);
+      if (activeData) {
+        console.log("✅ Found active booking:", activeData);
+        setBookingId(activeData.id);
+        setDriverId(activeData.driver_id);
+        setBooking(activeData);
+        setStatus(activeData.status);
         
-        // Check driver arrival status
-        if (data.driver_arrived_at) {
-          console.log("✅ Driver has arrived");
+        if (activeData.driver_arrived_at) {
           setDriverArrived(true);
         }
         
-        // Check if ride has started
-        if (data.ride_started_at) {
-          console.log("✅ Ride has started");
+        if (activeData.ride_started_at) {
           setRideStarted(true);
           setDriverArrived(false);
         }
         
-        // Fetch driver details
-        if (data.driver_id) {
-          fetchDriverDetails(data.driver_id);
+        if (activeData.driver_id) {
+          fetchDriverDetails(activeData.driver_id);
         }
         
-        // Calculate trip route
-        if (data.pickup_latitude && data.pickup_longitude && 
-            data.dropoff_latitude && data.dropoff_longitude) {
+        if (activeData.pickup_latitude && activeData.pickup_longitude && 
+            activeData.dropoff_latitude && activeData.dropoff_longitude) {
           calculateTripRoute(
-            { latitude: data.pickup_latitude, longitude: data.pickup_longitude },
-            { latitude: data.dropoff_latitude, longitude: data.dropoff_longitude }
+            { latitude: activeData.pickup_latitude, longitude: activeData.pickup_longitude },
+            { latitude: activeData.dropoff_latitude, longitude: activeData.dropoff_longitude }
           );
         }
         
         setNoRideAvailable(false);
         setShowCompletedUI(false);
       } else {
-        // Check for any completed booking to show summary
-        const { data: completedData } = await supabase
+        // Check for completed booking
+        const { data: completedData, error: completedError } = await supabase
           .from("bookings")
           .select(`
             id,
@@ -395,10 +820,12 @@ export default function TrackRide({ navigation, route }) {
             points_used
           `)
           .eq("commuter_id", id)
-          .in("status", ["completed", "cancelled"])
+          .eq("status", "completed")
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
+
+        if (completedError) throw completedError;
 
         if (completedData) {
           console.log("📊 Found completed booking:", completedData);
@@ -413,14 +840,27 @@ export default function TrackRide({ navigation, route }) {
             fetchDriverDetails(completedData.driver_id);
           }
           
-          // Fetch points for this completed booking
-          setTimeout(() => {
-            if (commuterId) {
+          // Check and award points if needed
+          setTimeout(async () => {
+            const { data: existingPoints } = await supabase
+              .from("commuter_points_history")
+              .select("points")
+              .eq("source_id", completedData.id)
+              .eq("commuter_id", id)
+              .eq("type", "earned")
+              .maybeSingle();
+            
+            if (!existingPoints && completedData.fare >= pointsConfig.minFare) {
+              console.log("🔄 Awarding points for completed booking found in check");
+              await awardPointsForCompletedRide(completedData);
+            } else if (existingPoints) {
+              console.log("✅ Points already awarded:", existingPoints);
+              setPointsEarned(existingPoints.points);
+            } else {
               fetchPointsEarnedForBooking();
             }
           }, 500);
           
-          // Calculate trip route for completed ride
           if (completedData.pickup_latitude && completedData.pickup_longitude && 
               completedData.dropoff_latitude && completedData.dropoff_longitude) {
             calculateTripRoute(
@@ -451,7 +891,6 @@ export default function TrackRide({ navigation, route }) {
 
       if (error) throw error;
       
-      // If no wallet exists, create one
       if (!data) {
         console.log("📝 Creating wallet for user:", userId);
         const { data: newWallet, error: createError } = await supabase
@@ -505,6 +944,43 @@ export default function TrackRide({ navigation, route }) {
         setShowCompletedUI(false);
       } else if (data.status === "completed" || data.status === "cancelled") {
         setShowCompletedUI(true);
+        
+        let currentCommuterId = commuterId;
+        if (!currentCommuterId) {
+          try {
+            const userId = await AsyncStorage.getItem("user_id");
+            if (userId) {
+              currentCommuterId = userId;
+              setCommuterId(userId);
+            }
+          } catch (err) {
+            console.log("❌ Error getting commuter ID:", err);
+          }
+        }
+        
+        if (data.status === "completed" && currentCommuterId) {
+          setTimeout(async () => {
+            const { data: existingPoints } = await supabase
+              .from("commuter_points_history")
+              .select("id")
+              .eq("source_id", data.id)
+              .eq("commuter_id", currentCommuterId)
+              .eq("type", "earned")
+              .maybeSingle();
+            
+            if (!existingPoints && data.fare >= pointsConfig.minFare) {
+              console.log("🔄 Awarding points from fetchBookingDetails");
+              await awardPointsForCompletedRide(data);
+            } else if (existingPoints) {
+              console.log("✅ Points already exist for this booking");
+              fetchPointsEarnedForBooking();
+            } else {
+              fetchPointsEarnedForBooking();
+            }
+          }, 1000);
+        } else {
+          fetchPointsEarnedForBooking();
+        }
       }
       
       if (data.driver_id) {
@@ -558,133 +1034,154 @@ export default function TrackRide({ navigation, route }) {
 
   // Subscribe to real-time updates
   useEffect(() => {
-    if (!bookingId || status === "completed" || status === "cancelled" || showCompletedUI) return;
+    if (!bookingId) return;
 
-    console.log("📡 Setting up real-time subscriptions for booking:", bookingId);
+    console.log("📡 Setting up real-time subscription for booking:", bookingId);
 
-    // Listen for booking updates
     const bookingSubscription = supabase
       .channel(`booking-${bookingId}`)
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'UPDATE',
           schema: 'public',
           table: 'bookings',
           filter: `id=eq.${bookingId}`,
         },
-        (payload) => {
-          console.log("📅 Booking updated:", payload);
+        async (payload) => {
+          console.log("📅 Booking updated - new status:", payload.new.status);
+          
           if (payload.new) {
-            setBooking(payload.new);
-            setStatus(payload.new.status);
+            const oldStatus = status;
+            const newStatus = payload.new.status;
             
-            // Check for driver_arrived_at field
-            if (payload.new.driver_arrived_at) {
+            // Update booking with latest data from database
+            setBooking(payload.new);
+            setStatus(newStatus);
+            
+            // Update driver arrived status
+            if (payload.new.driver_arrived_at && !driverArrived) {
               console.log("✅ Driver has arrived at pickup!");
               setDriverArrived(true);
             }
             
-            // Check for ride_started_at field
-            if (payload.new.ride_started_at) {
+            // Update ride started status
+            if (payload.new.ride_started_at && !rideStarted) {
               console.log("✅ Ride has started!");
               setRideStarted(true);
               setDriverArrived(false);
             }
             
-            if (payload.new.status === "completed") {
+            // Check if status changed to completed
+            if (newStatus === "completed" && oldStatus !== "completed") {
+              console.log("🎉 RIDE COMPLETED via real-time update!");
+              
+              // IMPORTANT: Hide scanner immediately when trip completes
+              setShowScanner(false);
+              setScanned(false);
+              setProcessingPayment(false);
+              
               setShowCompletedUI(true);
               setRideStarted(false);
               setDriverArrived(false);
-              // Stop location tracking
+              
               if (locationSubscription) {
                 locationSubscription.remove();
               }
               
-              // Show points earned in alert
-              const pointsToShow = potentialPoints > 0 ? `\n\n⭐ You earned ${potentialPoints} points for this ride!` : '';
-              
-              Alert.alert(
-                "🎉 Trip Completed!",
-                `You have reached your destination. Thank you for riding with us!${pointsToShow}`,
-                [
-                  { 
-                    text: "Rate Driver", 
-                    onPress: () => navigation.replace("RateRide", { bookingId, driverId: payload.new.driver_id })
-                  },
-                  {
-                    text: "Later",
-                    style: "cancel",
-                    onPress: () => navigation.goBack()
+              // Get current commuter ID
+              let currentCommuterId = commuterId;
+              if (!currentCommuterId) {
+                try {
+                  const userId = await AsyncStorage.getItem("user_id");
+                  if (userId) {
+                    currentCommuterId = userId;
+                    setCommuterId(userId);
                   }
-                ]
-              );
+                } catch (err) {
+                  console.log("❌ Error getting commuter ID:", err);
+                }
+              }
               
-              // Fetch points after completion
-              setTimeout(() => {
-                if (commuterId) {
+              // Award points
+              setTimeout(async () => {
+                const { data: existingPoints } = await supabase
+                  .from("commuter_points_history")
+                  .select("id")
+                  .eq("source_id", payload.new.id)
+                  .eq("commuter_id", currentCommuterId)
+                  .eq("type", "earned")
+                  .maybeSingle();
+                
+                if (!existingPoints && payload.new.fare >= pointsConfig.minFare) {
+                  console.log("🔄 Awarding points from real-time update");
+                  const pointsAwarded = await awardPointsForCompletedRide(payload.new);
+                  console.log("Points awarded:", pointsAwarded);
+                } else if (existingPoints) {
+                  console.log("Points already exist for this booking");
+                  fetchPointsEarnedForBooking();
+                } else {
                   fetchPointsEarnedForBooking();
                 }
               }, 1000);
-            } else if (payload.new.status === "cancelled") {
+              
+              // Show completion alert only once
+              if (!completionAlertShownRef.current) {
+                completionAlertShownRef.current = true;
+                Alert.alert(
+                  "🎉 Trip Completed!",
+                  "You have reached your destination. Thank you for riding with us!",
+                  [
+                    { 
+                      text: "Rate Driver", 
+                      onPress: () => navigation.replace("RateRide", { 
+                        bookingId: payload.new.id, 
+                        driverId: payload.new.driver_id 
+                      })
+                    },
+                    {
+                      text: "Later",
+                      style: "cancel",
+                      onPress: () => navigation.goBack()
+                    }
+                  ]
+                );
+              }
+            } else if (newStatus === "cancelled") {
               setShowCompletedUI(true);
+              // Hide scanner if open
+              setShowScanner(false);
               Alert.alert(
                 "❌ Trip Cancelled",
                 payload.new.cancellation_reason || "The trip has been cancelled.",
                 [{ text: "OK", onPress: () => navigation.goBack() }]
               );
             }
-
-            // Check if payment status changed (for wallet payment)
-            if (payload.new.payment_status === 'paid' && payload.new.payment_type === 'wallet') {
-              setPaymentSuccess(true);
-              Alert.alert(
-                "✅ Payment Successful!",
-                `Your payment of ₱${payload.new.fare?.toFixed(2)} has been processed successfully.`,
-                [{ text: "OK" }]
-              );
-            }
           }
         }
       )
-      .subscribe();
-
-    // Listen for booking updates from the updates table
-    const updatesSubscription = supabase
-      .channel(`booking-updates-${bookingId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'booking_updates',
-          filter: `booking_id=eq.${bookingId}`,
-        },
-        (payload) => {
-          console.log("📢 Booking update:", payload);
-          if (payload.new.type === "driver_arrived") {
-            console.log("✅ Driver arrived notification received!");
-            setDriverArrived(true);
-            Alert.alert(
-              "Driver Arrived",
-              "Your driver has arrived at the pickup location.",
-              [{ text: "OK" }]
-            );
+      .subscribe((status) => {
+        console.log("📡 Subscription status:", status);
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.log("⚠️ Subscription error, will retry...");
+          if (subscriptionRetryRef.current) {
+            clearTimeout(subscriptionRetryRef.current);
           }
+          subscriptionRetryRef.current = setTimeout(() => {
+            console.log("🔄 Retrying subscription...");
+            checkForActiveBooking();
+          }, 5000);
         }
-      )
-      .subscribe();
-
-    // Start location tracking for active rides
-    if (status === "accepted" && !showCompletedUI) {
-      startUserLocationTracking();
-    }
+      });
 
     return () => {
+      console.log("🧹 Cleaning up subscription for booking:", bookingId);
       bookingSubscription.unsubscribe();
-      updatesSubscription.unsubscribe();
+      if (subscriptionRetryRef.current) {
+        clearTimeout(subscriptionRetryRef.current);
+      }
     };
-  }, [bookingId, status, showCompletedUI]);
+  }, [bookingId, commuterId, pointsConfig.minFare, driverArrived, rideStarted]);
 
   // Subscribe to driver location updates
   useEffect(() => {
@@ -703,7 +1200,6 @@ export default function TrackRide({ navigation, route }) {
           filter: `driver_id=eq.${driverId}`,
         },
         (payload) => {
-          console.log("📍 Driver location updated:", payload);
           if (payload.new) {
             const newLocation = {
               latitude: payload.new.latitude,
@@ -712,14 +1208,12 @@ export default function TrackRide({ navigation, route }) {
             setDriverLocation(newLocation);
             setDriverLocationLoaded(true);
             
-            // Only calculate ETA if driver hasn't arrived and ride hasn't started
             if (booking && !driverArrived && !rideStarted) {
               calculateDriverETA(newLocation, {
                 latitude: booking.pickup_latitude,
                 longitude: booking.pickup_longitude
               });
               
-              // Check if driver has arrived (within 50 meters)
               const distanceToPickup = calculateDistance(
                 newLocation.latitude,
                 newLocation.longitude,
@@ -727,7 +1221,6 @@ export default function TrackRide({ navigation, route }) {
                 booking.pickup_longitude
               );
               
-              // If driver is very close, set arrived to true
               if (distanceToPickup < 0.05 && !driverArrived && !rideStarted) {
                 console.log("📍 Driver is within 50 meters - arrived!");
                 setDriverArrived(true);
@@ -738,7 +1231,6 @@ export default function TrackRide({ navigation, route }) {
       )
       .subscribe();
 
-    // Also try to fetch driver location immediately
     fetchDriverLocation();
 
     return () => {
@@ -762,7 +1254,6 @@ export default function TrackRide({ navigation, route }) {
       }
 
       if (data) {
-        console.log("✅ Driver location found:", data);
         const newLocation = {
           latitude: data.latitude,
           longitude: data.longitude,
@@ -770,7 +1261,6 @@ export default function TrackRide({ navigation, route }) {
         setDriverLocation(newLocation);
         setDriverLocationLoaded(true);
         
-        // Check if driver is already near pickup
         if (booking && !driverArrived && !rideStarted) {
           const distanceToPickup = calculateDistance(
             newLocation.latitude,
@@ -803,9 +1293,7 @@ export default function TrackRide({ navigation, route }) {
           timeInterval: 5000,
           distanceInterval: 10,
         },
-        (newLocation) => {
-          // We don't need to store user location for anything, just for map display
-        }
+        (newLocation) => {}
       );
 
       setLocationSubscription(subscription);
@@ -831,7 +1319,6 @@ export default function TrackRide({ navigation, route }) {
         const points = decodePolyline(data.routes[0].overview_polyline.points);
         setRouteCoordinates(points);
         
-        // Fit map to show route
         if (mapRef.current && points.length > 0) {
           mapRef.current.fitToCoordinates(points, {
             edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
@@ -935,8 +1422,13 @@ export default function TrackRide({ navigation, route }) {
     }
   };
 
-  // ================= QR CODE SCANNING FUNCTIONS - FIXED =================
+  // QR Code Scanning Functions
   const handlePayWithPoints = () => {
+    // Don't show payment option if trip is already completed
+    if (showCompletedUI || status === "completed") {
+      return;
+    }
+    
     Alert.alert(
       "Pay with Points",
       `Your current points balance: ${pointsBalance}\n\nScan the driver's QR code to pay with your points. (10 points = ₱1)`,
@@ -948,8 +1440,13 @@ export default function TrackRide({ navigation, route }) {
   };
 
   const openScanner = async () => {
+    // Don't open scanner if trip is already completed
+    if (showCompletedUI || status === "completed") {
+      Alert.alert("Trip Completed", "This trip has already been completed.");
+      return;
+    }
+    
     try {
-      // Request camera permission if not granted
       if (!permission?.granted) {
         const { granted } = await requestPermission();
         if (!granted) {
@@ -970,29 +1467,30 @@ export default function TrackRide({ navigation, route }) {
   };
 
   const handleBarCodeScanned = async ({ type, data }) => {
-    // Prevent multiple scans
+    // Don't process if trip is already completed
+    if (showCompletedUI || status === "completed") {
+      setShowScanner(false);
+      Alert.alert("Trip Completed", "This trip has already been completed.");
+      return;
+    }
+    
     if (scanned || processingPayment) return;
     
-    // Set scanned immediately to prevent multiple triggers
     setScanned(true);
     
-    // Clear any existing timeout
     if (scanTimeoutRef.current) {
       clearTimeout(scanTimeoutRef.current);
     }
     
     try {
-      // Parse QR code data
       const qrData = JSON.parse(data);
       console.log("📱 QR Code scanned:", qrData);
       
-      // Validate QR code data
       if (qrData.type !== 'points_payment') {
         Alert.alert(
           "Invalid QR Code",
           "This is not a valid payment QR code.",
           [{ text: "OK", onPress: () => {
-            // Allow scanning again after 2 seconds
             scanTimeoutRef.current = setTimeout(() => {
               setScanned(false);
               scanTimeoutRef.current = null;
@@ -1002,13 +1500,11 @@ export default function TrackRide({ navigation, route }) {
         return;
       }
       
-      // Check if this QR code is for this booking
       if (qrData.booking_id !== bookingId) {
         Alert.alert(
           "Invalid QR Code",
           "This QR code is for a different booking.",
           [{ text: "OK", onPress: () => {
-            // Allow scanning again after 2 seconds
             scanTimeoutRef.current = setTimeout(() => {
               setScanned(false);
               scanTimeoutRef.current = null;
@@ -1018,7 +1514,6 @@ export default function TrackRide({ navigation, route }) {
         return;
       }
       
-      // Check if QR code has expired
       const expiresAt = new Date(qrData.expires_at);
       if (expiresAt < new Date()) {
         Alert.alert(
@@ -1031,7 +1526,6 @@ export default function TrackRide({ navigation, route }) {
         return;
       }
       
-      // Process the payment
       await processPointsPayment(qrData);
       
     } catch (err) {
@@ -1040,7 +1534,6 @@ export default function TrackRide({ navigation, route }) {
         "Invalid QR Code",
         "Could not read the QR code. Please try again.",
         [{ text: "OK", onPress: () => {
-          // Allow scanning again after 2 seconds
           scanTimeoutRef.current = setTimeout(() => {
             setScanned(false);
             scanTimeoutRef.current = null;
@@ -1050,11 +1543,18 @@ export default function TrackRide({ navigation, route }) {
     }
   };
 
+  // FIXED: Process points payment and ensure points are awarded later
   const processPointsPayment = async (qrData) => {
+    // Don't process if trip is already completed
+    if (showCompletedUI || status === "completed") {
+      setShowScanner(false);
+      Alert.alert("Trip Completed", "This trip has already been completed.");
+      return;
+    }
+    
     try {
       setProcessingPayment(true);
       
-      // Get user ID from AsyncStorage
       const userId = await AsyncStorage.getItem("user_id");
       
       if (!userId) {
@@ -1062,15 +1562,11 @@ export default function TrackRide({ navigation, route }) {
         throw new Error("Not authenticated");
       }
 
-      console.log("✅ User ID from AsyncStorage:", userId);
-
-      // Verify this matches the commuter ID we have
       if (userId !== commuterId) {
         console.log("⚠️ User ID mismatch - updating commuterId");
         setCommuterId(userId);
       }
 
-      // Check commuter's points balance
       const { data: wallet, error: walletError } = await supabase
         .from("commuter_wallets")
         .select("points")
@@ -1081,7 +1577,6 @@ export default function TrackRide({ navigation, route }) {
 
       let currentWallet = wallet;
 
-      // If no wallet exists, create one
       if (!currentWallet) {
         console.log("📝 Creating wallet for user:", userId);
         const { data: newWallet, error: createError } = await supabase
@@ -1107,7 +1602,6 @@ export default function TrackRide({ navigation, route }) {
             { text: "Cancel", style: "cancel", onPress: () => {
               setShowScanner(false);
               setProcessingPayment(false);
-              // Allow scanning again
               scanTimeoutRef.current = setTimeout(() => {
                 setScanned(false);
                 scanTimeoutRef.current = null;
@@ -1119,7 +1613,6 @@ export default function TrackRide({ navigation, route }) {
                 setShowScanner(false);
                 setProcessingPayment(false);
                 Alert.alert("Please inform the driver that you'll pay with cash instead.");
-                // Allow scanning again
                 scanTimeoutRef.current = setTimeout(() => {
                   setScanned(false);
                   scanTimeoutRef.current = null;
@@ -1131,7 +1624,6 @@ export default function TrackRide({ navigation, route }) {
         return;
       }
 
-      // Deduct points from commuter wallet
       const newPoints = currentWallet.points - qrData.points;
       
       const { error: updateError } = await supabase
@@ -1144,7 +1636,6 @@ export default function TrackRide({ navigation, route }) {
 
       if (updateError) throw updateError;
 
-      // Record points history
       const { error: historyError } = await supabase
         .from("commuter_points_history")
         .insert({
@@ -1161,7 +1652,6 @@ export default function TrackRide({ navigation, route }) {
         console.log("❌ Error recording points history:", historyError);
       }
 
-      // Update booking payment status
       const { error: bookingError } = await supabase
         .from("bookings")
         .update({
@@ -1175,12 +1665,20 @@ export default function TrackRide({ navigation, route }) {
 
       if (bookingError) throw bookingError;
 
-      // Update local points balance
       setPointsBalance(newPoints);
-      
-      // Success!
       setPaymentSuccess(true);
       setShowScanner(false);
+      
+      // Fetch the latest booking data to confirm payment
+      const { data: updatedBooking } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("id", bookingId)
+        .single();
+      
+      if (updatedBooking) {
+        setBooking(updatedBooking);
+      }
       
       Alert.alert(
         "✅ Payment Successful!",
@@ -1202,12 +1700,10 @@ export default function TrackRide({ navigation, route }) {
         errorMessage,
         [{ text: "OK", onPress: () => {
           setShowScanner(false);
-          // Allow scanning again
           scanTimeoutRef.current = setTimeout(() => {
             setScanned(false);
             scanTimeoutRef.current = null;
           }, 1000);
-          // If session expired, navigate to login
           if (err.message === "Not authenticated") {
             navigation.replace("Login");
           }
@@ -1353,12 +1849,12 @@ export default function TrackRide({ navigation, route }) {
   const showRouteToDriver = status === "accepted" && !driverArrived && !rideStarted && routeCoordinates.length > 0 && !showCompletedUI;
   const showTripRoute = (rideStarted || driverArrived || status === "completed") && tripRouteCoordinates.length > 0 && !showCompletedUI;
 
-  // Check if wallet payment is available
   const showPointsPayment = status === "accepted" && 
                            rideStarted && 
                            booking?.payment_type === 'wallet' && 
                            booking?.payment_status === 'pending' &&
-                           !paymentSuccess;
+                           !paymentSuccess &&
+                           !showCompletedUI; // Don't show if completed
 
   if (loading) {
     return (
@@ -1368,8 +1864,8 @@ export default function TrackRide({ navigation, route }) {
     );
   }
 
-  // QR Code Scanner Modal
-  if (showScanner) {
+  // QR Code Scanner Modal - Only show if not completed
+  if (showScanner && !showCompletedUI && status !== "completed") {
     return (
       <View style={styles.container}>
         <View style={styles.scannerHeader}>
@@ -1536,7 +2032,7 @@ export default function TrackRide({ navigation, route }) {
                 </View>
               )}
               
-              {/* Points Earned Section - FIXED to show for both payment types */}
+              {/* Points Earned Section */}
               {pointsEarned !== null && pointsEarned > 0 && (
                 <View style={styles.pointsEarnedContainer}>
                   <View style={styles.pointsEarnedDivider} />
@@ -1547,15 +2043,14 @@ export default function TrackRide({ navigation, route }) {
                     </Text>
                   </View>
                   <Text style={styles.pointsEarnedNote}>
-                    {booking.payment_type === 'wallet' 
-                      ? `Earned ${pointsConfig.walletRate * 100}% of fare as points (Wallet bonus!)` 
-                      : `Earned ${pointsConfig.cashRate * 100}% of fare as points`}
+                    {booking?.payment_type === 'wallet' 
+                      ? `Earned ${(pointsConfig.walletRate * 100).toFixed(0)}% of fare as points (Wallet bonus!)` 
+                      : `Earned ${(pointsConfig.cashRate * 100).toFixed(0)}% of fare as points`}
                   </Text>
                 </View>
               )}
               
-              {/* Show message if no points earned but fare qualifies */}
-              {pointsEarned === 0 && booking.fare >= pointsConfig.minFare && (
+              {pointsEarned === 0 && booking?.fare >= pointsConfig.minFare && (
                 <View style={styles.pointsEarnedContainer}>
                   <View style={styles.pointsEarnedDivider} />
                   <Text style={styles.noPointsText}>
@@ -1623,7 +2118,7 @@ export default function TrackRide({ navigation, route }) {
             <Text style={styles.completedHomeButtonText}>Back to Home</Text>
           </Pressable>
 
-          <Pressable style={styles.completedHistoryButton} onPress={() => navigation.navigate("RideHistory")}>
+          <Pressable style={styles.completedHistoryButton} onPress={() => navigation.navigate("RideHistoryScreen")}>
             <Text style={styles.completedHistoryButtonText}>View Ride History</Text>
           </Pressable>
         </ScrollView>
@@ -1669,7 +2164,6 @@ export default function TrackRide({ navigation, route }) {
           showsMyLocationButton={true}
           showsCompass={true}
         >
-          {/* Driver Location */}
           {showDriverLocation && driverLocation && (
             <Marker coordinate={driverLocation} title="Your Driver" flat>
               <View style={styles.driverMarker}>
@@ -1678,7 +2172,6 @@ export default function TrackRide({ navigation, route }) {
             </Marker>
           )}
 
-          {/* Pickup Location */}
           {booking?.pickup_latitude && (
             <Marker
               coordinate={{
@@ -1693,7 +2186,6 @@ export default function TrackRide({ navigation, route }) {
             </Marker>
           )}
 
-          {/* Dropoff Location */}
           {booking?.dropoff_latitude && (
             <Marker
               coordinate={{
@@ -1708,7 +2200,6 @@ export default function TrackRide({ navigation, route }) {
             </Marker>
           )}
 
-          {/* Route to Driver */}
           {showRouteToDriver && (
             <Polyline
               coordinates={routeCoordinates}
@@ -1718,7 +2209,6 @@ export default function TrackRide({ navigation, route }) {
             />
           )}
 
-          {/* Trip Route */}
           {showTripRoute && (
             <Polyline
               coordinates={tripRouteCoordinates}
@@ -1735,7 +2225,6 @@ export default function TrackRide({ navigation, route }) {
 
       {/* Bottom Sheet */}
       <ScrollView style={styles.bottomSheet} showsVerticalScrollIndicator={false}>
-        {/* Status Card */}
         <View style={styles.statusCard}>
           <View style={[styles.statusIcon, { backgroundColor: getStatusColor() + "20" }]}>
             <Ionicons name={getStatusIcon()} size={24} color={getStatusColor()} />
@@ -1757,7 +2246,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         </View>
 
-        {/* Driver Info */}
         {driver && (
           <View style={styles.driverCard}>
             <View style={styles.driverAvatar}>
@@ -1784,7 +2272,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         )}
 
-        {/* Trip Details */}
         <View style={styles.tripDetails}>
           <View style={styles.locationRow}>
             <Ionicons name="location" size={16} color="#10B981" />
@@ -1802,7 +2289,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         </View>
 
-        {/* Trip Stats */}
         {(tripDistance || booking?.distance_km) && (
           <View style={styles.statsContainer}>
             <View style={styles.statBox}>
@@ -1829,7 +2315,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         )}
 
-        {/* Points Balance Display */}
         {pointsBalance > 0 && (
           <View style={styles.pointsBalanceContainer}>
             <Ionicons name="star" size={20} color="#F59E0B" />
@@ -1839,7 +2324,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         )}
 
-        {/* Points Preview - Show during active ride */}
         {rideStarted && booking?.fare > 0 && booking.fare >= pointsConfig.minFare && (
           <View style={styles.pointsPreviewContainer}>
             <Ionicons name="star-outline" size={20} color="#F59E0B" />
@@ -1854,7 +2338,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         )}
 
-        {/* Points Payment Button */}
         {showPointsPayment && (
           <Pressable style={styles.pointsPaymentButton} onPress={handlePayWithPoints}>
             <Ionicons name="qr-code" size={24} color="#FFF" />
@@ -1866,7 +2349,6 @@ export default function TrackRide({ navigation, route }) {
           </Pressable>
         )}
 
-        {/* Action Buttons */}
         {canCancel && (
           <Pressable style={styles.cancelButton} onPress={handleCancelRide}>
             <Ionicons name="close-circle" size={20} color="#EF4444" />
@@ -1888,7 +2370,6 @@ export default function TrackRide({ navigation, route }) {
           </View>
         )}
 
-        {/* Share Trip Button */}
         {(status === "accepted" || driverArrived || rideStarted) && (
           <Pressable style={styles.shareButton}>
             <Ionicons name="share-social" size={20} color="#183B5C" />
@@ -2107,7 +2588,6 @@ const styles = StyleSheet.create({
     color: "#333",
     marginTop: 2,
   },
-  // Points Balance
   pointsBalanceContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2122,7 +2602,6 @@ const styles = StyleSheet.create({
     color: "#F59E0B",
     fontWeight: "600",
   },
-  // Points Preview
   pointsPreviewContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -2141,7 +2620,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#F59E0B",
   },
-  // Points Payment Button
   pointsPaymentButton: {
     backgroundColor: "#F59E0B",
     flexDirection: "row",
@@ -2164,7 +2642,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     opacity: 0.9,
   },
-  // Scan QR Button
   scanQRButton: {
     backgroundColor: "#3B82F6",
     flexDirection: "row",
@@ -2238,7 +2715,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 14,
   },
-  // No Ride Available Styles
   noRideContainer: {
     flex: 1,
     justifyContent: "center",
@@ -2326,7 +2802,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     textDecorationLine: "underline",
   },
-  // Completed/Cancelled UI Styles
   completedContainer: {
     flex: 1,
     paddingHorizontal: 20,
@@ -2397,6 +2872,13 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     marginTop: 2,
     fontStyle: "italic",
+  },
+  noPointsText: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+    textAlign: "center",
+    paddingVertical: 8,
   },
   completedDriverCard: {
     flexDirection: "row",
@@ -2501,7 +2983,6 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
     textAlign: "center",
   },
-  // Scanner Styles
   scannerHeader: {
     backgroundColor: "#183B5C",
     paddingTop: 60,

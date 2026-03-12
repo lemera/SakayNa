@@ -443,17 +443,35 @@ export default function CommuterWalletScreen() {
 
       if (error) throw error;
       
+      // FIXED: Fetch points earned for each booking from points_conversion_logs and points_history
       const enhancedBookings = await Promise.all((data || []).map(async (booking) => {
+        // Try points_conversion_logs first (for cash payments)
         const { data: pointsData } = await supabase
+          .from("points_conversion_logs")
+          .select("points_converted")
+          .eq("booking_id", booking.id)
+          .eq("commuter_id", id)
+          .maybeSingle();
+        
+        if (pointsData && pointsData.points_converted > 0) {
+          return {
+            ...booking,
+            points_earned: pointsData.points_converted
+          };
+        }
+        
+        // Try points_history (for wallet payments)
+        const { data: historyData } = await supabase
           .from("commuter_points_history")
           .select("points")
           .eq("source_id", booking.id)
+          .eq("commuter_id", id)
           .eq("type", "earned")
           .maybeSingle();
         
         return {
           ...booking,
-          points_earned: pointsData?.points || 0
+          points_earned: historyData?.points || 0
         };
       }));
       
@@ -465,6 +483,7 @@ export default function CommuterWalletScreen() {
 
   const fetchPointsHistory = async (id) => {
     try {
+      // FIXED: Fetch points history with booking details for better display
       const { data: historyData, error: historyError } = await supabase
         .from("commuter_points_history")
         .select("*")
@@ -868,19 +887,6 @@ export default function CommuterWalletScreen() {
             <Text style={styles.headerTitle}>My Points</Text>
           </View>
           <View style={styles.headerActions}>
-            {/* <Pressable 
-              style={styles.headerButton}
-              onPress={() => setShowPromoModal(true)}
-            >
-              <LinearGradient
-                colors={['#F59E0B', '#FBBF24']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.headerButtonGradient}
-              >
-                <Ionicons name="pricetag" size={20} color="#FFF" />
-              </LinearGradient>
-            </Pressable> */}
             <Pressable 
               style={styles.headerButton}
               onPress={() => navigation.navigate("ReferralsScreen")}
@@ -1056,7 +1062,7 @@ export default function CommuterWalletScreen() {
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Points History</Text>
             {pointsHistory.length > 0 && (
-              <Pressable onPress={() => navigation.navigate("PointsHistory")}>
+              <Pressable onPress={() => navigation.navigate("PointsRewards")}>
                 <Text style={styles.seeAll}>See All →</Text>
               </Pressable>
             )}
@@ -1096,7 +1102,21 @@ export default function CommuterWalletScreen() {
               } else {
                 iconColor = '#EF4444';
                 bgColor = '#FEE2E2';
-                sourceText = 'Points Used';
+                if (item.source === 'trip') {
+                  sourceText = 'Points Used for Trip';
+                } else if (item.source === 'promo') {
+                  sourceText = 'Redeemed for Promo';
+                } else {
+                  sourceText = 'Points Used';
+                }
+              }
+              
+              // Add booking details if available
+              if (item.bookings) {
+                const booking = item.bookings;
+                const pickupShort = booking.pickup_location?.split(",")[0] || '';
+                const dropoffShort = booking.dropoff_location?.split(",")[0] || '';
+                sourceText = `${pickupShort} → ${dropoffShort}`;
               }
               
               return (
@@ -1116,7 +1136,21 @@ export default function CommuterWalletScreen() {
                   </View>
                   <View style={styles.historyInfo}>
                     <Text style={styles.historyTitle}>{sourceText}</Text>
-                    <Text style={styles.historyDate}>{formatDate(item.created_at)}</Text>
+                    <View style={styles.historyMeta}>
+                      <Text style={styles.historyDate}>{formatDate(item.created_at)}</Text>
+                      {item.source === 'trip_wallet' && (
+                        <View style={styles.sourceBadge}>
+                          <Ionicons name="star" size={10} color="#F59E0B" />
+                          <Text style={styles.sourceBadgeText}>Wallet</Text>
+                        </View>
+                      )}
+                      {item.source === 'trip_cash' && (
+                        <View style={[styles.sourceBadge, styles.cashBadge]}>
+                          <Ionicons name="cash" size={10} color="#10B981" />
+                          <Text style={styles.cashBadgeText}>Cash</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
                   <Text style={[
                     styles.historyAmount,
@@ -1162,12 +1196,12 @@ export default function CommuterWalletScreen() {
                     <View style={styles.tripMeta}>
                       <Text style={styles.tripDate}>{formatDate(booking.created_at)}</Text>
                       {booking.payment_type === 'wallet' ? (
-                        <View style={styles.pointsBadge}>
+                        <View style={[styles.sourceBadge, { backgroundColor: '#FEF3C7' }]}>
                           <Ionicons name="star" size={10} color="#F59E0B" />
-                          <Text style={styles.pointsBadgeText}>Points</Text>
+                          <Text style={styles.sourceBadgeText}>Wallet</Text>
                         </View>
                       ) : (
-                        <View style={styles.cashBadge}>
+                        <View style={[styles.sourceBadge, styles.cashBadge]}>
                           <Ionicons name="cash" size={10} color="#10B981" />
                           <Text style={styles.cashBadgeText}>Cash</Text>
                         </View>
@@ -1177,9 +1211,9 @@ export default function CommuterWalletScreen() {
                   <View style={styles.tripAmount}>
                     <Text style={styles.tripFare}>{formatCurrency(booking.fare)}</Text>
                     {pointsEarned > 0 && (
-                      <View style={styles.pointsEarned}>
+                      <View style={styles.pointsEarnedIndicator}>
                         <Ionicons name="star" size={10} color="#F59E0B" />
-                        <Text style={styles.pointsEarnedText}>+{pointsEarned}</Text>
+                        <Text style={styles.pointsEarnedIndicatorText}>+{pointsEarned}</Text>
                       </View>
                     )}
                   </View>
@@ -1562,9 +1596,36 @@ const styles = StyleSheet.create({
     color: "#333",
     marginBottom: 4,
   },
+  historyMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
   historyDate: {
     fontSize: 11,
     color: "#999",
+  },
+  sourceBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    gap: 2,
+  },
+  sourceBadgeText: {
+    fontSize: 9,
+    color: "#F59E0B",
+    fontWeight: "600",
+  },
+  cashBadge: {
+    backgroundColor: "#E8F5E9",
+  },
+  cashBadgeText: {
+    fontSize: 9,
+    color: "#10B981",
+    fontWeight: "600",
   },
   historyAmount: {
     fontSize: 16,
@@ -1613,34 +1674,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#999",
   },
-  pointsBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEF3C7",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    gap: 2,
-  },
-  pointsBadgeText: {
-    fontSize: 9,
-    color: "#F59E0B",
-    fontWeight: "600",
-  },
-  cashBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#E8F5E9",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-    gap: 2,
-  },
-  cashBadgeText: {
-    fontSize: 9,
-    color: "#10B981",
-    fontWeight: "600",
-  },
   tripAmount: {
     alignItems: "flex-end",
   },
@@ -1650,7 +1683,7 @@ const styles = StyleSheet.create({
     color: "#333",
     marginBottom: 4,
   },
-  pointsEarned: {
+  pointsEarnedIndicator: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FEF3C7",
@@ -1659,7 +1692,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 2,
   },
-  pointsEarnedText: {
+  pointsEarnedIndicatorText: {
     fontSize: 10,
     color: "#F59E0B",
     fontWeight: "600",

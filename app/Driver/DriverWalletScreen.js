@@ -476,39 +476,7 @@ export default function DriverWalletScreen({ navigation }) {
         <Text style={{ fontSize: 14, color: "#FFB37A", marginTop: 5 }}>{driverName || "Driver"}</Text>
       </View>
 
-      {/* Points Card */}
-      {pointsData.total_points_earned > 0 && (
-        <View style={{
-          marginHorizontal: 20,
-          marginTop: -20,
-          marginBottom: 15,
-          backgroundColor: "#FEF3C7",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.1,
-          shadowRadius: 12,
-          elevation: 5,
-          borderWidth: 1,
-          borderColor: "#F59E0B",
-        }}>
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <View>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="star" size={20} color="#F59E0B" />
-                <Text style={{ fontSize: 14, color: "#92400E", marginLeft: 5, fontWeight: "600" }}>Points Earned</Text>
-              </View>
-              <Text style={{ fontSize: 32, fontWeight: "bold", color: "#F59E0B" }}>
-                {pointsData.total_points_earned.toLocaleString()}
-              </Text>
-              <Text style={{ fontSize: 12, color: "#92400E", marginTop: 5 }}>
-                Value: ₱{pointsData.points_value.toFixed(2)}
-              </Text>
-            </View>
-          </View>
-        </View>
-      )}
+
 
       {/* Main Balance Card */}
       <View style={{
@@ -525,9 +493,11 @@ export default function DriverWalletScreen({ navigation }) {
         {/* Balance */}
         <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
           <View>
-            <Text style={{ fontSize: 14, color: "#666" }}>Available Balance</Text>
+            <Text style={{ fontSize: 14, color: "#666" }}>Points Earned</Text>
             <Text style={{ fontSize: 36, fontWeight: "bold", color: "#183B5C" }}>
-              ₱{(walletData.balance || 0).toFixed(2)}
+                <Ionicons name="star" size={30} color="#F59E0B" />
+
+              {(pointsData.total_points_earned || 0).toFixed(2)}
             </Text>
           </View>
           <View style={{ backgroundColor: "#E6F7E6", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20 }}>
@@ -566,7 +536,7 @@ export default function DriverWalletScreen({ navigation }) {
             onPress={() => Alert.alert("Top-up", "Please visit our office to add funds.")}
           >
             <Ionicons name="arrow-up-outline" size={18} color="#183B5C" />
-            <Text style={{ color: "#183B5C", fontWeight: "600", marginLeft: 5 }}>Top Up</Text>
+            <Text style={{ color: "#183B5C", fontWeight: "600", marginLeft: 5 }}>Subscribe</Text>
           </Pressable>
         </View>
       </View>
@@ -618,15 +588,6 @@ export default function DriverWalletScreen({ navigation }) {
     </View>
 
     {/* Wallet Payments (Cash Value) */}
-    <View style={{ alignItems: "center" }}>
-      <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: "#E6F0FF", justifyContent: "center", alignItems: "center" }}>
-        <Ionicons name="wallet" size={24} color="#00579F" />
-      </View>
-      <Text style={{ fontSize: 18, fontWeight: "bold", color: "#00579F", marginTop: 8 }}>
-        ₱{(walletData.wallet_earnings || 0).toFixed(0)}
-      </Text>
-      <Text style={{ fontSize: 12, color: "#666" }}>Wallet Payments</Text>
-    </View>
 
     {/* Points Earned (if may points) */}
     {pointsData.points_from_rides > 0 && (

@@ -1,31 +1,41 @@
 // screens/commuter/AccountScreen.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
-  StyleSheet,
   ScrollView,
   Pressable,
-  Alert,
   ActivityIndicator,
   RefreshControl,
+  Alert,
   Modal,
   TextInput,
   Image,
-  Switch,
+  Linking,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useNavigation, useFocusEffect } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { LinearGradient } from "expo-linear-gradient";
+import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
-import * as Haptics from 'expo-haptics';
+import { LinearGradient } from "expo-linear-gradient";
 
-export default function AccountScreen() {
+// Simple base64 to array buffer function (no dependency needed)
+const base64ToArrayBuffer = (base64) => {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
+
+export default function AccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,740 +45,531 @@ export default function AccountScreen() {
   const [stats, setStats] = useState({
     totalTrips: 0,
     totalPoints: 0,
+    totalSpent: 0,
     memberSince: null,
     referrals: 0,
   });
 
-  // Edit profile modal
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editingField, setEditingField] = useState(null);
-  const [editValue, setEditValue] = useState('');
-  const [updating, setUpdating] = useState(false);
+  // Modal states
+  const [editProfileModal, setEditProfileModal] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
 
-  // Settings
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [darkModeEnabled, setDarkModeEnabled] = useState(false);
-  const [language, setLanguage] = useState('english');
-
-  // Security
-  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-
+  // Fetch user ID
   useFocusEffect(
-    React.useCallback(() => {
-      loadUserData();
+    useCallback(() => {
+      const getUserId = async () => {
+        const id = await AsyncStorage.getItem("user_id");
+        const type = await AsyncStorage.getItem("user_type") || 'commuter';
+        setUserId(id);
+        setUserType(type);
+      };
+      getUserId();
     }, [])
   );
 
+  // Fetch all user data
+  useEffect(() => {
+    if (userId) {
+      loadUserData();
+    }
+  }, [userId]);
+
   const loadUserData = async () => {
     try {
-      const id = await AsyncStorage.getItem("user_id");
-      const type = await AsyncStorage.getItem("user_type") || 'commuter';
-      setUserId(id);
-      setUserType(type);
-      
-      if (id) {
-        await Promise.all([
-          fetchProfile(id, type),
-          fetchStats(id, type),
-          fetchSettings(id, type)
-        ]);
-      }
+      setLoading(true);
+      await Promise.all([
+        fetchProfile(),
+        fetchStats(),
+      ]);
     } catch (err) {
       console.log("Error loading user data:", err);
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   };
 
-  const fetchProfile = async (id, type) => {
-    try {
-      const table = type === 'commuter' ? 'commuters' : 'drivers';
-      
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq("id", id)
-        .single();
-
-      if (error) throw error;
-      setProfile(data);
-    } catch (err) {
-      console.log("Error fetching profile:", err);
-    }
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadUserData();
+    setRefreshing(false);
   };
 
-  const fetchStats = async (id, type) => {
+const fetchProfile = async () => {
+  try {
+    const table = userType === 'commuter' ? 'commuters' : 'drivers';
+    
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("id", userId)
+      .single();
+
+    if (error) throw error;
+
+    // Debug: See what's stored
+    console.log("Raw profile_picture from DB:", data.profile_picture);
+
+    // No need to modify URL if we store full URL
+    if (data.profile_picture) {
+      // Add timestamp for cache busting
+      data.profile_picture = data.profile_picture + "?t=" + Date.now();
+    }
+
+    setProfile(data);
+    setEditName(`${data.first_name || ''} ${data.last_name || ''}`.trim());
+    setEditPhone(data.phone || "");
+    setEditEmail(data.email || "");
+  } catch (err) {
+    console.log("Error fetching profile:", err.message);
+  }
+};
+
+  const fetchStats = async () => {
     try {
-      // Get total trips
-      const { count: tripsCount, error: tripsError } = await supabase
+      // Get total trips and spending
+      const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
-        .select("*", { count: "exact", head: true })
-        .eq(type === 'commuter' ? "commuter_id" : "driver_id", id)
+        .select("fare, actual_fare, status, created_at")
+        .eq("commuter_id", userId)
         .eq("status", "completed");
 
-      if (tripsError) throw tripsError;
+      if (bookingsError) throw bookingsError;
 
-      // Get total points (for commuters)
+      const totalTrips = bookings?.length || 0;
+      const totalSpent = bookings?.reduce((sum, b) => sum + (b.actual_fare || b.fare || 0), 0) || 0;
+
+      // Get total points
       let points = 0;
-      if (type === 'commuter') {
+      try {
         const { data: walletData } = await supabase
           .from("commuter_wallets")
           .select("points")
-          .eq("commuter_id", id)
+          .eq("commuter_id", userId)
           .single();
-
         points = walletData?.points || 0;
+      } catch (walletErr) {
+        console.log("No wallet found:", walletErr.message);
+      }
+
+      // Get referrals count
+      let referrals = 0;
+      try {
+        const { count: referralsCount } = await supabase
+          .from("referrals")
+          .select("*", { count: "exact", head: true })
+          .eq("referrer_id", userId)
+          .eq("referrer_type", userType);
+        referrals = referralsCount || 0;
+      } catch (refErr) {
+        console.log("Error fetching referrals:", refErr.message);
       }
 
       // Get member since (first booking or created_at)
-      const { data: firstBooking } = await supabase
-        .from("bookings")
-        .select("created_at")
-        .eq(type === 'commuter' ? "commuter_id" : "driver_id", id)
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle();
-
-      // Get referrals count
-      const { count: referralsCount } = await supabase
-        .from("referrals")
-        .select("*", { count: "exact", head: true })
-        .eq("referrer_id", id)
-        .eq("referrer_type", type);
+      const memberSince = bookings && bookings.length > 0 
+        ? bookings[bookings.length - 1]?.created_at 
+        : profile?.created_at;
 
       setStats({
-        totalTrips: tripsCount || 0,
+        totalTrips,
         totalPoints: points,
-        memberSince: firstBooking?.created_at || profile?.created_at,
-        referrals: referralsCount || 0,
+        totalSpent,
+        memberSince,
+        referrals,
       });
     } catch (err) {
-      console.log("Error fetching stats:", err);
+      console.log("Error fetching stats:", err.message);
     }
   };
 
-  const fetchSettings = async (id, type) => {
+  const handleUpdateProfile = async () => {
     try {
-      const table = type === 'commuter' ? 'commuter_settings' : 'driver_settings';
-      
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq(type === 'commuter' ? "commuter_id" : "driver_id", id)
-        .maybeSingle();
+      // Parse name
+      const nameParts = editName.split(" ");
+      const firstName = nameParts[0] || "";
+      const lastName = nameParts.slice(1).join(" ") || "";
 
-      if (data) {
-        setNotificationsEnabled(data.notifications_enabled ?? true);
-        setDarkModeEnabled(data.dark_mode_enabled ?? false);
-        setLanguage(data.language || 'english');
-      }
-    } catch (err) {
-      console.log("Error fetching settings:", err);
-    }
-  };
-
-  const handleRefresh = () => {
-    setRefreshing(true);
-    loadUserData();
-  };
-
-  const handleEditField = (field, currentValue) => {
-    setEditingField(field);
-    setEditValue(currentValue || '');
-    setShowEditModal(true);
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editValue.trim()) {
-      Alert.alert("Error", "Please enter a value");
-      return;
-    }
-
-    setUpdating(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    try {
       const table = userType === 'commuter' ? 'commuters' : 'drivers';
-      const updates = { [editingField]: editValue };
-
+      
       const { error } = await supabase
         .from(table)
-        .update(updates)
+        .update({
+          first_name: firstName,
+          last_name: lastName,
+          phone: editPhone,
+          email: editEmail,
+          updated_at: new Date(),
+        })
         .eq("id", userId);
 
       if (error) throw error;
 
-      // Update local state
-      setProfile(prev => ({ ...prev, [editingField]: editValue }));
-      
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Success", "Profile updated successfully!");
-      setShowEditModal(false);
-      setEditingField(null);
-      setEditValue('');
+      Alert.alert("Success", "Profile updated successfully");
+      setEditProfileModal(false);
+      fetchProfile();
     } catch (err) {
-      console.log("Error updating profile:", err);
-      Alert.alert("Error", "Failed to update profile.");
-    } finally {
-      setUpdating(false);
+      console.log("Error updating profile:", err.message);
+      Alert.alert("Error", "Failed to update profile");
     }
   };
 
-  const handlePickImage = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert("Permission Required", "Please grant camera roll permissions to change your profile picture.");
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        quality: 0.8,
-        base64: true,
-      });
-
-      if (!result.canceled) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        
-        // Upload image to Supabase Storage
-        const fileName = `profiles/${userId}/${Date.now()}.jpg`;
-        const response = await fetch(result.assets[0].uri);
-        const blob = await response.blob();
-        
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from("profiles")
-          .upload(fileName, blob);
-
-        if (uploadError) throw uploadError;
-
-        const profileUrl = supabase.storage.from("profiles").getPublicUrl(fileName).data.publicUrl;
-
-        // Update profile with new image URL
-        const table = userType === 'commuter' ? 'commuters' : 'drivers';
-        const { error: updateError } = await supabase
-          .from(table)
-          .update({ profile_picture: profileUrl })
-          .eq("id", userId);
-
-        if (updateError) throw updateError;
-
-        setProfile(prev => ({ ...prev, profile_picture: profileUrl }));
-        
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert("Success", "Profile picture updated!");
-      }
-    } catch (err) {
-      console.log("Error updating profile picture:", err);
-      Alert.alert("Error", "Failed to update profile picture.");
-    }
+  const handleSignOut = async () => {
+    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await AsyncStorage.multiRemove(["user_id", "user_type", "session"]);
+            await supabase.auth.signOut();
+            navigation.replace("UserType");
+          } catch (err) {
+            console.log("Error signing out:", err.message);
+          }
+        },
+      },
+    ]);
   };
 
-  const handleToggleNotification = async (value) => {
-    setNotificationsEnabled(value);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    try {
-      const table = userType === 'commuter' ? 'commuter_settings' : 'driver_settings';
-      const idField = userType === 'commuter' ? 'commuter_id' : 'driver_id';
-      
-      // Check if settings exist
-      const { data: existing } = await supabase
-        .from(table)
-        .select("id")
-        .eq(idField, userId)
-        .maybeSingle();
-
-      if (existing) {
-        await supabase
-          .from(table)
-          .update({ notifications_enabled: value })
-          .eq(idField, userId);
-      } else {
-        await supabase
-          .from(table)
-          .insert({ [idField]: userId, notifications_enabled: value });
-      }
-    } catch (err) {
-      console.log("Error updating settings:", err);
-    }
-  };
-
-  const handleChangePassword = async () => {
-    if (!currentPassword || !newPassword || !confirmPassword) {
-      Alert.alert("Error", "Please fill in all fields");
+const pickImage = async () => {
+  try {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    
+    if (status !== "granted") {
+      Alert.alert("Permission Required", "Please enable photo access");
       return;
     }
 
-    if (newPassword.length < 6) {
-      Alert.alert("Error", "Password must be at least 6 characters");
-      return;
-    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8, // Same quality as driver
+    });
 
-    if (newPassword !== confirmPassword) {
-      Alert.alert("Error", "Passwords do not match");
-      return;
-    }
+    if (!result.canceled && result.assets && result.assets[0]) {
+      const image = result.assets[0];
 
-    setUpdating(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      Alert.alert("Uploading", "Please wait...");
 
-    try {
-      // In a real app, you would verify the current password
-      // For now, we'll just update
-      
-      const { error } = await supabase.auth.updateUser({
-        password: newPassword
-      });
+      // Same simple file naming as driver
+      const fileName = `${Date.now()}.jpg`;
+      const filePath = `${userId}/${fileName}`;
+
+      // Convert to arrayBuffer (same as driver)
+      const response = await fetch(image.uri);
+      const arrayBuffer = await response.arrayBuffer();
+
+      // Use new bucket name
+      const { data, error } = await supabase.storage
+        .from("commuter-profiles")  // Changed from "profiles" to "commuter-profiles"
+        .upload(filePath, arrayBuffer, {
+          contentType: "image/jpeg",
+          upsert: true,
+        });
 
       if (error) throw error;
 
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Success", "Password updated successfully!");
-      setShowChangePasswordModal(false);
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } catch (err) {
-      console.log("Error changing password:", err);
-      Alert.alert("Error", "Failed to change password.");
-    } finally {
-      setUpdating(false);
-    }
-  };
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from("commuter-profiles")
+        .getPublicUrl(filePath);
 
-  const handleLogout = () => {
-    Alert.alert(
-      "Logout",
-      "Are you sure you want to logout?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Logout",
-          style: "destructive",
-          onPress: async () => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            
-            await AsyncStorage.multiRemove(["user_id", "user_type", "session"]);
-            navigation.reset({
-              index: 0,
-              routes: [{ name: "Login" }],
-            });
-          }
-        }
-      ]
-    );
-  };
+      console.log("Upload successful:", urlData.publicUrl);
+
+      // Update database
+      const table = userType === 'commuter' ? 'commuters' : 'drivers';
+      const { error: updateError } = await supabase
+        .from(table)
+        .update({
+          profile_picture: urlData.publicUrl,  // Store full URL
+          updated_at: new Date(),
+        })
+        .eq("id", userId);
+
+      if (updateError) throw updateError;
+
+      // Update state with cache busting
+      setProfile(prev => ({
+        ...prev,
+        profile_picture: urlData.publicUrl + "?t=" + Date.now(),
+      }));
+
+      Alert.alert("Success", "Profile picture updated!");
+    }
+  } catch (err) {
+    console.log("Error:", err);
+    Alert.alert("Upload Failed", err.message);
+  }
+};
 
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
+    return new Date(dateString).toLocaleDateString("en-PH", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
     });
   };
 
-  // Edit Profile Modal
-  const EditModal = () => (
-    <Modal
-      visible={showEditModal}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={() => {
-        setShowEditModal(false);
-        setEditingField(null);
-        setEditValue('');
-      }}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              Edit {editingField === 'first_name' ? 'First Name' :
-                     editingField === 'last_name' ? 'Last Name' :
-                     editingField === 'phone' ? 'Phone Number' :
-                     editingField === 'email' ? 'Email' : 'Profile'}
-            </Text>
-            <Pressable 
-              style={styles.modalCloseButton}
-              onPress={() => {
-                setShowEditModal(false);
-                setEditingField(null);
-                setEditValue('');
-              }}
-            >
-              <Ionicons name="close" size={24} color="#666" />
-            </Pressable>
-          </View>
-
-          <TextInput
-            style={styles.modalInput}
-            value={editValue}
-            onChangeText={setEditValue}
-            placeholder={`Enter your ${editingField?.replace('_', ' ')}`}
-            keyboardType={editingField === 'phone' ? 'phone-pad' : 'default'}
-            autoCapitalize={editingField === 'email' ? 'none' : 'words'}
-          />
-
-          <View style={styles.modalActions}>
-            <Pressable
-              style={styles.modalCancelButton}
-              onPress={() => {
-                setShowEditModal(false);
-                setEditingField(null);
-                setEditValue('');
-              }}
-            >
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modalSaveButton, updating && styles.modalSaveButtonDisabled]}
-              onPress={handleSaveEdit}
-              disabled={updating}
-            >
-              {updating ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Text style={styles.modalSaveText}>Save</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  // Change Password Modal
-  const ChangePasswordModal = () => (
-    <Modal
-      visible={showChangePasswordModal}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={() => {
-        setShowChangePasswordModal(false);
-        setCurrentPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-      }}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Change Password</Text>
-            <Pressable 
-              style={styles.modalCloseButton}
-              onPress={() => {
-                setShowChangePasswordModal(false);
-                setCurrentPassword('');
-                setNewPassword('');
-                setConfirmPassword('');
-              }}
-            >
-              <Ionicons name="close" size={24} color="#666" />
-            </Pressable>
-          </View>
-
-          <View style={styles.passwordInputContainer}>
-            <Text style={styles.inputLabel}>Current Password</Text>
-            <TextInput
-              style={styles.passwordInput}
-              secureTextEntry
-              value={currentPassword}
-              onChangeText={setCurrentPassword}
-              placeholder="Enter current password"
-            />
-          </View>
-
-          <View style={styles.passwordInputContainer}>
-            <Text style={styles.inputLabel}>New Password</Text>
-            <TextInput
-              style={styles.passwordInput}
-              secureTextEntry
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="Enter new password"
-            />
-          </View>
-
-          <View style={styles.passwordInputContainer}>
-            <Text style={styles.inputLabel}>Confirm New Password</Text>
-            <TextInput
-              style={styles.passwordInput}
-              secureTextEntry
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm new password"
-            />
-          </View>
-
-          <View style={styles.modalActions}>
-            <Pressable
-              style={styles.modalCancelButton}
-              onPress={() => {
-                setShowChangePasswordModal(false);
-                setCurrentPassword('');
-                setNewPassword('');
-                setConfirmPassword('');
-              }}
-            >
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.modalSaveButton, updating && styles.modalSaveButtonDisabled]}
-              onPress={handleChangePassword}
-              disabled={updating}
-            >
-              {updating ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Text style={styles.modalSaveText}>Update</Text>
-              )}
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-
-  if (loading) {
+  if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#183B5C" />
-        <Text style={styles.loadingText}>Loading profile...</Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#183B5C" />
-        }
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#183B5C" />
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: 30 }}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+      }
+    >
+      {/* Header with Cover */}
+      <View style={[styles.headerCover, { paddingTop: insets.top + 20 }]}>
+        <View style={styles.headerRow}>
+          <Pressable onPress={() => navigation.goBack()} style={styles.headerButton}>
+            <Ionicons name="arrow-back" size={24} color="#FFF" />
           </Pressable>
-          <Text style={styles.headerTitle}>Account</Text>
+
+          <Text style={styles.headerTitle}>My Account</Text>
+
           <View style={{ width: 40 }} />
         </View>
+      </View>
 
-        {/* Profile Section */}
-        <View style={styles.profileSection}>
-          <Pressable onPress={handlePickImage} style={styles.avatarContainer}>
-            {profile?.profile_picture ? (
-              <Image source={{ uri: profile.profile_picture }} style={styles.avatar} />
-            ) : (
-              <LinearGradient
-                colors={["#183B5C", "#2C5A7A"]}
-                style={styles.avatarGradient}
-              >
-                <Text style={styles.avatarText}>
-                  {profile?.first_name?.[0]}{profile?.last_name?.[0]}
-                </Text>
-              </LinearGradient>
-            )}
-            <View style={styles.editAvatarBadge}>
-              <Ionicons name="camera" size={14} color="#FFF" />
+      {/* Profile Section - Overlapping Card */}
+      <View style={styles.profileCard}>
+        <View style={{ alignItems: "center" }}>
+          {/* Profile Picture */}
+          <Pressable onPress={pickImage} style={styles.avatarContainer}>
+            <View style={styles.avatarWrapper}>
+              {profile?.profile_picture ? (
+                <Image
+                  source={{ uri: profile.profile_picture }}
+                  style={styles.avatar}
+                />
+              ) : (
+                <LinearGradient
+                  colors={["#183B5C", "#2C5A7A"]}
+                  style={styles.avatarGradient}
+                >
+                  <Text style={styles.avatarText}>
+                    {profile?.first_name?.[0]}{profile?.last_name?.[0]}
+                  </Text>
+                </LinearGradient>
+              )}
+            </View>
+            <View style={styles.cameraBadge}>
+              <Ionicons name="camera" size={16} color="#FFF" />
             </View>
           </Pressable>
 
           <Text style={styles.profileName}>
-            {profile?.first_name} {profile?.last_name}
+            {profile ? `${profile.first_name} ${profile.last_name}` : "Loading..."}
           </Text>
-          <Text style={styles.profileType}>
-            {userType === 'commuter' ? 'Passenger' : 'Driver'}
-          </Text>
+
+          <View style={styles.userTypeBadge}>
+            <Ionicons name="person" size={14} color="#666" />
+            <Text style={styles.userTypeText}>Passenger</Text>
+          </View>
+
+
         </View>
 
-        {/* Stats Cards */}
+        {/* Stats Grid */}
         <View style={styles.statsGrid}>
           <View style={styles.statCard}>
-            <Ionicons name="car" size={24} color="#3B82F6" />
             <Text style={styles.statValue}>{stats.totalTrips}</Text>
             <Text style={styles.statLabel}>Total Trips</Text>
           </View>
-          {userType === 'commuter' && (
-            <View style={styles.statCard}>
-              <Ionicons name="star" size={24} color="#F59E0B" />
+
+          <View style={styles.statCard}>
+            <Text style={styles.statValue}>₱{stats.totalSpent.toFixed(0)}</Text>
+            <Text style={styles.statLabel}>Total Spent</Text>
+          </View>
+
+          <View style={styles.statCard}>
+            <View style={styles.statRow}>
               <Text style={styles.statValue}>{stats.totalPoints}</Text>
-              <Text style={styles.statLabel}>Points</Text>
+              <Ionicons name="star" size={16} color="#F59E0B" />
             </View>
-          )}
-          <View style={styles.statCard}>
-            <Ionicons name="people" size={24} color="#10B981" />
-            <Text style={styles.statValue}>{stats.referrals}</Text>
-            <Text style={styles.statLabel}>Referrals</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Ionicons name="calendar" size={24} color="#8B5CF6" />
-            <Text style={styles.statValue}>
-              {stats.memberSince ? new Date(stats.memberSince).getFullYear() : 'N/A'}
-            </Text>
-            <Text style={styles.statLabel}>Member Since</Text>
+            <Text style={styles.statLabel}>Points</Text>
           </View>
         </View>
+      </View>
 
-        {/* Personal Information */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Personal Information</Text>
-          
-          <Pressable 
-            style={styles.infoRow}
-            onPress={() => handleEditField('first_name', profile?.first_name)}
-          >
-            <View style={styles.infoLeft}>
-              <Ionicons name="person-outline" size={20} color="#666" />
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoLabel}>First Name</Text>
-                <Text style={styles.infoValue}>{profile?.first_name || 'Not set'}</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
+      {/* Contact Information */}
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>📞 Contact Information</Text>
 
-          <Pressable 
-            style={styles.infoRow}
-            onPress={() => handleEditField('last_name', profile?.last_name)}
-          >
-            <View style={styles.infoLeft}>
-              <Ionicons name="person-outline" size={20} color="#666" />
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoLabel}>Last Name</Text>
-                <Text style={styles.infoValue}>{profile?.last_name || 'Not set'}</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
-
-          <Pressable 
-            style={styles.infoRow}
-            onPress={() => handleEditField('phone', profile?.phone)}
-          >
-            <View style={styles.infoLeft}>
-              <Ionicons name="call-outline" size={20} color="#666" />
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoLabel}>Phone Number</Text>
-                <Text style={styles.infoValue}>{profile?.phone || 'Not set'}</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
-
-          <Pressable 
-            style={[styles.infoRow, styles.lastInfoRow]}
-            onPress={() => handleEditField('email', profile?.email)}
-          >
-            <View style={styles.infoLeft}>
-              <Ionicons name="mail-outline" size={20} color="#666" />
-              <View style={styles.infoTextContainer}>
-                <Text style={styles.infoLabel}>Email</Text>
-                <Text style={styles.infoValue}>{profile?.email || 'Not set'}</Text>
-              </View>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
-        </View>
-
-        {/* Settings */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Settings</Text>
-          
-          <View style={styles.settingRow}>
-            <View style={styles.settingLeft}>
-              <Ionicons name="notifications-outline" size={20} color="#666" />
-              <Text style={styles.settingLabel}>Push Notifications</Text>
-            </View>
-            <Switch
-              value={notificationsEnabled}
-              onValueChange={handleToggleNotification}
-              trackColor={{ false: "#D1D5DB", true: "#183B5C" }}
-              thumbColor="#FFF"
-            />
+        <View style={styles.contactItem}>
+          <Text style={styles.contactLabel}>Phone Number</Text>
+          <View style={styles.contactRow}>
+            <Ionicons name="call-outline" size={16} color="#183B5C" />
+            <Text style={styles.contactValue}>{profile?.phone || "Not provided"}</Text>
           </View>
+        </View>
 
-          <View style={styles.settingRow}>
-            <View style={styles.settingLeft}>
-              <Ionicons name="moon-outline" size={20} color="#666" />
-              <Text style={styles.settingLabel}>Dark Mode</Text>
-            </View>
-            <Switch
-              value={darkModeEnabled}
-              onValueChange={setDarkModeEnabled}
-              trackColor={{ false: "#D1D5DB", true: "#183B5C" }}
-              thumbColor="#FFF"
-            />
+        <View style={styles.contactItem}>
+          <Text style={styles.contactLabel}>Email Address</Text>
+          <View style={styles.contactRow}>
+            <Ionicons name="mail-outline" size={16} color="#183B5C" />
+            <Text style={styles.contactValue}>{profile?.email || "Not provided"}</Text>
           </View>
+        </View>
+      </View>
 
-          <Pressable 
-            style={[styles.settingRow, styles.lastSettingRow]}
-            onPress={() => setShowChangePasswordModal(true)}
+      {/* Referrals Info */}
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>🤝 Referrals</Text>
+
+        <View style={styles.referralRow}>
+          <View>
+            <Text style={styles.referralLabel}>Total Referrals</Text>
+            <Text style={styles.referralValue}>{stats.referrals}</Text>
+          </View>
+          <Pressable
+            style={styles.inviteButton}
+            onPress={() => navigation.navigate("ReferralScreen")}
           >
-            <View style={styles.settingLeft}>
-              <Ionicons name="lock-closed-outline" size={20} color="#666" />
-              <Text style={styles.settingLabel}>Change Password</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
+            <Text style={styles.inviteButtonText}>Invite</Text>
           </Pressable>
         </View>
+      </View>
 
-        {/* Support */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Support</Text>
-          
-          <Pressable style={styles.supportRow}>
-            <View style={styles.supportLeft}>
-              <Ionicons name="help-circle-outline" size={20} color="#666" />
-              <Text style={styles.supportLabel}>Help Center</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
+      {/* Account Settings */}
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>⚙️ Account Settings</Text>
 
-          <Pressable style={styles.supportRow}>
-            <View style={styles.supportLeft}>
-              <Ionicons name="document-text-outline" size={20} color="#666" />
-              <Text style={styles.supportLabel}>Terms of Service</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
-
-          <Pressable style={[styles.supportRow, styles.lastSupportRow]}>
-            <View style={styles.supportLeft}>
-              <Ionicons name="shield-checkmark-outline" size={20} color="#666" />
-              <Text style={styles.supportLabel}>Privacy Policy</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#666" />
-          </Pressable>
-        </View>
-
-        {/* App Info */}
-        <View style={styles.appInfo}>
-          <Text style={styles.appVersion}>Version 1.0.0</Text>
-          <Text style={styles.appCopyright}>© 2024 SakayNA. All rights reserved.</Text>
-        </View>
-
-        {/* Logout Button */}
-        <Pressable style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color="#EF4444" />
-          <Text style={styles.logoutText}>Logout</Text>
+        <Pressable style={styles.menuItem} onPress={() => navigation.navigate("PointsRewards")}>
+          <Ionicons name="star-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Points & Rewards</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
-      </ScrollView>
 
-      {/* Modals */}
-      <EditModal />
-      <ChangePasswordModal />
-    </View>
+        <Pressable style={styles.menuItem} onPress={() => navigation.navigate("PaymentMethods")}>
+          <Ionicons name="wallet-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Payment Methods</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+
+        <Pressable style={styles.menuItem} onPress={() => navigation.navigate("RideHistory")}>
+          <Ionicons name="time-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Ride History</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+
+        <Pressable style={[styles.menuItem, styles.lastMenuItem]} onPress={() => Linking.openURL("https://sakay.ph/help")}>
+          <Ionicons name="help-circle-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Help Center</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+      </View>
+
+      {/* Legal Links */}
+      <View style={styles.sectionCard}>
+        <Pressable style={styles.menuItem} onPress={() => Linking.openURL("https://sakay.ph/terms")}>
+          <Ionicons name="document-text-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Terms of Service</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+
+        <Pressable style={[styles.menuItem, styles.lastMenuItem]} onPress={() => Linking.openURL("https://sakay.ph/privacy")}>
+          <Ionicons name="lock-closed-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Privacy Policy</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+      </View>
+
+      {/* Sign Out Button */}
+      <Pressable style={styles.signOutButton} onPress={handleSignOut}>
+        <Ionicons name="log-out-outline" size={20} color="#EF4444" />
+        <Text style={styles.signOutText}>Sign Out</Text>
+      </Pressable>
+
+      {/* App Info */}
+      <View style={styles.appInfo}>
+        <Text style={styles.appVersion}>SakayNa Passenger v1.0.0</Text>
+        <Text style={styles.memberSince}>
+          Member since: {formatDate(profile?.created_at || stats.memberSince)}
+        </Text>
+      </View>
+
+      {/* Edit Profile Modal */}
+      <Modal
+        visible={editProfileModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setEditProfileModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.modalContainer}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Edit Profile</Text>
+                <Pressable onPress={() => setEditProfileModal(false)}>
+                  <Ionicons name="close" size={24} color="#666" />
+                </Pressable>
+              </View>
+
+              <ScrollView keyboardShouldPersistTaps="handled">
+                <Text style={styles.inputLabel}>Full Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter your full name"
+                  value={editName}
+                  onChangeText={setEditName}
+                />
+
+                <Text style={styles.inputLabel}>Phone Number</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter phone number"
+                  keyboardType="phone-pad"
+                  value={editPhone}
+                  onChangeText={setEditPhone}
+                />
+
+                <Text style={styles.inputLabel}>Email Address</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Enter email address"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={editEmail}
+                  onChangeText={setEditEmail}
+                />
+
+                <View style={styles.modalButtons}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={() => setEditProfileModal(false)}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.saveButton}
+                    onPress={handleUpdateProfile}
+                  >
+                    <Text style={styles.saveButtonText}>Save</Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+    </ScrollView>
   );
 }
 
@@ -776,53 +577,69 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F5F7FA",
-    marginTop: -40,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#F5F7FA",
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: "#666",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
+  headerCover: {
+    backgroundColor: "#183B5C",
+    paddingBottom: 60,
     paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: "#FFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
+    borderBottomLeftRadius: 30,
+    borderBottomRightRadius: 30,
   },
-  backButton: {
-    padding: 8,
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  headerButton: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#183B5C",
+    color: "#FFF",
   },
-  profileSection: {
-    alignItems: "center",
-    paddingVertical: 20,
+  profileCard: {
+    marginHorizontal: 20,
+    marginTop: -40,
     backgroundColor: "#FFF",
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
   },
   avatarContainer: {
-    position: 'relative',
-    marginBottom: 12,
+    position: "relative",
+    marginBottom: 10,
   },
-  avatar: {
+  avatarWrapper: {
     width: 100,
     height: 100,
     borderRadius: 50,
+    backgroundColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 4,
+    borderColor: "#FFF",
+  },
+  avatar: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 50,
   },
   avatarGradient: {
-    width: 100,
-    height: 100,
+    width: "100%",
+    height: "100%",
     borderRadius: 50,
     justifyContent: "center",
     alignItems: "center",
@@ -832,8 +649,8 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#FFF",
   },
-  editAvatarBadge: {
-    position: 'absolute',
+  cameraBadge: {
+    position: "absolute",
     bottom: 0,
     right: 0,
     backgroundColor: "#183B5C",
@@ -846,155 +663,174 @@ const styles = StyleSheet.create({
     borderColor: "#FFF",
   },
   profileName: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "bold",
     color: "#333",
-    marginBottom: 4,
+    marginBottom: 5,
   },
-  profileType: {
-    fontSize: 14,
-    color: "#666",
+  userTypeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#F3F4F6",
     paddingHorizontal: 12,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 20,
+    marginBottom: 15,
+  },
+  userTypeText: {
+    color: "#666",
+    fontWeight: "500",
+    marginLeft: 4,
+  },
+  editProfileButton: {
+    backgroundColor: "#F3F4F6",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  editProfileText: {
+    color: "#183B5C",
+    fontWeight: "600",
+    marginLeft: 5,
   },
   statsGrid: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    padding: 15,
+    marginTop: 20,
     gap: 10,
-    backgroundColor: "#FFF",
-    marginTop: 1,
   },
   statCard: {
     flex: 1,
-    minWidth: "45%",
     backgroundColor: "#F9FAFB",
-    padding: 15,
     borderRadius: 16,
+    padding: 12,
+    alignItems: "center",
+  },
+  statRow: {
+    flexDirection: "row",
     alignItems: "center",
   },
   statValue: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#333",
-    marginTop: 8,
-    marginBottom: 4,
+    color: "#183B5C",
   },
   statLabel: {
     fontSize: 12,
     color: "#666",
+    marginTop: 2,
   },
-  section: {
+  sectionCard: {
+    marginHorizontal: 20,
+    marginTop: 20,
     backgroundColor: "#FFF",
-    marginTop: 15,
-    paddingHorizontal: 20,
-    paddingVertical: 15,
+    borderRadius: 24,
+    padding: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
   },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "bold",
     color: "#333",
     marginBottom: 15,
   },
-  infoRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+  contactItem: {
+    marginBottom: 12,
   },
-  lastInfoRow: {
-    borderBottomWidth: 0,
-  },
-  infoLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  infoTextContainer: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  infoLabel: {
+  contactLabel: {
     fontSize: 12,
-    color: "#999",
+    color: "#666",
     marginBottom: 2,
   },
-  infoValue: {
-    fontSize: 14,
-    color: "#333",
+  contactRow: {
+    flexDirection: "row",
+    alignItems: "center",
   },
-  settingRow: {
+  contactValue: {
+    fontSize: 16,
+    color: "#333",
+    marginLeft: 8,
+  },
+  referralRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
   },
-  lastSettingRow: {
-    borderBottomWidth: 0,
-  },
-  settingLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  settingLabel: {
+  referralLabel: {
     fontSize: 14,
-    color: "#333",
-  },
-  supportRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  lastSupportRow: {
-    borderBottomWidth: 0,
-  },
-  supportLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  supportLabel: {
-    fontSize: 14,
-    color: "#333",
-  },
-  appInfo: {
-    alignItems: "center",
-    paddingVertical: 20,
-  },
-  appVersion: {
-    fontSize: 12,
-    color: "#999",
+    color: "#666",
     marginBottom: 4,
   },
-  appCopyright: {
-    fontSize: 11,
-    color: "#999",
+  referralValue: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: "#183B5C",
   },
-  logoutButton: {
+  inviteButton: {
+    backgroundColor: "#183B5C",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  inviteButtonText: {
+    color: "#FFF",
+    fontWeight: "600",
+  },
+  menuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  lastMenuItem: {
+    borderBottomWidth: 0,
+  },
+  menuIcon: {
+    width: 30,
+  },
+  menuText: {
+    flex: 1,
+    color: "#333",
+  },
+  signOutButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#FEE2E2",
     marginHorizontal: 20,
-    marginVertical: 20,
+    marginTop: 20,
+    marginBottom: 10,
     padding: 16,
     borderRadius: 12,
     gap: 8,
   },
-  logoutText: {
+  signOutText: {
     color: "#EF4444",
     fontSize: 16,
     fontWeight: "600",
+  },
+  appInfo: {
+    alignItems: "center",
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  appVersion: {
+    fontSize: 12,
+    color: "#9CA3AF",
+  },
+  memberSince: {
+    fontSize: 11,
+    color: "#D1D5DB",
+    marginTop: 2,
+  },
+  modalContainer: {
+    flex: 1,
   },
   modalOverlay: {
     flex: 1,
@@ -1003,9 +839,10 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: "#FFF",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 20,
+    maxHeight: "90%",
   },
   modalHeader: {
     flexDirection: "row",
@@ -1013,73 +850,50 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
-  modalCloseButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#F3F4F6",
-    justifyContent: "center",
-    alignItems: "center",
-  },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "bold",
     color: "#333",
   },
-  modalInput: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 15,
-    fontSize: 16,
-    marginBottom: 20,
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+    marginBottom: 8,
+  },
+  input: {
     borderWidth: 1,
     borderColor: "#E5E7EB",
-  },
-  modalActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  modalCancelButton: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    padding: 16,
     borderRadius: 12,
-    alignItems: "center",
-  },
-  modalCancelText: {
-    color: "#666",
+    padding: 12,
     fontSize: 16,
-    fontWeight: "600",
-  },
-  modalSaveButton: {
-    flex: 1,
-    backgroundColor: "#183B5C",
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  modalSaveButtonDisabled: {
-    backgroundColor: "#9CA3AF",
-  },
-  modalSaveText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  passwordInputContainer: {
     marginBottom: 15,
   },
-  inputLabel: {
-    fontSize: 13,
-    color: "#666",
-    marginBottom: 6,
+  modalButtons: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 10,
   },
-  passwordInput: {
-    backgroundColor: "#F9FAFB",
+  cancelButton: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    padding: 14,
     borderRadius: 12,
-    padding: 15,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+    alignItems: "center",
+  },
+  cancelButtonText: {
+    color: "#333",
+    fontWeight: "600",
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: "#183B5C",
+    padding: 14,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  saveButtonText: {
+    color: "#FFF",
+    fontWeight: "600",
   },
 });

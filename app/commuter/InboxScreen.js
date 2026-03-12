@@ -18,7 +18,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from 'expo-haptics';
 
 export default function InboxScreen() {
@@ -35,10 +34,50 @@ export default function InboxScreen() {
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [filterType, setFilterType] = useState('all'); // 'all', 'unread', 'booking', 'payment', 'promo', 'system'
 
+  // Load user data on focus
   useFocusEffect(
     React.useCallback(() => {
       loadUserData();
     }, [])
+  );
+
+  // Auto-mark all as read when screen is focused
+  useFocusEffect(
+    React.useCallback(() => {
+      const markAllAsReadOnFocus = async () => {
+        if (userId && notifications.some(n => !n.is_read)) {
+          try {
+            const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
+            
+            if (unreadIds.length > 0) {
+              console.log("📱 Marking all notifications as read on focus:", unreadIds.length);
+              
+              const { error } = await supabase
+                .from("notifications")
+                .update({ 
+                  is_read: true,
+                  read_at: new Date().toISOString()
+                })
+                .in("id", unreadIds);
+
+              if (error) throw error;
+
+              // Update local state
+              setNotifications(prev => 
+                prev.map(n => ({ ...n, is_read: true }))
+              );
+              
+              setUnreadCount(0);
+              console.log("✅ All notifications marked as read on focus");
+            }
+          } catch (err) {
+            console.log("Error marking all as read on focus:", err);
+          }
+        }
+      };
+
+      markAllAsReadOnFocus();
+    }, [userId, notifications])
   );
 
   const loadUserData = async () => {
@@ -61,19 +100,24 @@ export default function InboxScreen() {
 
   const fetchNotifications = async (id) => {
     try {
+      console.log("🔍 Fetching notifications for user:", id);
+      
       const { data, error } = await supabase
         .from("notifications")
         .select("*")
         .eq("user_id", id)
+        .eq("user_type", userType)
         .order("created_at", { ascending: false });
 
       if (error) throw error;
 
+      console.log("📊 Notifications fetched:", data?.length || 0);
       setNotifications(data || []);
       
       // Count unread
       const unread = data?.filter(n => !n.is_read).length || 0;
       setUnreadCount(unread);
+      console.log("📊 Unread count:", unread);
     } catch (err) {
       console.log("Error fetching notifications:", err);
     }
@@ -83,11 +127,13 @@ export default function InboxScreen() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       
+      console.log("📱 Marking notification as read:", notificationId);
+      
       const { error } = await supabase
         .from("notifications")
         .update({ 
           is_read: true,
-          read_at: new Date()
+          read_at: new Date().toISOString()
         })
         .eq("id", notificationId);
 
@@ -100,8 +146,10 @@ export default function InboxScreen() {
         )
       );
       
-      const unread = notifications.filter(n => !n.is_read).length - 1;
-      setUnreadCount(Math.max(0, unread));
+      // Update unread count
+      setUnreadCount(prev => Math.max(0, prev - 1));
+      
+      console.log("✅ Notification marked as read");
     } catch (err) {
       console.log("Error marking as read:", err);
     }
@@ -118,11 +166,13 @@ export default function InboxScreen() {
         return;
       }
 
+      console.log("📱 Marking all as read:", unreadIds.length);
+      
       const { error } = await supabase
         .from("notifications")
         .update({ 
           is_read: true,
-          read_at: new Date()
+          read_at: new Date().toISOString()
         })
         .in("id", unreadIds);
 
@@ -178,6 +228,8 @@ export default function InboxScreen() {
           onPress: async () => {
             try {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              
+              console.log("🗑️ Deleting notification:", notificationId);
               
               const { error } = await supabase
                 .from("notifications")
@@ -320,55 +372,57 @@ export default function InboxScreen() {
                 </Pressable>
               </View>
 
-              <View style={styles.notificationDetail}>
-                <View style={[
-                  styles.detailIcon,
-                  { backgroundColor: getNotificationIcon(selectedNotification.type).bg }
-                ]}>
-                  <Ionicons 
-                    name={getNotificationIcon(selectedNotification.type).name} 
-                    size={32} 
-                    color={getNotificationIcon(selectedNotification.type).color} 
-                  />
-                </View>
-
-                <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
-                <Text style={styles.detailTime}>
-                  {new Date(selectedNotification.created_at).toLocaleString('en-US', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}
-                </Text>
-
-                <View style={styles.detailMessageContainer}>
-                  <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
-                </View>
-
-                {selectedNotification.data && (
-                  <View style={styles.detailData}>
-                    {Object.entries(selectedNotification.data).map(([key, value]) => (
-                      <View key={key} style={styles.detailDataRow}>
-                        <Text style={styles.detailDataKey}>{key}:</Text>
-                        <Text style={styles.detailDataValue}>{String(value)}</Text>
-                      </View>
-                    ))}
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.notificationDetail}>
+                  <View style={[
+                    styles.detailIcon,
+                    { backgroundColor: getNotificationIcon(selectedNotification.type).bg }
+                  ]}>
+                    <Ionicons 
+                      name={getNotificationIcon(selectedNotification.type).name} 
+                      size={32} 
+                      color={getNotificationIcon(selectedNotification.type).color} 
+                    />
                   </View>
-                )}
 
-                {selectedNotification.action_url && (
-                  <Pressable
-                    style={styles.detailActionButton}
-                    onPress={() => handleNotificationAction(selectedNotification)}
-                  >
-                    <Text style={styles.detailActionText}>View Details</Text>
-                    <Ionicons name="arrow-forward" size={20} color="#FFF" />
-                  </Pressable>
-                )}
-              </View>
+                  <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
+                  <Text style={styles.detailTime}>
+                    {new Date(selectedNotification.created_at).toLocaleString('en-US', {
+                      weekday: 'long',
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </Text>
+
+                  <View style={styles.detailMessageContainer}>
+                    <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
+                  </View>
+
+                  {selectedNotification.data && (
+                    <View style={styles.detailData}>
+                      {Object.entries(selectedNotification.data).map(([key, value]) => (
+                        <View key={key} style={styles.detailDataRow}>
+                          <Text style={styles.detailDataKey}>{key}:</Text>
+                          <Text style={styles.detailDataValue}>{String(value)}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {selectedNotification.action_url && (
+                    <Pressable
+                      style={styles.detailActionButton}
+                      onPress={() => handleNotificationAction(selectedNotification)}
+                    >
+                      <Text style={styles.detailActionText}>View Details</Text>
+                      <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                    </Pressable>
+                  )}
+                </View>
+              </ScrollView>
             </>
           )}
         </View>
@@ -474,7 +528,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#F5F7FA",
-    marginTop: -40,
   },
   loadingContainer: {
     flex: 1,
@@ -669,6 +722,7 @@ const styles = StyleSheet.create({
   },
   notificationDetail: {
     alignItems: "center",
+    paddingBottom: 20,
   },
   detailIcon: {
     width: 70,

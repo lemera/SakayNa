@@ -1,5 +1,5 @@
 // screens/driver/DriverTrackRideScreen.js
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,12 @@ import {
   Image,
   StyleSheet,
   Modal,
+  Animated,
+  Vibration,
+  TouchableOpacity,
+  Dimensions,
+  AppState,
+  Easing,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,12 +26,196 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
-import QRCode from 'react-native-qrcode-svg';
 import Constants from "expo-constants";
+import * as Haptics from "expo-haptics";
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+
+const { width, height } = Dimensions.get('window');
+
+// ================= MODERN ALERT COMPONENT =================
+const ModernAlert = ({ visible, title, message, type, onClose, onConfirm, confirmText, cancelText }) => {
+  const slideAnim = useRef(new Animated.Value(300)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+          easing: Easing.out(Easing.cubic),
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      slideAnim.setValue(300);
+      opacityAnim.setValue(0);
+    }
+  }, [visible]);
+
+  const getIconByType = () => {
+    switch (type) {
+      case 'success':
+        return { name: 'checkmark-circle', color: '#10B981' };
+      case 'error':
+        return { name: 'close-circle', color: '#EF4444' };
+      case 'warning':
+        return { name: 'alert-circle', color: '#F59E0B' };
+      case 'info':
+        return { name: 'information-circle', color: '#3B82F6' };
+      default:
+        return { name: 'information-circle', color: '#3B82F6' };
+    }
+  };
+
+  const icon = getIconByType();
+
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <BlurView intensity={20} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <Animated.View style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          opacity: opacityAnim,
+        }}>
+          <Animated.View style={{
+            backgroundColor: '#FFF',
+            borderRadius: 28,
+            width: '85%',
+            maxWidth: 340,
+            padding: 24,
+            transform: [{ translateY: slideAnim }],
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 10 },
+            shadowOpacity: 0.2,
+            shadowRadius: 20,
+            elevation: 10,
+          }}>
+            {/* Icon */}
+            <View style={{ alignItems: 'center', marginBottom: 16 }}>
+              <View style={{
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: icon.color + '15',
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}>
+                <Ionicons name={icon.name} size={40} color={icon.color} />
+              </View>
+            </View>
+
+            {/* Title */}
+            <Text style={{
+              fontSize: 20,
+              fontWeight: '700',
+              color: '#1F2937',
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>
+              {title}
+            </Text>
+
+            {/* Message */}
+            <Text style={{
+              fontSize: 15,
+              color: '#6B7280',
+              textAlign: 'center',
+              marginBottom: 24,
+              lineHeight: 22,
+            }}>
+              {message}
+            </Text>
+
+            {/* Buttons */}
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              {cancelText && (
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 14,
+                    borderRadius: 16,
+                    backgroundColor: '#F3F4F6',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#4B5563' }}>
+                    {cancelText}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              
+              {confirmText && (
+                <TouchableOpacity
+                  onPress={onConfirm}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 14,
+                    borderRadius: 16,
+                    backgroundColor: '#183B5C',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#FFF' }}>
+                    {confirmText}
+                  </Text>
+                </TouchableOpacity>
+              )}
+              
+              {!cancelText && !confirmText && (
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 14,
+                    borderRadius: 16,
+                    backgroundColor: '#183B5C',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#FFF' }}>
+                    OK
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </Animated.View>
+        </Animated.View>
+      </BlurView>
+    </Modal>
+  );
+};
 
 export default function DriverTrackRideScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const mapRef = useRef(null);
+  const notificationAnimation = useRef(new Animated.Value(0)).current;
+  const notificationStack = useRef([]);
+  const appState = useRef(AppState.currentState);
+
+  // Alert state
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState({
+    title: '',
+    message: '',
+    type: 'info',
+    onConfirm: null,
+    confirmText: null,
+    cancelText: null,
+  });
 
   const [loading, setLoading] = useState(true);
   const [driverId, setDriverId] = useState(null);
@@ -40,9 +230,13 @@ export default function DriverTrackRideScreen({ navigation }) {
   const [bookingStatus, setBookingStatus] = useState("pending");
   const [locationSubscription, setLocationSubscription] = useState(null);
   
+  // MODERN NOTIFICATION SYSTEM
+  const [notifications, setNotifications] = useState([]);
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  
   // For pending requests
   const [pendingRequests, setPendingRequests] = useState([]);
-  const [cancelledRequest, setCancelledRequest] = useState(null);
   
   // For request map
   const [selectedRequest, setSelectedRequest] = useState(null);
@@ -55,28 +249,54 @@ export default function DriverTrackRideScreen({ navigation }) {
   const [navigationDestination, setNavigationDestination] = useState('pickup');
   const [hasArrivedAtPickup, setHasArrivedAtPickup] = useState(false);
   const [rideStarted, setRideStarted] = useState(false);
+  const [navigationInitialized, setNavigationInitialized] = useState(false);
   
   // UI state
   const [showPendingRequests, setShowPendingRequests] = useState(true);
-  const [cancelledBookingAlert, setCancelledBookingAlert] = useState(null);
 
-  // QR Code related state
-  const [showQRModal, setShowQRModal] = useState(false);
-  const [qrPoints, setQrPoints] = useState(0);
-  const [qrFare, setQrFare] = useState(0);
-  const [qrValue, setQrValue] = useState('');
+  // Points payment state
   const [waitingForPayment, setWaitingForPayment] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState(null);
   const [showPaymentSuccessBanner, setShowPaymentSuccessBanner] = useState(false);
+  const [paymentChecked, setPaymentChecked] = useState(false);
+  const [pointsNeeded, setPointsNeeded] = useState(0);
   
   // Timer refs
   const timerRef = useRef(null);
   const [timeLeft, setTimeLeft] = useState(300);
-  const navigationCheckIntervalRef = useRef(null);
+  const paymentCheckIntervalRef = useRef(null);
+
+  // Refs for tracking subscription status
+  const requestSubscriptionRef = useRef(null);
+  const bookingSubscriptionRef = useRef(null);
+  const paymentSubscriptionRef = useRef(null);
+  const isMounted = useRef(true);
+  const reconnectAttempts = useRef(0);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+
+  // ================= CUSTOM ALERT FUNCTION =================
+  const showAlert = (title, message, type = 'info', options = {}) => {
+    setAlertConfig({
+      title,
+      message,
+      type,
+      onConfirm: options.onConfirm || (() => setAlertVisible(false)),
+      confirmText: options.confirmText || null,
+      cancelText: options.cancelText || null,
+    });
+    setAlertVisible(true);
+  };
+
+  // Set isMounted on mount/unmount
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -84,41 +304,28 @@ export default function DriverTrackRideScreen({ navigation }) {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
-      if (navigationCheckIntervalRef.current) {
-        clearInterval(navigationCheckIntervalRef.current);
+      if (paymentCheckIntervalRef.current) {
+        clearInterval(paymentCheckIntervalRef.current);
       }
     };
   }, []);
 
-  // Timer effect for QR code expiration
+  // Handle App State changes (for when app goes to background/foreground)
   useEffect(() => {
-    if (showQRModal && timeLeft > 0 && !isProcessingPayment) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timerRef.current);
-            if (!isProcessingPayment) {
-              setShowQRModal(false);
-              setWaitingForPayment(false);
-              Alert.alert(
-                "QR Code Expired",
-                "The QR code has expired. Please try again.",
-                [{ text: "OK" }]
-              );
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      
-      return () => {
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+        // App has come to the foreground, check payment status
+        if (waitingForPayment && activeBooking && !paymentSuccess) {
+          checkPaymentStatus();
         }
-      };
-    }
-  }, [showQRModal, timeLeft, isProcessingPayment]);
+      }
+      appState.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [waitingForPayment, activeBooking, paymentSuccess]);
 
   // Auto-hide payment success banner after 5 seconds
   useEffect(() => {
@@ -131,101 +338,167 @@ export default function DriverTrackRideScreen({ navigation }) {
     }
   }, [showPaymentSuccessBanner]);
 
-  // FIXED: Immediately set navigation state when activeBooking is accepted
+  // Reset navigation state when activeBooking changes
   useEffect(() => {
-    if (activeBooking && activeBooking.status === "accepted") {
-      console.log("🎯 Active booking detected - setting navigation state");
-      setIsNavigating(true);
-      setShowPendingRequests(false);
+    if (!activeBooking) {
+      setIsNavigating(false);
+      setNavigationDestination('pickup');
+      setHasArrivedAtPickup(false);
+      setRideStarted(false);
+      setNavigationInitialized(false);
+      setRouteCoordinates([]);
+      setEstimatedTime(null);
+      setEstimatedDistance(null);
+      setPaymentSuccess(false);
+      setPaymentMethod(null);
+      setShowPaymentSuccessBanner(false);
+      setWaitingForPayment(false);
+      setIsProcessingPayment(false);
+      setPaymentChecked(false);
+    }
+  }, [activeBooking]);
+
+  // Initialize navigation when activeBooking is set
+  useEffect(() => {
+    if (activeBooking && activeBooking.status === "accepted" && driverLocation && !navigationInitialized) {
+      initializeNavigation();
+      setNavigationInitialized(true);
+    }
+  }, [activeBooking, driverLocation, navigationInitialized]);
+
+  // Initialize navigation
+  const initializeNavigation = () => {
+    setIsNavigating(true);
+    setShowPendingRequests(false);
+    
+    if (activeBooking.driver_arrived_at) {
+      setHasArrivedAtPickup(true);
+      setNavigationDestination('dropoff');
       
-      // Check if driver has already arrived
-      if (activeBooking.driver_arrived_at) {
-        console.log("📍 Driver already arrived at pickup");
-        setHasArrivedAtPickup(true);
-        setNavigationDestination('dropoff');
-        
-        // If ride has also started
-        if (activeBooking.ride_started_at) {
-          console.log("🚗 Ride already started");
-          setRideStarted(true);
-        }
-      } else {
-        // Default to heading to pickup
-        console.log("🚗 Setting destination to pickup");
-        setNavigationDestination('pickup');
-        setHasArrivedAtPickup(false);
-        setRideStarted(false);
+      if (activeBooking.ride_started_at) {
+        setRideStarted(true);
       }
       
-      // Calculate route if we have driver location
       if (driverLocation) {
-        if (activeBooking.driver_arrived_at) {
-          // Already at pickup, show route to dropoff
-          calculateRouteToDropoff(
-            { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
-            { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
-          );
-        } else {
-          // Heading to pickup
-          calculateRouteToPickup(driverLocation, {
-            latitude: activeBooking.pickup_latitude,
-            longitude: activeBooking.pickup_longitude
-          });
-        }
+        calculateRouteToDropoff(
+          { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+          { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+        );
       }
-    }
-  }, [activeBooking]); // This runs whenever activeBooking changes
-
-  // FIXED: Continuously check if we need to update navigation state
-  useEffect(() => {
-    if (!activeBooking || !driverLocation) return;
-
-    // Clear any existing interval
-    if (navigationCheckIntervalRef.current) {
-      clearInterval(navigationCheckIntervalRef.current);
-    }
-
-    // Set up interval to check if we need to update route
-    navigationCheckIntervalRef.current = setInterval(() => {
-      if (!activeBooking || !driverLocation) return;
-
-      // If we haven't arrived at pickup yet, update route to pickup
-      if (!hasArrivedAtPickup && !activeBooking.driver_arrived_at) {
+    } else {
+      setNavigationDestination('pickup');
+      setHasArrivedAtPickup(false);
+      setRideStarted(false);
+      
+      if (driverLocation) {
         calculateRouteToPickup(driverLocation, {
           latitude: activeBooking.pickup_latitude,
           longitude: activeBooking.pickup_longitude
         });
       }
-      // If we're at pickup but ride hasn't started, keep showing route to dropoff
-      else if (hasArrivedAtPickup && !rideStarted && navigationDestination === 'dropoff') {
-        calculateRouteToDropoff(
-          { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
-          { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
-        );
-      }
-      // If ride has started, show route to dropoff
-      else if (rideStarted) {
-        calculateRouteToDropoff(
-          { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
-          { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
-        );
-      }
-    }, 5000); // Update every 5 seconds
+    }
+  };
 
-    return () => {
-      if (navigationCheckIntervalRef.current) {
-        clearInterval(navigationCheckIntervalRef.current);
+  // ================= ENHANCED PAYMENT DETECTION =================
+  const checkPaymentStatus = async () => {
+    if (!activeBooking || !isMounted.current) return;
+    
+    try {
+      console.log("🔍 Checking payment status for booking:", activeBooking.id);
+      
+      const { data, error } = await supabase
+        .from("bookings")
+        .select("payment_status, payment_type, points_used, status")
+        .eq("id", activeBooking.id)
+        .single();
+
+      if (error) {
+        console.log("❌ Error checking payment status:", error);
+        return;
       }
-    };
-  }, [activeBooking, driverLocation, hasArrivedAtPickup, rideStarted, navigationDestination]);
+
+      console.log("📊 Payment status check result:", data);
+
+      if (data.payment_status === 'paid' && !paymentSuccess && !isProcessingPayment) {
+        console.log("✅ Payment detected via status check!");
+        handlePaymentSuccess(data);
+      }
+    } catch (err) {
+      console.log("❌ Error in checkPaymentStatus:", err);
+    }
+  };
+
+  const handlePaymentSuccess = (bookingData) => {
+    if (isProcessingPayment) {
+      console.log("⚠️ Already processing payment, skipping...");
+      return;
+    }
+
+    setIsProcessingPayment(true);
+    setPaymentSuccess(true);
+    setPaymentMethod(bookingData.payment_type || 'wallet');
+    setShowPaymentSuccessBanner(true);
+    
+    setWaitingForPayment(false);
+    
+    if (paymentCheckIntervalRef.current) {
+      clearInterval(paymentCheckIntervalRef.current);
+    }
+
+    addNotification({
+      type: 'success',
+      title: 'Payment Received!',
+      message: `The passenger has successfully paid ₱${activeBooking?.fare?.toFixed(2)} using ${bookingData.points_used || pointsNeeded || 0} points.`,
+      duration: 5000,
+      actionable: true,
+      actionText: 'Complete Trip',
+      onAction: () => {
+        completeTripWithPayment(
+          activeBooking?.fare || 0,
+          "wallet",
+          bookingData.points_used || pointsNeeded || 0
+        );
+      }
+    });
+
+    // Auto-complete after 3 seconds
+    setTimeout(() => {
+      if (isMounted.current && !isProcessingPayment) {
+        completeTripWithPayment(
+          activeBooking?.fare || 0,
+          "wallet",
+          bookingData.points_used || pointsNeeded || 0
+        ).finally(() => {
+          setIsProcessingPayment(false);
+        });
+      }
+    }, 3000);
+  };
 
   // Listen for payment confirmation from commuter via real-time subscription
   useEffect(() => {
-    if (!activeBooking) return;
+    if (!activeBooking || !driverId) return;
 
-    console.log("📡 Setting up payment listener for booking:", activeBooking.id);
+    console.log("📡 Setting up enhanced payment listener for booking:", activeBooking.id);
 
-    const paymentSubscription = supabase
+    // Clean up existing subscription
+    if (paymentSubscriptionRef.current) {
+      paymentSubscriptionRef.current.unsubscribe();
+    }
+
+    // Set up periodic payment check (backup)
+    if (paymentCheckIntervalRef.current) {
+      clearInterval(paymentCheckIntervalRef.current);
+    }
+
+    paymentCheckIntervalRef.current = setInterval(() => {
+      if (waitingForPayment && !paymentSuccess && !isProcessingPayment) {
+        checkPaymentStatus();
+      }
+    }, 3000); // Check every 3 seconds
+
+    // Real-time subscription
+    paymentSubscriptionRef.current = supabase
       .channel(`payment-${activeBooking.id}`)
       .on(
         'postgres_changes',
@@ -238,40 +511,9 @@ export default function DriverTrackRideScreen({ navigation }) {
         (payload) => {
           console.log("💳 Payment update received:", payload);
           
-          // Check if payment status changed to paid
           if (payload.new.payment_status === 'paid') {
-            console.log("✅ Payment confirmed! Processing...");
-            
-            // Don't process if already processing
-            if (isProcessingPayment) {
-              console.log("⚠️ Already processing payment, skipping...");
-              return;
-            }
-            
-            setIsProcessingPayment(true);
-            setPaymentSuccess(true);
-            setPaymentMethod(payload.new.payment_type || 'wallet');
-            setShowPaymentSuccessBanner(true);
-            
-            // Close modal immediately when payment is received
-            setShowQRModal(false);
-            setWaitingForPayment(false);
-            
-            // Show success indicator
-            Alert.alert(
-              "✅ Payment Received!",
-              `The passenger has successfully paid ₱${activeBooking.fare?.toFixed(2)} using ${qrPoints || payload.new.points_used || 0} points.`,
-              [{ text: "OK" }]
-            );
-            
-            // Complete the trip
-            completeTripWithPayment(
-              payload.new.actual_fare || activeBooking.fare,
-              "wallet",
-              qrPoints || payload.new.points_used || 0
-            ).finally(() => {
-              setIsProcessingPayment(false);
-            });
+            console.log("✅ Payment confirmed via real-time!");
+            handlePaymentSuccess(payload.new);
           }
         }
       )
@@ -281,28 +523,347 @@ export default function DriverTrackRideScreen({ navigation }) {
 
     return () => {
       console.log("🧹 Cleaning up payment subscription");
-      paymentSubscription.unsubscribe();
+      if (paymentSubscriptionRef.current) {
+        paymentSubscriptionRef.current.unsubscribe();
+      }
+      if (paymentCheckIntervalRef.current) {
+        clearInterval(paymentCheckIntervalRef.current);
+      }
     };
-  }, [activeBooking?.id]); // Only depend on booking ID, not the whole object
+  }, [activeBooking?.id, driverId, waitingForPayment, paymentSuccess, isProcessingPayment]);
 
+  // ================= MODERN NOTIFICATION SYSTEM =================
+  const addNotification = ({ type, title, message, duration = 4000, actionable = false, actionText, onAction }) => {
+    const id = Date.now().toString();
+    const newNotification = {
+      id,
+      type,
+      title,
+      message,
+      duration,
+      actionable,
+      actionText,
+      onAction,
+      timestamp: new Date(),
+      read: false
+    };
+
+    notificationStack.current.push(newNotification);
+    setNotifications(prev => [newNotification, ...prev].slice(0, 5)); // Keep last 5
+    setUnreadCount(prev => prev + 1);
+
+    // Animate notification in
+    Animated.sequence([
+      Animated.timing(notificationAnimation, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.delay(duration - 600),
+      Animated.timing(notificationAnimation, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      if (isMounted.current) {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
+    });
+
+    // Haptic feedback based on type
+    if (Platform.OS === 'ios') {
+      switch(type) {
+        case 'success':
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          break;
+        case 'error':
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          break;
+        case 'warning':
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          break;
+        default:
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    }
+
+    // Vibration pattern based on type
+    if (type === 'urgent' || type === 'booking') {
+      Vibration.vibrate([0, 500, 200, 500]);
+    } else {
+      Vibration.vibrate(300);
+    }
+  };
+
+  const markAllAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    setUnreadCount(0);
+  };
+
+  const removeNotification = (id) => {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    setUnreadCount(prev => Math.max(0, prev - 1));
+  };
+
+  // ================= ENHANCED REAL-TIME SUBSCRIPTIONS WITH AUTO-RECONNECT =================
+  const setupRealtimeSubscriptions = useCallback(async (id) => {
+    if (!id) return;
+
+    console.log("📡 Setting up enhanced real-time subscriptions for driver:", id);
+
+    // Clean up existing subscriptions
+    if (requestSubscriptionRef.current) {
+      requestSubscriptionRef.current.unsubscribe();
+    }
+    if (bookingSubscriptionRef.current) {
+      bookingSubscriptionRef.current.unsubscribe();
+    }
+
+    // 1. Subscribe to booking_requests table with retry logic
+    const setupRequestSubscription = () => {
+      const subscription = supabase
+        .channel('driver-requests-realtime')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'booking_requests',
+            filter: `driver_id=eq.${id}`,
+          },
+          async (payload) => {
+            console.log("🔔 NEW BOOKING REQUEST RECEIVED!", payload);
+            
+            if (isMounted.current && !activeBooking) {
+              await fetchPendingRequests(id);
+              
+              // Fetch full booking details for notification
+              const { data: booking } = await supabase
+                .from("bookings")
+                .select(`
+                  *,
+                  commuter:commuters (
+                    first_name,
+                    last_name
+                  )
+                `)
+                .eq("id", payload.new.booking_id)
+                .single();
+
+              if (booking) {
+                addNotification({
+                  type: 'booking',
+                  title: 'New Booking Request',
+                  message: `${booking.commuter.first_name} wants to book a ride from ${booking.pickup_location.split(',')[0]}`,
+                  duration: 8000,
+                  actionable: true,
+                  actionText: 'View',
+                  onAction: () => {
+                    // Auto-select this request
+                    setSelectedRequest(prev => ({
+                      ...booking,
+                      request_id: payload.new.id,
+                      request_status: payload.new.status,
+                      request_distance: payload.new.distance_km,
+                      request_created_at: payload.new.created_at
+                    }));
+                  }
+                });
+              }
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'booking_requests',
+            filter: `driver_id=eq.${id}`,
+          },
+          async (payload) => {
+            console.log("📝 Booking request updated:", payload);
+            
+            if (payload.new.status === 'rejected' || payload.new.status === 'cancelled') {
+              const { data: booking } = await supabase
+                .from("bookings")
+                .select("cancelled_by, cancellation_reason")
+                .eq("id", payload.new.booking_id)
+                .single();
+
+              if (booking && isMounted.current) {
+                addNotification({
+                  type: 'error',
+                  title: 'Request Cancelled',
+                  message: `Booking cancelled by ${booking.cancelled_by || 'commuter'}`,
+                  duration: 5000
+                });
+              }
+            }
+            
+            if (isMounted.current) {
+              await fetchPendingRequests(id);
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log("📡 Request subscription status:", status);
+          
+          // Auto-reconnect on error
+          if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            reconnectAttempts.current += 1;
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+            
+            setTimeout(() => {
+              if (isMounted.current) {
+                setupRequestSubscription();
+              }
+            }, delay);
+          } else if (status === 'SUBSCRIBED') {
+            reconnectAttempts.current = 0;
+          }
+        });
+
+      return subscription;
+    };
+
+    // 2. Subscribe to bookings table
+    const setupBookingSubscription = () => {
+      const subscription = supabase
+        .channel('driver-bookings-realtime')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'bookings',
+            filter: `driver_id=eq.${id}`,
+          },
+          async (payload) => {
+            console.log("📅 Booking update received:", payload);
+            
+            if (payload.eventType === 'INSERT' && payload.new.status === 'pending') {
+              // New booking created
+              addNotification({
+                type: 'info',
+                title: 'New Booking Created',
+                message: 'A new booking request has been created',
+                duration: 5000
+              });
+            }
+            
+            if (payload.eventType === 'UPDATE') {
+              if (payload.new.status === 'accepted' && !activeBooking) {
+                addNotification({
+                  type: 'success',
+                  title: 'Booking Accepted',
+                  message: 'You have accepted a new booking',
+                  duration: 5000
+                });
+                await fetchActiveBooking(id);
+              }
+              
+              if (activeBooking && payload.new.id === activeBooking.id) {
+                if (payload.new.status === 'cancelled') {
+                  handleActiveTripCancelled(payload.new);
+                } else {
+                  setActiveBooking(prev => ({
+                    ...prev,
+                    ...payload.new
+                  }));
+                  
+                  if (payload.new.driver_arrived_at && !hasArrivedAtPickup) {
+                    addNotification({
+                      type: 'success',
+                      title: 'Arrival Confirmed',
+                      message: 'You have arrived at pickup location',
+                      duration: 4000
+                    });
+                    setHasArrivedAtPickup(true);
+                    setNavigationDestination('dropoff');
+                  }
+                  
+                  if (payload.new.ride_started_at && !rideStarted) {
+                    addNotification({
+                      type: 'info',
+                      title: 'Ride Started',
+                      message: 'Trip has started',
+                      duration: 4000
+                    });
+                    setRideStarted(true);
+                  }
+
+                  // Check for payment status change
+                  if (payload.new.payment_status === 'paid' && !paymentSuccess && !isProcessingPayment) {
+                    console.log("✅ Payment detected in booking subscription!");
+                    handlePaymentSuccess(payload.new);
+                  }
+                }
+              }
+            }
+          }
+        )
+        .subscribe((status) => {
+          console.log("📡 Booking subscription status:", status);
+        });
+
+      return subscription;
+    };
+
+    requestSubscriptionRef.current = setupRequestSubscription();
+    bookingSubscriptionRef.current = setupBookingSubscription();
+
+    return () => {
+      if (requestSubscriptionRef.current) {
+        requestSubscriptionRef.current.unsubscribe();
+      }
+      if (bookingSubscriptionRef.current) {
+        bookingSubscriptionRef.current.unsubscribe();
+      }
+    };
+  }, [activeBooking, hasArrivedAtPickup, rideStarted, paymentSuccess, isProcessingPayment]);
+
+  // Set up subscriptions when driverId is available
+  useEffect(() => {
+    if (!driverId) return;
+    
+    setupRealtimeSubscriptions(driverId);
+    
+    return () => {
+      if (requestSubscriptionRef.current) {
+        requestSubscriptionRef.current.unsubscribe();
+      }
+      if (bookingSubscriptionRef.current) {
+        bookingSubscriptionRef.current.unsubscribe();
+      }
+    };
+  }, [driverId]);
+
+  // Auto-select first pending request
   useEffect(() => {
     if (pendingRequests.length > 0 && !selectedRequest && !activeBooking) {
       setSelectedRequest(pendingRequests[0]);
     }
   }, [pendingRequests, activeBooking]);
 
+  // Calculate route when request is selected
   useEffect(() => {
     if (selectedRequest && !activeBooking) {
       calculateRequestRoute(selectedRequest);
     }
   }, [selectedRequest, activeBooking]);
 
+  // Initialize on focus
   useFocusEffect(
     React.useCallback(() => {
       const initialize = async () => {
         const id = await AsyncStorage.getItem("user_id");
         setDriverId(id);
-        if (id) {
+        if (id && isMounted.current) {
           await Promise.all([
             fetchActiveBooking(id),
             fetchPendingRequests(id),
@@ -317,280 +878,14 @@ export default function DriverTrackRideScreen({ navigation }) {
         if (locationSubscription) {
           locationSubscription.remove();
         }
+        setNavigationInitialized(false);
       };
     }, [])
   );
 
-  // Periodic check for bookings (every 10 seconds)
-  useEffect(() => {
-    if (!driverId) return;
-
-    const interval = setInterval(() => {
-      console.log("⏰ Periodic check for bookings");
-      checkForBookings();
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, [driverId, activeBooking, hasArrivedAtPickup, rideStarted]);
-
-  const checkForBookings = async () => {
-    try {
-      if (!driverId) return;
-      
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("id, status, driver_arrived_at, ride_started_at, payment_status, payment_type, points_used")
-        .eq("driver_id", driverId)
-        .in("status", ["accepted", "pending"])
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.log("❌ Error in periodic check:", error);
-        return;
-      }
-
-      if (data) {
-        console.log("📊 Found booking in periodic check:", data);
-        if (data.status === "accepted" && !activeBooking) {
-          await fetchActiveBooking(driverId);
-        } else if (data.status === "accepted" && activeBooking) {
-          // FIXED: Update navigation state based on booking data
-          if (data.driver_arrived_at && !hasArrivedAtPickup) {
-            console.log("📍 Driver has arrived at pickup (from periodic check)");
-            setHasArrivedAtPickup(true);
-            setNavigationDestination('dropoff');
-          }
-          if (data.ride_started_at && !rideStarted) {
-            console.log("🚗 Ride has started (from periodic check)");
-            setRideStarted(true);
-          }
-          // Check if payment was completed while waiting
-          if (data.payment_status === 'paid' && !paymentSuccess && !isProcessingPayment) {
-            console.log("✅ Payment detected in periodic check!");
-            setIsProcessingPayment(true);
-            setPaymentSuccess(true);
-            setPaymentMethod(data.payment_type || 'wallet');
-            setShowPaymentSuccessBanner(true);
-            setShowQRModal(false);
-            setWaitingForPayment(false);
-            
-            Alert.alert(
-              "✅ Payment Received!",
-              `The passenger has successfully paid ₱${activeBooking?.fare?.toFixed(2)} using ${data.points_used || qrPoints || 0} points.`,
-              [{ text: "OK" }]
-            );
-            
-            completeTripWithPayment(
-              activeBooking?.fare || 0,
-              "wallet",
-              data.points_used || qrPoints || 0
-            ).finally(() => {
-              setIsProcessingPayment(false);
-            });
-          }
-        } else if (data.status === "pending") {
-          await fetchPendingRequests(driverId);
-        }
-      }
-    } catch (err) {
-      console.log("❌ Error in checkForBookings:", err);
-    }
-  };
-
-  // ================= REAL-TIME SUBSCRIPTIONS =================
-  useEffect(() => {
-    if (!driverId) return;
-
-    console.log("📡 Setting up main booking subscription for driver:", driverId);
-
-    const bookingsSubscription = supabase
-      .channel('driver-bookings')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'bookings',
-          filter: `driver_id=eq.${driverId}`,
-        },
-        (payload) => {
-          console.log("📅 Booking updated in main subscription:", payload);
-          
-          if (activeBooking && payload.new.id === activeBooking.id) {
-            if (payload.new.status === 'cancelled') {
-              handleActiveTripCancelled(payload.new);
-            } else {
-              setActiveBooking(prev => ({
-                ...prev,
-                ...payload.new
-              }));
-              
-              // FIXED: Update navigation state based on real-time updates
-              if (payload.new.driver_arrived_at && !hasArrivedAtPickup) {
-                console.log("📍 Driver has arrived at pickup (real-time)");
-                setHasArrivedAtPickup(true);
-                setNavigationDestination('dropoff');
-              }
-              
-              if (payload.new.ride_started_at && !rideStarted) {
-                console.log("🚗 Ride has started (real-time)");
-                setRideStarted(true);
-              }
-
-              // If payment was completed while waiting
-              if (payload.new.payment_status === 'paid' && !paymentSuccess && !isProcessingPayment) {
-                console.log("✅ Payment detected in main subscription!");
-                setIsProcessingPayment(true);
-                setPaymentSuccess(true);
-                setPaymentMethod(payload.new.payment_type || 'wallet');
-                setShowPaymentSuccessBanner(true);
-                setShowQRModal(false);
-                setWaitingForPayment(false);
-                
-                Alert.alert(
-                  "✅ Payment Received!",
-                  `The passenger has successfully paid ₱${activeBooking?.fare?.toFixed(2)} using ${payload.new.points_used || qrPoints || 0} points.`,
-                  [{ text: "OK" }]
-                );
-                
-                completeTripWithPayment(
-                  activeBooking?.fare || 0,
-                  "wallet",
-                  payload.new.points_used || qrPoints || 0
-                ).finally(() => {
-                  setIsProcessingPayment(false);
-                });
-              }
-            }
-          }
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'booking_requests',
-          filter: `driver_id=eq.${driverId}`,
-        },
-        (payload) => {
-          console.log("🔔 New booking request:", payload);
-          fetchPendingRequests(driverId);
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'booking_requests',
-          filter: `driver_id=eq.${driverId}`,
-        },
-        (payload) => {
-          console.log("📝 Booking request updated:", payload);
-          
-          if (payload.new.status === 'rejected' || payload.new.status === 'cancelled') {
-            fetchBookingDetails(payload.new.booking_id).then(booking => {
-              if (booking) {
-                const cancelledBy = booking.cancelled_by || 'commuter';
-                const reason = booking.cancellation_reason || 'No reason provided';
-                
-                Alert.alert(
-                  "❌ Booking Request Cancelled",
-                  `The booking request has been cancelled by the ${cancelledBy}.\n\nReason: ${reason}`,
-                  [{ text: "OK" }]
-                );
-                
-                setCancelledRequest({
-                  id: payload.new.booking_id,
-                  reason: reason,
-                  cancelled_by: cancelledBy,
-                  timestamp: new Date()
-                });
-                
-                setTimeout(() => {
-                  setCancelledRequest(null);
-                }, 5000);
-              }
-            });
-          }
-          
-          fetchPendingRequests(driverId);
-        }
-      )
-      .subscribe((status) => {
-        console.log("📡 Main subscription status:", status);
-      });
-
-    return () => {
-      console.log("🧹 Cleaning up main subscription");
-      bookingsSubscription.unsubscribe();
-    };
-  }, [driverId, activeBooking, hasArrivedAtPickup, rideStarted, paymentSuccess, isProcessingPayment]);
-
   // ================= HELPER FUNCTIONS =================
-  const fetchBookingDetails = async (bookingId) => {
-    try {
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("cancelled_by, cancellation_reason, status")
-        .eq("id", bookingId)
-        .single();
-      
-      if (error) throw error;
-      return data;
-    } catch (err) {
-      console.log("❌ Error fetching booking details:", err);
-      return null;
-    }
-  };
-
-  const handleActiveTripCancelled = (cancelledBooking) => {
-    console.log("🚫 Active trip cancelled:", cancelledBooking);
-    
-    const cancelledBy = cancelledBooking.cancelled_by || 'commuter';
-    const reason = cancelledBooking.cancellation_reason || 'No reason provided';
-    
-    Alert.alert(
-      "❌ Trip Cancelled",
-      `Your active trip has been cancelled by the ${cancelledBy}.\n\nReason: ${reason}`,
-      [{ text: "OK" }]
-    );
-    
-    setCancelledBookingAlert({
-      reason: reason,
-      cancelled_by: cancelledBy,
-      timestamp: new Date()
-    });
-    
-    setActiveBooking(null);
-    setCommuter(null);
-    setBookingStatus("pending");
-    setIsNavigating(false);
-    setShowPendingRequests(true);
-    setHasArrivedAtPickup(false);
-    setRideStarted(false);
-    setRouteCoordinates([]);
-    setEstimatedDistance(null);
-    setEstimatedTime(null);
-    setWaitingForPayment(false);
-    setShowQRModal(false);
-    setIsProcessingPayment(false);
-    setPaymentSuccess(false);
-    setPaymentMethod(null);
-    setShowPaymentSuccessBanner(false);
-    
-    setTimeout(() => {
-      setCancelledBookingAlert(null);
-    }, 8000);
-  };
-
   const fetchPendingRequests = async (id) => {
     try {
-      console.log("🔍 Fetching pending requests for driver:", id);
-      
       const { data, error } = await supabase
         .from("booking_requests")
         .select(`
@@ -639,8 +934,11 @@ export default function DriverTrackRideScreen({ navigation }) {
           request_created_at: item.created_at
         }));
 
-      console.log(`📊 Found ${requests.length} pending requests`);
       setPendingRequests(requests || []);
+      
+      if (requests.length > 0 && !selectedRequest && !activeBooking) {
+        setSelectedRequest(requests[0]);
+      }
     } catch (err) {
       console.log("❌ Error fetching pending requests:", err);
     }
@@ -669,56 +967,39 @@ export default function DriverTrackRideScreen({ navigation }) {
         .limit(1)
         .maybeSingle();
 
-      if (error && error.code !== "PGRST116") throw error;
-
-      console.log("📊 Fetched active booking:", data);
+      if (error && error.code !== "PGRST116") {
+        console.log("❌ Error fetching booking:", error);
+        throw error;
+      }
 
       if (data) {
         console.log("✅ Active booking found:", data.id);
+        console.log("✅ Commuter data:", data.commuter ? "Loaded" : "Missing");
+        console.log("✅ Payment status:", data.payment_status);
+        
+        // Validate commuter data
+        if (!data.commuter) {
+          console.log("⚠️ Warning: Commuter data is missing for this booking");
+          // Try to fetch commuter data separately if needed
+          const { data: commuterData } = await supabase
+            .from("commuters")
+            .select("*")
+            .eq("id", data.commuter_id)
+            .single();
+          
+          if (commuterData) {
+            data.commuter = commuterData;
+          }
+        }
         
         setActiveBooking(data);
         setCommuter(data.commuter);
         setBookingStatus(data.status);
         setShowPendingRequests(false);
+        setNavigationInitialized(false);
         
-        // FIXED: Immediately set navigation state when booking is found
-        setIsNavigating(true);
+        console.log("⏳ Will initialize navigation when driver location is available");
         
-        // Check if driver has already arrived
-        if (data.driver_arrived_at) {
-          console.log("📍 Driver already arrived at pickup");
-          setHasArrivedAtPickup(true);
-          setNavigationDestination('dropoff');
-          
-          if (data.ride_started_at) {
-            console.log("🚗 Ride already started");
-            setRideStarted(true);
-          }
-          
-          // Show route to dropoff
-          if (driverLocation) {
-            calculateRouteToDropoff(
-              { latitude: data.pickup_latitude, longitude: data.pickup_longitude },
-              { latitude: data.dropoff_latitude, longitude: data.dropoff_longitude }
-            );
-          }
-        } else {
-          // Default to heading to pickup
-          console.log("🚗 Setting destination to pickup");
-          setNavigationDestination('pickup');
-          setHasArrivedAtPickup(false);
-          setRideStarted(false);
-          
-          // Calculate route to pickup
-          if (driverLocation) {
-            calculateRouteToPickup(driverLocation, {
-              latitude: data.pickup_latitude,
-              longitude: data.pickup_longitude
-            });
-          }
-        }
-        
-        // Check if payment was already completed
         if (data.payment_status === 'paid') {
           console.log("✅ Booking already has payment completed");
           setPaymentSuccess(true);
@@ -733,12 +1014,49 @@ export default function DriverTrackRideScreen({ navigation }) {
         setShowPendingRequests(true);
         setHasArrivedAtPickup(false);
         setRideStarted(false);
+        setNavigationInitialized(false);
       }
     } catch (err) {
-      console.log("❌ Error fetching booking:", err);
+      console.log("❌ Error in fetchActiveBooking:", err);
+      addNotification({
+        type: 'error',
+        title: 'Error',
+        message: 'Failed to load booking data',
+        duration: 4000
+      });
     }
   };
 
+  const handleActiveTripCancelled = (cancelledBooking) => {
+    const cancelledBy = cancelledBooking.cancelled_by || 'commuter';
+    const reason = cancelledBooking.cancellation_reason || 'No reason provided';
+    
+    addNotification({
+      type: 'error',
+      title: 'Trip Cancelled',
+      message: `Cancelled by ${cancelledBy}: ${reason}`,
+      duration: 7000
+    });
+    
+    setActiveBooking(null);
+    setCommuter(null);
+    setBookingStatus("pending");
+    setIsNavigating(false);
+    setShowPendingRequests(true);
+    setHasArrivedAtPickup(false);
+    setRideStarted(false);
+    setRouteCoordinates([]);
+    setEstimatedDistance(null);
+    setEstimatedTime(null);
+    setWaitingForPayment(false);
+    setIsProcessingPayment(false);
+    setPaymentSuccess(false);
+    setPaymentMethod(null);
+    setShowPaymentSuccessBanner(false);
+    setNavigationInitialized(false);
+  };
+
+  // ================= MAP ROUTING FUNCTIONS =================
   const calculateRouteToPickup = async (driverLoc, pickupLoc) => {
     try {
       if (!driverLoc || !pickupLoc) return;
@@ -805,761 +1123,6 @@ export default function DriverTrackRideScreen({ navigation }) {
     }
   };
 
-  // ================= HANDLE ACCEPT REQUEST =================
-  const handleAcceptRequest = async (bookingId, requestId) => {
-    Alert.alert(
-      "Accept Booking",
-      "Are you sure you want to accept this booking?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Accept",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              
-              const { data: bookingCheck, error: checkError } = await supabase
-                .from("bookings")
-                .select("status")
-                .eq("id", bookingId)
-                .single();
-
-              if (checkError) throw checkError;
-
-              if (bookingCheck.status !== 'pending') {
-                Alert.alert(
-                  "Cannot Accept",
-                  `This booking is no longer available (Status: ${bookingCheck.status}).`,
-                  [{ text: "OK" }]
-                );
-                await fetchPendingRequests(driverId);
-                setLoading(false);
-                return;
-              }
-              
-              const { error: bookingError } = await supabase
-                .from("bookings")
-                .update({ 
-                  status: "accepted",
-                  driver_id: driverId,
-                  accepted_at: new Date(),
-                  updated_at: new Date()
-                })
-                .eq("id", bookingId);
-
-              if (bookingError) throw bookingError;
-
-              const { error: requestError } = await supabase
-                .from("booking_requests")
-                .update({ 
-                  status: "accepted",
-                  responded_at: new Date()
-                })
-                .eq("id", requestId);
-
-              if (requestError) throw requestError;
-
-              await supabase
-                .from("booking_requests")
-                .update({ 
-                  status: "rejected",
-                  responded_at: new Date()
-                })
-                .eq("booking_id", bookingId)
-                .neq("id", requestId);
-
-              await fetchActiveBooking(driverId);
-              await fetchPendingRequests(driverId);
-
-              Alert.alert("Success", "Booking accepted! Head to pickup location.");
-            } catch (err) {
-              console.log("❌ Error accepting booking:", err);
-              Alert.alert("Error", "Failed to accept booking");
-            } finally {
-              setLoading(false);
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleDeclineRequest = async (bookingId, requestId) => {
-    Alert.alert(
-      "Decline Booking",
-      "Are you sure you want to decline this booking?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Decline",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const { error } = await supabase
-                .from("booking_requests")
-                .update({ 
-                  status: "rejected",
-                  responded_at: new Date()
-                })
-                .eq("id", requestId);
-
-              if (error) throw error;
-
-              Alert.alert("Success", "Booking declined");
-              await fetchPendingRequests(driverId);
-            } catch (err) {
-              console.log("❌ Error declining booking:", err);
-              Alert.alert("Error", "Failed to decline booking");
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleArrivedAtPickup = async () => {
-    Alert.alert(
-      "Arrived at Pickup",
-      "Have you arrived at the pickup location?",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, I'm Here",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              
-              const { error } = await supabase
-                .from("bookings")
-                .update({ 
-                  driver_arrived_at: new Date(),
-                  updated_at: new Date()
-                })
-                .eq("id", activeBooking.id);
-
-              if (error) throw error;
-
-              await supabase
-                .from("booking_updates")
-                .insert({
-                  booking_id: activeBooking.id,
-                  type: "driver_arrived",
-                  message: "Driver has arrived at pickup location",
-                  created_at: new Date()
-                });
-
-              setHasArrivedAtPickup(true);
-              setNavigationDestination('dropoff');
-              
-              setActiveBooking(prev => ({
-                ...prev,
-                driver_arrived_at: new Date()
-              }));
-              
-              if (driverLocation && activeBooking) {
-                calculateRouteToDropoff(
-                  { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
-                  { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
-                );
-              }
-
-              Alert.alert("Success", "Commuter notified! Proceed to destination.");
-            } catch (err) {
-              console.log("❌ Error:", err);
-              Alert.alert("Error", "Failed to update status");
-            } finally {
-              setLoading(false);
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleStartRide = async () => {
-    Alert.alert(
-      "Start Ride",
-      "Have you picked up the passenger?",
-      [
-        { text: "Not Yet", style: "cancel" },
-        {
-          text: "Yes, Start Ride",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              
-              const { error } = await supabase
-                .from("bookings")
-                .update({ 
-                  ride_started_at: new Date(),
-                  updated_at: new Date()
-                })
-                .eq("id", activeBooking.id);
-
-              if (error) throw error;
-
-              setRideStarted(true);
-              
-              Alert.alert("Success", "Ride started! Head to destination.");
-            } catch (err) {
-              console.log("❌ Error:", err);
-              Alert.alert("Error", "Failed to start ride");
-            } finally {
-              setLoading(false);
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  // ================= PAYMENT OPTIONS =================
-  const handleCompleteTrip = () => {
-    if (isProcessingPayment) {
-      Alert.alert("Processing", "Please wait while payment is being processed.");
-      return;
-    }
-
-    if (paymentSuccess) {
-      Alert.alert(
-        "Payment Already Completed",
-        "This trip has already been paid for. Would you like to complete the trip?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Complete Trip",
-            onPress: () => completeTripWithPayment(activeBooking.fare, paymentMethod, qrPoints)
-          }
-        ]
-      );
-      return;
-    }
-
-    Alert.alert(
-      "Payment Method",
-      "How would the passenger like to pay?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "💵 Cash",
-          onPress: () => processCashPayment()
-        },
-        {
-          text: "⭐ Points (Wallet)",
-          onPress: () => checkCommuterPoints()
-        }
-      ]
-    );
-  };
-
-  const processCashPayment = async () => {
-    try {
-      setLoading(true);
-      
-      const actualFare = activeBooking.fare || 0;
-
-      console.log("💰 Completing trip with CASH payment:", {
-        actualFare,
-        bookingId: activeBooking.id
-      });
-
-      const { data: wallet, error: walletError } = await supabase
-        .from("driver_wallets")
-        .select("*")
-        .eq("driver_id", driverId)
-        .maybeSingle();
-
-      if (walletError) {
-        console.log("❌ Error fetching wallet:", walletError);
-        throw walletError;
-      }
-
-      if (!wallet) {
-        console.log("📝 Creating wallet for driver:", driverId);
-        const { error: insertError } = await supabase
-          .from("driver_wallets")
-          .insert({
-            driver_id: driverId,
-            balance: 0,
-            total_deposits: 0,
-            total_withdrawals: 0,
-            cash_earnings: 0,
-            created_at: new Date(),
-            updated_at: new Date()
-          });
-
-        if (insertError) throw insertError;
-      }
-
-      const { data: currentWallet, error: currentError } = await supabase
-        .from("driver_wallets")
-        .select("cash_earnings")
-        .eq("driver_id", driverId)
-        .single();
-
-      if (currentError) throw currentError;
-
-      const newCashEarnings = (currentWallet.cash_earnings || 0) + actualFare;
-
-      const { error: earningsError } = await supabase
-        .from("driver_wallets")
-        .update({
-          cash_earnings: newCashEarnings,
-          updated_at: new Date()
-        })
-        .eq("driver_id", driverId);
-
-      if (earningsError) {
-        console.log("❌ Error updating earnings:", earningsError);
-        throw earningsError;
-      }
-
-      console.log(`💵 Added ₱${actualFare} to cash_earnings. New total: ₱${newCashEarnings}`);
-
-      setPaymentSuccess(true);
-      setPaymentMethod('cash');
-      setShowPaymentSuccessBanner(true);
-      
-      await completeTripWithPayment(actualFare, "cash");
-
-    } catch (err) {
-      console.log("❌ Error processing cash payment:", err);
-      Alert.alert("Error", "Failed to process cash payment: " + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const checkCommuterPoints = async () => {
-    try {
-      setLoading(true);
-      
-      const actualFare = activeBooking.fare || 0;
-      const pointsNeeded = Math.floor(actualFare * 10);
-      
-      const { data: commuterWallet, error: walletError } = await supabase
-        .from("commuter_wallets")
-        .select("points")
-        .eq("commuter_id", activeBooking.commuter_id)
-        .maybeSingle();
-
-      if (walletError) {
-        console.log("❌ Error fetching commuter wallet:", walletError);
-        throw walletError;
-      }
-
-      const currentPoints = commuterWallet?.points || 0;
-
-      if (currentPoints >= pointsNeeded) {
-        showQRCodeForPoints(pointsNeeded, actualFare);
-      } else {
-        Alert.alert(
-          "Insufficient Points",
-          `Passenger only has ${currentPoints} points but needs ${pointsNeeded} points for this trip (₱${actualFare.toFixed(2)} × 10).\n\nWould you like to switch to cash payment?`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "💵 Use Cash",
-              onPress: () => processCashPayment()
-            }
-          ]
-        );
-      }
-    } catch (err) {
-      console.log("❌ Error checking points:", err);
-      Alert.alert("Error", "Failed to check points balance");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const showQRCodeForPoints = (pointsNeeded, fare) => {
-    const expiryTime = new Date();
-    expiryTime.setMinutes(expiryTime.getMinutes() + 5);
-    
-    const qrDataValue = JSON.stringify({
-      type: "points_payment",
-      booking_id: activeBooking.id,
-      driver_id: driverId,
-      commuter_id: activeBooking.commuter_id,
-      amount: fare,
-      points: pointsNeeded,
-      timestamp: new Date().toISOString(),
-      expires_at: expiryTime.toISOString()
-    });
-
-    // Set all states before showing modal
-    setQrValue(qrDataValue);
-    setQrPoints(pointsNeeded);
-    setQrFare(fare);
-    setWaitingForPayment(true);
-    setTimeLeft(300);
-    setShowQRModal(true);
-    
-    // Update booking to indicate wallet payment is pending
-    supabase
-      .from("bookings")
-      .update({
-        payment_type: "wallet",
-        payment_status: "pending",
-        points_used: pointsNeeded,
-        updated_at: new Date()
-      })
-      .eq("id", activeBooking.id)
-      .then(({ error }) => {
-        if (error) console.log("❌ Error updating payment status:", error);
-        else console.log("✅ Payment status updated to pending");
-      });
-  };
-
-  const completeTripWithPayment = async (actualFare, paymentMethod, pointsUsed = 0) => {
-    try {
-      console.log("🎉 Completing trip with payment:", { actualFare, paymentMethod, pointsUsed });
-      
-      const { error: bookingError } = await supabase
-        .from("bookings")
-        .update({ 
-          status: "completed",
-          actual_fare: actualFare,
-          payment_type: paymentMethod === "points" ? "wallet" : paymentMethod,
-          payment_status: "paid",
-          ride_completed_at: new Date(),
-          updated_at: new Date()
-        })
-        .eq("id", activeBooking.id);
-
-      if (bookingError) throw bookingError;
-
-      const { data: updatedWallet, error: fetchError } = await supabase
-        .from("driver_wallets")
-        .select("balance, cash_earnings, total_deposits, total_withdrawals")
-        .eq("driver_id", driverId)
-        .single();
-
-      if (fetchError) throw fetchError;
-
-      const { error: transactionError } = await supabase
-        .from("transactions")
-        .insert({
-          user_id: driverId,
-          user_type: "driver",
-          type: "earning",
-          amount: actualFare,
-          status: "completed",
-          created_at: new Date(),
-          metadata: {
-            booking_id: activeBooking.id,
-            commuter_id: activeBooking.commuter_id,
-            pickup: activeBooking.pickup_location,
-            dropoff: activeBooking.dropoff_location,
-            payment_method: paymentMethod,
-            points_used: pointsUsed,
-            fare: actualFare,
-            category: "trip"
-          }
-        });
-
-      if (transactionError) {
-        console.log("❌ Transaction error:", transactionError);
-      }
-
-      const paymentDetails = paymentMethod === "points" || paymentMethod === "wallet"
-        ? `   ⭐ Points Used: ${pointsUsed}\n   💰 Fare: ₱${actualFare.toFixed(2)}`
-        : `   💵 Cash Received: ₱${actualFare.toFixed(2)}`;
-
-      const paymentMethodDisplay = paymentMethod === "points" || paymentMethod === "wallet" 
-        ? "Wallet Points" 
-        : "Cash";
-
-      const successMessage = `
-━━━━━━━━━━━━━━━━━━━━━
-✅ TRIP COMPLETED
-━━━━━━━━━━━━━━━━━━━━━
-
-📍 From: ${activeBooking.pickup_location?.split(",")[0] || "Pickup"}
-📍 To: ${activeBooking.dropoff_location?.split(",")[0] || "Dropoff"}
-
-💰 PAYMENT DETAILS:
-   Method: ${paymentMethodDisplay}
-${paymentDetails}
-
-📊 YOUR EARNINGS:
-   💵 Total Cash Earnings: ₱${(updatedWallet?.cash_earnings || 0).toFixed(2)}
-
-💳 WALLET BALANCE (from top-ups):
-   Available: ₱${(updatedWallet?.balance || 0).toFixed(2)}
-
-━━━━━━━━━━━━━━━━━━━━━
-Thank you for driving with SakayNA!
-━━━━━━━━━━━━━━━━━━━━━`;
-
-      setActiveBooking(null);
-      setCommuter(null);
-      setBookingStatus("pending");
-      setIsNavigating(false);
-      setShowPendingRequests(true);
-      setHasArrivedAtPickup(false);
-      setRideStarted(false);
-      setRouteCoordinates([]);
-      setEstimatedDistance(null);
-      setEstimatedTime(null);
-      setWaitingForPayment(false);
-      setShowQRModal(false);
-      setIsProcessingPayment(false);
-      setPaymentSuccess(true);
-      setShowPaymentSuccessBanner(true);
-
-      Alert.alert(
-        "🎉 Trip Completed!",
-        successMessage,
-        [{ text: "OK" }]
-      );
-
-      // Hide banner after 5 seconds
-      setTimeout(() => {
-        setShowPaymentSuccessBanner(false);
-      }, 5000);
-
-    } catch (err) {
-      console.log("❌ Error completing trip:", err);
-      throw err;
-    }
-  };
-
-  const handleCancelTrip = () => {
-    if (bookingStatus !== "accepted") {
-      Alert.alert("Cannot Cancel", "This trip cannot be cancelled at this stage");
-      return;
-    }
-
-    Alert.alert(
-      "Cancel Trip",
-      "Are you sure you want to cancel this trip? This may affect your acceptance rate.",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setLoading(true);
-              
-              const { error } = await supabase
-                .from("bookings")
-                .update({ 
-                  status: "cancelled",
-                  cancelled_at: new Date(),
-                  cancellation_reason: "Cancelled by driver",
-                  cancelled_by: "driver",
-                  updated_at: new Date()
-                })
-                .eq("id", activeBooking.id);
-
-              if (error) throw error;
-
-              setActiveBooking(null);
-              setCommuter(null);
-              setBookingStatus("pending");
-              setIsNavigating(false);
-              setShowPendingRequests(true);
-              setWaitingForPayment(false);
-              setShowQRModal(false);
-              setIsProcessingPayment(false);
-              setPaymentSuccess(false);
-              setPaymentMethod(null);
-              setShowPaymentSuccessBanner(false);
-
-              Alert.alert(
-                "❌ Trip Cancelled",
-                "The trip has been cancelled."
-              );
-            } catch (err) {
-              console.log("❌ Error cancelling trip:", err);
-              Alert.alert("Error", "Failed to cancel trip");
-            } finally {
-              setLoading(false);
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const handleCancelQRPayment = () => {
-    Alert.alert(
-      "Cancel Payment",
-      "Are you sure you want to cancel the points payment?",
-      [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, Cancel",
-          style: "destructive",
-          onPress: () => {
-            setShowQRModal(false);
-            setWaitingForPayment(false);
-            setTimeLeft(300);
-            
-            // Reset payment status
-            supabase
-              .from("bookings")
-              .update({
-                payment_type: null,
-                payment_status: null,
-                points_used: null,
-                updated_at: new Date()
-              })
-              .eq("id", activeBooking.id)
-              .then(() => {});
-          }
-        }
-      ]
-    );
-  };
-
-  const formatRequestTime = (dateString) => {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffSeconds = Math.floor((now - date) / 1000);
-    
-    if (diffSeconds < 60) return `${diffSeconds} seconds ago`;
-    if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)} minutes ago`;
-    if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)} hours ago`;
-    return date.toLocaleDateString();
-  };
-
-  const updateDriverLocation = async (coords) => {
-    try {
-      if (!driverId) return;
-      
-      const { data: existingLocation, error: checkError } = await supabase
-        .from("driver_locations")
-        .select("id")
-        .eq("driver_id", driverId)
-        .maybeSingle();
-
-      if (checkError) {
-        console.log("Error checking location:", checkError);
-        return;
-      }
-
-      if (existingLocation) {
-        const { error } = await supabase
-          .from("driver_locations")
-          .update({
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            is_online: true,
-            last_updated: new Date(),
-          })
-          .eq("driver_id", driverId);
-
-        if (error) console.log("Update error:", error);
-      } else {
-        const { error } = await supabase
-          .from("driver_locations")
-          .insert({
-            driver_id: driverId,
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            is_online: true,
-            last_updated: new Date(),
-          });
-
-        if (error) console.log("Insert error:", error);
-      }
-    } catch (err) {
-      console.log("❌ Error updating location:", err);
-    }
-  };
-
-  const startLocationTracking = async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission Required", "Location permission is needed to track rides");
-        return;
-      }
-
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-
-      const newLocation = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      };
-
-      setDriverLocation(newLocation);
-      
-      if (driverId) {
-        const { data: existing } = await supabase
-          .from("driver_locations")
-          .select("id")
-          .eq("driver_id", driverId)
-          .maybeSingle();
-
-        if (existing) {
-          await supabase
-            .from("driver_locations")
-            .update({
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              is_online: true,
-              last_updated: new Date(),
-            })
-            .eq("driver_id", driverId);
-        } else {
-          await supabase
-            .from("driver_locations")
-            .insert({
-              driver_id: driverId,
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-              is_online: true,
-              last_updated: new Date(),
-            });
-        }
-      }
-
-      const subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10,
-        },
-        async (newLocation) => {
-          const updatedLocation = {
-            latitude: newLocation.coords.latitude,
-            longitude: newLocation.coords.longitude,
-          };
-          setDriverLocation(updatedLocation);
-          await updateDriverLocation(updatedLocation);
-
-          // FIXED: Update route based on current navigation state
-          if (isNavigating && activeBooking) {
-            if (!hasArrivedAtPickup && !activeBooking.driver_arrived_at) {
-              // Still heading to pickup
-              calculateRouteToPickup(updatedLocation, {
-                latitude: activeBooking.pickup_latitude,
-                longitude: activeBooking.pickup_longitude
-              });
-            } else {
-              // Already at pickup or heading to dropoff
-              calculateRouteToDropoff(
-                { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
-                { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
-              );
-            }
-          }
-        }
-      );
-
-      setLocationSubscription(subscription);
-    } catch (err) {
-      console.log("❌ Location tracking error:", err);
-    }
-  };
-
   const calculateRequestRoute = async (request) => {
     if (!request.pickup_latitude || !request.pickup_longitude || 
         !request.dropoff_latitude || !request.dropoff_longitude) return;
@@ -1614,6 +1177,780 @@ Thank you for driving with SakayNA!
       points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
     }
     return points;
+  };
+
+  // ================= BOOKING ACTIONS =================
+  const handleAcceptRequest = async (bookingId, requestId) => {
+    showAlert(
+      "Accept Booking",
+      "Are you sure you want to accept this booking?",
+      'info',
+      {
+        confirmText: "Accept",
+        cancelText: "Cancel",
+        onConfirm: async () => {
+          try {
+            setLoading(true);
+            setAlertVisible(false);
+            
+            const { data: bookingCheck, error: checkError } = await supabase
+              .from("bookings")
+              .select("status")
+              .eq("id", bookingId)
+              .single();
+
+            if (checkError) throw checkError;
+
+            if (bookingCheck.status !== 'pending') {
+              addNotification({
+                type: 'warning',
+                title: 'Cannot Accept',
+                message: `Booking is no longer available (Status: ${bookingCheck.status})`,
+                duration: 4000
+              });
+              await fetchPendingRequests(driverId);
+              setLoading(false);
+              return;
+            }
+            
+            const { error: bookingError } = await supabase
+              .from("bookings")
+              .update({ 
+                status: "accepted",
+                driver_id: driverId,
+                accepted_at: new Date(),
+                updated_at: new Date()
+              })
+              .eq("id", bookingId);
+
+            if (bookingError) throw bookingError;
+
+            const { error: requestError } = await supabase
+              .from("booking_requests")
+              .update({ 
+                status: "accepted",
+                responded_at: new Date()
+              })
+              .eq("id", requestId);
+
+            if (requestError) throw requestError;
+
+            await supabase
+              .from("booking_requests")
+              .update({ 
+                status: "rejected",
+                responded_at: new Date()
+              })
+              .eq("booking_id", bookingId)
+              .neq("id", requestId);
+
+            await fetchActiveBooking(driverId);
+            await fetchPendingRequests(driverId);
+
+            addNotification({
+              type: 'success',
+              title: 'Booking Accepted',
+              message: 'Head to pickup location',
+              duration: 4000
+            });
+          } catch (err) {
+            console.log("❌ Error accepting booking:", err);
+            addNotification({
+              type: 'error',
+              title: 'Error',
+              message: 'Failed to accept booking',
+              duration: 4000
+            });
+          } finally {
+            setLoading(false);
+          }
+        }
+      }
+    );
+  };
+
+  const handleDeclineRequest = async (bookingId, requestId) => {
+    showAlert(
+      "Decline Booking",
+      "Are you sure you want to decline this booking?",
+      'warning',
+      {
+        confirmText: "Decline",
+        cancelText: "Cancel",
+        confirmStyle: "destructive",
+        onConfirm: async () => {
+          try {
+            setAlertVisible(false);
+            const { error } = await supabase
+              .from("booking_requests")
+              .update({ 
+                status: "rejected",
+                responded_at: new Date()
+              })
+              .eq("id", requestId);
+
+            if (error) throw error;
+
+            addNotification({
+              type: 'info',
+              title: 'Booking Declined',
+              message: 'You have declined the booking',
+              duration: 3000
+            });
+            
+            await fetchPendingRequests(driverId);
+          } catch (err) {
+            console.log("❌ Error declining booking:", err);
+            addNotification({
+              type: 'error',
+              title: 'Error',
+              message: 'Failed to decline booking',
+              duration: 4000
+            });
+          }
+        }
+      }
+    );
+  };
+
+  const handleArrivedAtPickup = async () => {
+    showAlert(
+      "Arrived at Pickup",
+      "Have you arrived at the pickup location?",
+      'info',
+      {
+        confirmText: "Yes, I'm Here",
+        cancelText: "No",
+        onConfirm: async () => {
+          try {
+            setAlertVisible(false);
+            setLoading(true);
+            
+            const { error } = await supabase
+              .from("bookings")
+              .update({ 
+                driver_arrived_at: new Date(),
+                updated_at: new Date()
+              })
+              .eq("id", activeBooking.id);
+
+            if (error) throw error;
+
+            await supabase
+              .from("booking_updates")
+              .insert({
+                booking_id: activeBooking.id,
+                type: "driver_arrived",
+                message: "Driver has arrived at pickup location",
+                created_at: new Date()
+              });
+
+            setHasArrivedAtPickup(true);
+            setNavigationDestination('dropoff');
+            
+            setActiveBooking(prev => ({
+              ...prev,
+              driver_arrived_at: new Date()
+            }));
+            
+            if (driverLocation && activeBooking) {
+              calculateRouteToDropoff(
+                { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+                { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+              );
+            }
+
+            addNotification({
+              type: 'success',
+              title: 'Arrival Confirmed',
+              message: 'Commuter notified! Proceed to destination.',
+              duration: 4000
+            });
+          } catch (err) {
+            console.log("❌ Error:", err);
+            addNotification({
+              type: 'error',
+              title: 'Error',
+              message: 'Failed to update status',
+              duration: 4000
+            });
+          } finally {
+            setLoading(false);
+          }
+        }
+      }
+    );
+  };
+
+  const handleStartRide = async () => {
+    showAlert(
+      "Start Ride",
+      "Have you picked up the passenger?",
+      'info',
+      {
+        confirmText: "Yes, Start Ride",
+        cancelText: "Not Yet",
+        onConfirm: async () => {
+          try {
+            setAlertVisible(false);
+            setLoading(true);
+            
+            const { error } = await supabase
+              .from("bookings")
+              .update({ 
+                ride_started_at: new Date(),
+                updated_at: new Date()
+              })
+              .eq("id", activeBooking.id);
+
+            if (error) throw error;
+
+            setRideStarted(true);
+            
+            addNotification({
+              type: 'success',
+              title: 'Ride Started',
+              message: 'Head to destination',
+              duration: 4000
+            });
+          } catch (err) {
+            console.log("❌ Error:", err);
+            addNotification({
+              type: 'error',
+              title: 'Error',
+              message: 'Failed to start ride',
+              duration: 4000
+            });
+          } finally {
+            setLoading(false);
+          }
+        }
+      }
+    );
+  };
+
+  // ================= PAYMENT OPTIONS =================
+  const handleCompleteTrip = () => {
+    if (isProcessingPayment) {
+      addNotification({
+        type: 'warning',
+        title: 'Processing',
+        message: 'Please wait while payment is being processed.',
+        duration: 3000
+      });
+      return;
+    }
+
+    if (paymentSuccess) {
+      showAlert(
+        "Payment Already Completed",
+        "This trip has already been paid for. Would you like to complete the trip?",
+        'info',
+        {
+          confirmText: "Complete Trip",
+          cancelText: "Cancel",
+          onConfirm: () => {
+            setAlertVisible(false);
+            completeTripWithPayment(activeBooking.fare, paymentMethod, pointsNeeded);
+          }
+        }
+      );
+      return;
+    }
+
+    showAlert(
+      "Payment Method",
+      "How would the passenger like to pay?",
+      'info',
+      {
+        confirmText: "💵 Cash",
+        // cancelText: "⭐ Points (Wallet)",
+        onConfirm: () => {
+          setAlertVisible(false);
+          processCashPayment();
+        },
+        onCancel: () => {
+          setAlertVisible(false);
+          checkCommuterPoints();
+        }
+      }
+    );
+  };
+
+  const processCashPayment = async () => {
+    try {
+      setLoading(true);
+      
+      const actualFare = activeBooking.fare || 0;
+
+      const { data: wallet, error: walletError } = await supabase
+        .from("driver_wallets")
+        .select("*")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (walletError) throw walletError;
+
+      if (!wallet) {
+        const { error: insertError } = await supabase
+          .from("driver_wallets")
+          .insert({
+            driver_id: driverId,
+            balance: 0,
+            total_deposits: 0,
+            total_withdrawals: 0,
+            cash_earnings: 0,
+            created_at: new Date(),
+            updated_at: new Date()
+          });
+
+        if (insertError) throw insertError;
+      }
+
+      const { data: currentWallet, error: currentError } = await supabase
+        .from("driver_wallets")
+        .select("cash_earnings")
+        .eq("driver_id", driverId)
+        .single();
+
+      if (currentError) throw currentError;
+
+      const newCashEarnings = (currentWallet.cash_earnings || 0) + actualFare;
+
+      const { error: earningsError } = await supabase
+        .from("driver_wallets")
+        .update({
+          cash_earnings: newCashEarnings,
+          updated_at: new Date()
+        })
+        .eq("driver_id", driverId);
+
+      if (earningsError) throw earningsError;
+
+      setPaymentSuccess(true);
+      setPaymentMethod('cash');
+      setShowPaymentSuccessBanner(true);
+      
+      addNotification({
+        type: 'success',
+        title: 'Cash Payment',
+        message: `₱${actualFare.toFixed(2)} cash received`,
+        duration: 4000
+      });
+      
+      await completeTripWithPayment(actualFare, "cash");
+
+    } catch (err) {
+      console.log("❌ Error processing cash payment:", err);
+      addNotification({
+        type: 'error',
+        title: 'Payment Failed',
+        message: err.message,
+        duration: 5000
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCommuterPoints = async (commuterId) => {
+    if (!commuterId) {
+      console.log("⚠️ Cannot fetch points: No commuter ID provided");
+      return 0;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from("commuter_wallets")
+        .select("points")
+        .eq("commuter_id", commuterId)
+        .maybeSingle();
+
+      if (error) {
+        console.log("❌ Error fetching commuter points:", error);
+        return 0;
+      }
+
+      return data?.points || 0;
+    } catch (err) {
+      console.log("❌ Exception fetching commuter points:", err);
+      return 0;
+    }
+  };
+
+  const checkCommuterPoints = async () => {
+    try {
+      setLoading(true);
+      
+      if (!activeBooking) {
+        addNotification({
+          type: 'error',
+          title: 'Error',
+          message: 'No active booking found',
+          duration: 3000
+        });
+        return;
+      }
+
+      if (!activeBooking.commuter_id) {
+        addNotification({
+          type: 'error',
+          title: 'Error',
+          message: 'Commuter information not available',
+          duration: 3000
+        });
+        return;
+      }
+      
+      const actualFare = activeBooking.fare || 0;
+      const pointsNeededValue = Math.floor(actualFare * 10); // 10 points = ₱1
+      setPointsNeeded(pointsNeededValue);
+      
+      const currentPoints = await fetchCommuterPoints(activeBooking.commuter_id);
+
+      if (currentPoints >= pointsNeededValue) {
+        processPointsPayment(pointsNeededValue, actualFare);
+      } else {
+        showAlert(
+          "Insufficient Points",
+          `Passenger only has ${currentPoints} points but needs ${pointsNeededValue} points for this trip (₱${actualFare.toFixed(2)} × 10).\n\nWould you like to switch to cash payment?`,
+          'warning',
+          {
+            confirmText: "💵 Use Cash",
+            cancelText: "Cancel",
+            onConfirm: () => {
+              setAlertVisible(false);
+              processCashPayment();
+            }
+          }
+        );
+      }
+    } catch (err) {
+      console.log("❌ Error checking points:", err);
+      addNotification({
+        type: 'error',
+        title: 'Error',
+        message: 'Failed to check points balance',
+        duration: 4000
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const processPointsPayment = (pointsNeededValue, fare) => {
+    setWaitingForPayment(true);
+    setPointsNeeded(pointsNeededValue);
+    
+    // Update booking to pending payment
+    supabase
+      .from("bookings")
+      .update({
+        payment_type: "wallet",
+        payment_status: "pending",
+        points_used: pointsNeededValue,
+        updated_at: new Date()
+      })
+      .eq("id", activeBooking.id)
+      .then(({ error }) => {
+        if (error) {
+          console.log("❌ Error updating payment status:", error);
+          addNotification({
+            type: 'error',
+            title: 'Payment Error',
+            message: 'Failed to initiate payment. Please try again.',
+            duration: 4000
+          });
+          setWaitingForPayment(false);
+        } else {
+          console.log("✅ Payment status updated to pending");
+          
+          addNotification({
+            type: 'info',
+            title: 'Payment Initiated',
+            message: 'Waiting for passenger to confirm payment...',
+            duration: 4000
+          });
+          
+          // Start checking payment status immediately
+          setTimeout(() => {
+            checkPaymentStatus();
+          }, 2000);
+        }
+      });
+  };
+
+  const completeTripWithPayment = async (actualFare, paymentMethod, pointsUsed = 0) => {
+    try {
+      console.log("🎉 Completing trip with payment:", { actualFare, paymentMethod, pointsUsed });
+      
+      const { error: bookingError } = await supabase
+        .from("bookings")
+        .update({ 
+          status: "completed",
+          actual_fare: actualFare,
+          payment_type: paymentMethod === "points" ? "wallet" : paymentMethod,
+          payment_status: "paid",
+          ride_completed_at: new Date(),
+          updated_at: new Date()
+        })
+        .eq("id", activeBooking.id);
+
+      if (bookingError) throw bookingError;
+
+      const { data: updatedWallet, error: fetchError } = await supabase
+        .from("driver_wallets")
+        .select("balance, cash_earnings, total_deposits, total_withdrawals")
+        .eq("driver_id", driverId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const { error: transactionError } = await supabase
+        .from("transactions")
+        .insert({
+          user_id: driverId,
+          user_type: "driver",
+          type: "earning",
+          amount: actualFare,
+          status: "completed",
+          created_at: new Date(),
+          metadata: {
+            booking_id: activeBooking.id,
+            commuter_id: activeBooking.commuter_id,
+            payment_method: paymentMethod,
+            points_used: pointsUsed,
+            fare: actualFare
+          }
+        });
+
+      if (transactionError) {
+        console.log("❌ Transaction error:", transactionError);
+      }
+
+      setActiveBooking(null);
+      setCommuter(null);
+      setBookingStatus("pending");
+      setIsNavigating(false);
+      setShowPendingRequests(true);
+      setHasArrivedAtPickup(false);
+      setRideStarted(false);
+      setRouteCoordinates([]);
+      setEstimatedDistance(null);
+      setEstimatedTime(null);
+      setWaitingForPayment(false);
+      setIsProcessingPayment(false);
+      setPaymentSuccess(true);
+      setShowPaymentSuccessBanner(true);
+      setNavigationInitialized(false);
+      setPaymentChecked(false);
+
+      addNotification({
+        type: 'success',
+        title: 'Trip Completed!',
+        message: `Earned ₱${actualFare.toFixed(2)}`,
+        duration: 6000
+      });
+
+      setTimeout(() => {
+        setShowPaymentSuccessBanner(false);
+      }, 5000);
+
+      await fetchPendingRequests(driverId);
+
+    } catch (err) {
+      console.log("❌ Error completing trip:", err);
+      throw err;
+    }
+  };
+
+  const handleCancelTrip = () => {
+    if (bookingStatus !== "accepted") {
+      addNotification({
+        type: 'warning',
+        title: 'Cannot Cancel',
+        message: 'This trip cannot be cancelled at this stage',
+        duration: 3000
+      });
+      return;
+    }
+
+    showAlert(
+      "Cancel Trip",
+      "Are you sure you want to cancel this trip?",
+      'warning',
+      {
+        confirmText: "Yes, Cancel",
+        cancelText: "No",
+        onConfirm: async () => {
+          try {
+            setAlertVisible(false);
+            setLoading(true);
+            
+            const { error } = await supabase
+              .from("bookings")
+              .update({ 
+                status: "cancelled",
+                cancelled_at: new Date(),
+                cancellation_reason: "Cancelled by driver",
+                cancelled_by: "driver",
+                updated_at: new Date()
+              })
+              .eq("id", activeBooking.id);
+
+            if (error) throw error;
+
+            setActiveBooking(null);
+            setCommuter(null);
+            setBookingStatus("pending");
+            setIsNavigating(false);
+            setShowPendingRequests(true);
+            setWaitingForPayment(false);
+            setIsProcessingPayment(false);
+            setPaymentSuccess(false);
+            setPaymentMethod(null);
+            setShowPaymentSuccessBanner(false);
+            setNavigationInitialized(false);
+
+            addNotification({
+              type: 'error',
+              title: 'Trip Cancelled',
+              message: 'The trip has been cancelled',
+              duration: 4000
+            });
+          } catch (err) {
+            console.log("❌ Error cancelling trip:", err);
+            addNotification({
+              type: 'error',
+              title: 'Error',
+              message: 'Failed to cancel trip',
+              duration: 4000
+            });
+          } finally {
+            setLoading(false);
+          }
+        }
+      }
+    );
+  };
+
+  // ================= LOCATION TRACKING =================
+  const updateDriverLocation = async (coords) => {
+    try {
+      if (!driverId) return;
+      
+      const { data: existingLocation, error: checkError } = await supabase
+        .from("driver_locations")
+        .select("id")
+        .eq("driver_id", driverId)
+        .maybeSingle();
+
+      if (checkError) return;
+
+      if (existingLocation) {
+        const { error } = await supabase
+          .from("driver_locations")
+          .update({
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            is_online: true,
+            last_updated: new Date(),
+          })
+          .eq("driver_id", driverId);
+
+        if (error) console.log("Update error:", error);
+      } else {
+        const { error } = await supabase
+          .from("driver_locations")
+          .insert({
+            driver_id: driverId,
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            is_online: true,
+            last_updated: new Date(),
+          });
+
+        if (error) console.log("Insert error:", error);
+      }
+    } catch (err) {
+      console.log("❌ Error updating location:", err);
+    }
+  };
+
+  const startLocationTracking = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        showAlert(
+          "Permission Required",
+          "Location permission is needed to track rides",
+          'warning',
+          { confirmText: "OK" }
+        );
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const newLocation = {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+      };
+
+      setDriverLocation(newLocation);
+      
+      if (driverId) {
+        await updateDriverLocation(newLocation);
+      }
+
+      const subscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        async (newLocation) => {
+          const updatedLocation = {
+            latitude: newLocation.coords.latitude,
+            longitude: newLocation.coords.longitude,
+          };
+          setDriverLocation(updatedLocation);
+          await updateDriverLocation(updatedLocation);
+
+          if (isNavigating && activeBooking) {
+            if (!hasArrivedAtPickup && !activeBooking.driver_arrived_at) {
+              calculateRouteToPickup(updatedLocation, {
+                latitude: activeBooking.pickup_latitude,
+                longitude: activeBooking.pickup_longitude
+              });
+            } else {
+              calculateRouteToDropoff(
+                { latitude: activeBooking.pickup_latitude, longitude: activeBooking.pickup_longitude },
+                { latitude: activeBooking.dropoff_latitude, longitude: activeBooking.dropoff_longitude }
+              );
+            }
+          }
+        }
+      );
+
+      setLocationSubscription(subscription);
+    } catch (err) {
+      console.log("❌ Location tracking error:", err);
+    }
+  };
+
+  // ================= UTILITY FUNCTIONS =================
+  const formatRequestTime = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffSeconds = Math.floor((now - date) / 1000);
+    
+    if (diffSeconds < 60) return `${diffSeconds}s ago`;
+    if (diffSeconds < 3600) return `${Math.floor(diffSeconds / 60)}m ago`;
+    if (diffSeconds < 86400) return `${Math.floor(diffSeconds / 3600)}h ago`;
+    return date.toLocaleDateString();
   };
 
   const fitRequestMapToMarkers = () => {
@@ -1678,7 +2015,12 @@ Thank you for driving with SakayNA!
 
   const callCommuter = () => {
     if (!commuter?.phone) {
-      Alert.alert("Error", "No phone number available");
+      addNotification({
+        type: 'warning',
+        title: 'No Phone Number',
+        message: 'Phone number not available',
+        duration: 3000
+      });
       return;
     }
     Linking.openURL(`tel:${commuter.phone}`);
@@ -1686,7 +2028,12 @@ Thank you for driving with SakayNA!
 
   const messageCommuter = () => {
     if (!commuter?.phone) {
-      Alert.alert("Error", "No phone number available");
+      addNotification({
+        type: 'warning',
+        title: 'No Phone Number',
+        message: 'Phone number not available',
+        duration: 3000
+      });
       return;
     }
     Linking.openURL(`sms:${commuter.phone}`);
@@ -1722,6 +2069,68 @@ Thank you for driving with SakayNA!
   if (activeBooking) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
+        {/* MODERN NOTIFICATION STACK */}
+        <View style={styles.notificationStack}>
+          {notifications.map((notification, index) => (
+            <Animated.View
+              key={notification.id}
+              style={[
+                styles.notificationCard,
+                {
+                  transform: [{
+                    translateY: notificationAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [index * -10, 0]
+                    })
+                  }],
+                  opacity: notificationAnimation,
+                  zIndex: notifications.length - index
+                }
+              ]}
+            >
+              <LinearGradient
+                colors={getNotificationColors(notification.type)}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.notificationGradient}
+              >
+                <View style={styles.notificationIcon}>
+                  <Ionicons 
+                    name={getNotificationIcon(notification.type)} 
+                    size={24} 
+                    color="#FFF" 
+                  />
+                </View>
+                <View style={styles.notificationContent}>
+                  <Text style={styles.notificationTitle}>{notification.title}</Text>
+                  <Text style={styles.notificationMessage} numberOfLines={2}>
+                    {notification.message}
+                  </Text>
+                </View>
+                {notification.actionable && (
+                  <TouchableOpacity 
+                    style={styles.notificationAction}
+                    onPress={() => {
+                      notification.onAction?.();
+                      removeNotification(notification.id);
+                    }}
+                  >
+                    <Text style={styles.notificationActionText}>
+                      {notification.actionText || 'View'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity 
+                  style={styles.notificationClose}
+                  onPress={() => removeNotification(notification.id)}
+                >
+                  <Ionicons name="close" size={18} color="#FFF" />
+                </TouchableOpacity>
+              </LinearGradient>
+            </Animated.View>
+          ))}
+        </View>
+
         {/* Payment Success Banner */}
         {showPaymentSuccessBanner && paymentSuccess && (
           <View style={styles.paymentSuccessBanner}>
@@ -1730,111 +2139,11 @@ Thank you for driving with SakayNA!
               <Text style={styles.paymentSuccessTitle}>Payment Received!</Text>
               <Text style={styles.paymentSuccessMessage}>
                 {paymentMethod === 'wallet' 
-                  ? `Passenger paid ₱${activeBooking.fare?.toFixed(2)} using ${qrPoints} points`
+                  ? `Passenger paid ₱${activeBooking.fare?.toFixed(2)} using ${pointsNeeded} points`
                   : `Cash payment of ₱${activeBooking.fare?.toFixed(2)} received`}
               </Text>
             </View>
             <Pressable onPress={() => setShowPaymentSuccessBanner(false)}>
-              <Ionicons name="close" size={20} color="#666" />
-            </Pressable>
-          </View>
-        )}
-
-        {/* QR Code Modal */}
-        {showQRModal && (
-          <Modal
-            visible={showQRModal}
-            transparent={true}
-            animationType="fade"
-            onRequestClose={() => {}}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Points Payment QR Code</Text>
-                </View>
-
-                <View style={styles.qrCodeContainer}>
-                  {qrValue ? (
-                    <View style={styles.qrWrapper}>
-                      <QRCode
-                        value={qrValue}
-                        size={220}
-                        color="#000"
-                        backgroundColor="#FFF"
-                      />
-                    </View>
-                  ) : (
-                    <View style={styles.qrPlaceholder}>
-                      <ActivityIndicator size="large" color="#183B5C" />
-                      <Text style={styles.qrPlaceholderText}>Generating QR Code...</Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={styles.paymentDetailsContainer}>
-                  <View style={styles.paymentDetailRow}>
-                    <Text style={styles.paymentDetailLabel}>Fare Amount:</Text>
-                    <Text style={styles.paymentDetailValue}>₱{qrFare.toFixed(2)}</Text>
-                  </View>
-                  
-                  <View style={styles.paymentDetailRow}>
-                    <Text style={styles.paymentDetailLabel}>Points Required:</Text>
-                    <Text style={[styles.paymentDetailValue, { color: "#F59E0B" }]}>
-                      {qrPoints} points
-                    </Text>
-                  </View>
-
-                  <View style={styles.paymentDetailRow}>
-                    <Text style={styles.paymentDetailLabel}>Rate:</Text>
-                    <Text style={styles.paymentDetailSubtext}>10 points = ₱1</Text>
-                  </View>
-                </View>
-
-                <View style={styles.timerContainer}>
-                  <Ionicons name="time-outline" size={20} color="#666" />
-                  <Text style={styles.timerText}>
-                    QR Code expires in {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
-                  </Text>
-                </View>
-
-                <View style={styles.instructionContainer}>
-                  <Ionicons name="information-circle" size={20} color="#3B82F6" />
-                  <Text style={styles.instructionText}>
-                    Ask the passenger to scan this QR code with their app to complete the payment.
-                  </Text>
-                </View>
-
-                <View style={styles.waitingContainer}>
-                  <ActivityIndicator size="small" color="#10B981" />
-                  <Text style={styles.waitingText}>Waiting for passenger to scan...</Text>
-                </View>
-
-                <View style={styles.modalActions}>
-                  <Pressable 
-                    style={[styles.modalButton, styles.cancelModalButton]} 
-                    onPress={handleCancelQRPayment}
-                  >
-                    <Text style={styles.cancelModalButtonText}>Cancel Payment</Text>
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-          </Modal>
-        )}
-
-        {/* Cancelled Trip Banner */}
-        {cancelledBookingAlert && (
-          <View style={styles.cancelledBanner}>
-            <Ionicons name="alert-circle" size={24} color="#EF4444" />
-            <View style={styles.cancelledBannerText}>
-              <Text style={styles.cancelledTitle}>Trip Cancelled</Text>
-              <Text style={styles.cancelledMessage}>
-                Cancelled by {cancelledBookingAlert.cancelled_by}
-                {cancelledBookingAlert.reason ? `: ${cancelledBookingAlert.reason}` : ''}
-              </Text>
-            </View>
-            <Pressable onPress={() => setCancelledBookingAlert(null)}>
               <Ionicons name="close" size={20} color="#666" />
             </Pressable>
           </View>
@@ -1848,23 +2157,19 @@ Thank you for driving with SakayNA!
             <Text style={styles.headerSubtitle}>Active Ride</Text>
             <Text style={styles.headerTitle}>{getStatusText()}</Text>
           </View>
-          {pendingRequests.length > 0 && (
-            <Pressable 
-              style={styles.requestBadge}
-              onPress={() => {
-                Alert.alert(
-                  "Pending Requests",
-                  `You have ${pendingRequests.length} pending request${pendingRequests.length > 1 ? 's' : ''}.`,
-                  [{ text: "OK" }]
-                );
-              }}
-            >
-              <Text style={styles.requestBadgeText}>{pendingRequests.length}</Text>
-            </Pressable>
-          )}
-          <View style={[styles.statusBadge, { backgroundColor: "#3B82F620" }]}>
-            <Text style={[styles.statusText, { color: "#3B82F6" }]}>ACTIVE</Text>
-          </View>
+          <TouchableOpacity 
+            style={styles.notificationBell}
+            onPress={() => setShowNotificationCenter(!showNotificationCenter)}
+          >
+            <Ionicons name="notifications" size={24} color="#FFF" />
+            {unreadCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.mapContainer}>
@@ -2012,7 +2317,7 @@ Thank you for driving with SakayNA!
             <View style={styles.paymentStatusContainer}>
               <Ionicons name="wallet" size={20} color="#10B981" />
               <Text style={styles.paymentStatusText}>
-                Paid with Wallet Points • {qrPoints} points used
+                Paid with Wallet Points • {pointsNeeded} points used
               </Text>
             </View>
           )}
@@ -2026,55 +2331,66 @@ Thank you for driving with SakayNA!
             </View>
           )}
 
+          {/* Points Payment Waiting Indicator */}
+          {waitingForPayment && !paymentSuccess && (
+            <View style={styles.waitingPaymentContainer}>
+              <ActivityIndicator size="small" color="#F59E0B" />
+              <Text style={styles.waitingPaymentText}>
+                Waiting for passenger to confirm points payment...
+              </Text>
+            </View>
+          )}
+
           <View style={styles.actionContainer}>
-            {!hasArrivedAtPickup && !rideStarted && !paymentSuccess && (
+            {!hasArrivedAtPickup && !rideStarted && !paymentSuccess && !waitingForPayment && (
               <>
                 <Pressable style={styles.arrivedButton} onPress={handleArrivedAtPickup}>
                   <Ionicons name="location" size={20} color="#FFF" />
-                  <Text style={styles.arrivedButtonText}>I've Arrived at Pickup</Text>
-                </Pressable>
-                <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
-                  <Ionicons name="close-circle" size={20} color="#EF4444" />
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                  <Text style={styles.arrivedButtonText}>I've Arrived</Text>
                 </Pressable>
               </>
             )}
 
-            {hasArrivedAtPickup && !rideStarted && !paymentSuccess && (
+            {hasArrivedAtPickup && !rideStarted && !paymentSuccess && !waitingForPayment && (
               <>
                 <Pressable style={styles.startRideButton} onPress={handleStartRide}>
                   <Ionicons name="play" size={20} color="#FFF" />
                   <Text style={styles.startRideButtonText}>Start Ride</Text>
                 </Pressable>
-                <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
-                  <Ionicons name="close-circle" size={20} color="#EF4444" />
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </Pressable>
               </>
             )}
 
-            {hasArrivedAtPickup && rideStarted && !paymentSuccess && (
+            {hasArrivedAtPickup && rideStarted && !paymentSuccess && !waitingForPayment && (
               <>
                 <Pressable style={styles.completeButton} onPress={handleCompleteTrip}>
                   <Ionicons name="checkmark-circle" size={20} color="#FFF" />
                   <Text style={styles.completeButtonText}>Complete Trip</Text>
                 </Pressable>
-                <Pressable style={styles.cancelButton} onPress={handleCancelTrip}>
-                  <Ionicons name="close-circle" size={20} color="#EF4444" />
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </Pressable>
               </>
             )}
 
             {paymentSuccess && (
-              <Pressable style={styles.completeButton} onPress={() => completeTripWithPayment(activeBooking.fare, paymentMethod, qrPoints)}>
+              <Pressable style={styles.completeButton} onPress={() => completeTripWithPayment(activeBooking.fare, paymentMethod, pointsNeeded)}>
                 <Ionicons name="checkmark-circle" size={20} color="#FFF" />
                 <Text style={styles.completeButtonText}>Complete Trip</Text>
               </Pressable>
             )}
+
+            {waitingForPayment && (
+              <Pressable 
+                style={styles.cancelButton} 
+                onPress={() => {
+                  setWaitingForPayment(false);
+                  setPointsNeeded(0);
+                }}
+              >
+                <Ionicons name="close-circle" size={20} color="#EF4444" />
+                <Text style={styles.cancelButtonText}>Cancel Payment</Text>
+              </Pressable>
+            )}
           </View>
 
-          {!hasArrivedAtPickup && !rideStarted && !paymentSuccess && (
+          {!hasArrivedAtPickup && !rideStarted && !paymentSuccess && !waitingForPayment && (
             <Pressable
               style={styles.navigationButton}
               onPress={() => openMaps(
@@ -2084,11 +2400,11 @@ Thank you for driving with SakayNA!
               )}
             >
               <Ionicons name="navigate" size={20} color="#FFF" />
-              <Text style={styles.navigationButtonText}>Open in Google Maps</Text>
+              <Text style={styles.navigationButtonText}>Open Maps</Text>
             </Pressable>
           )}
 
-          {(hasArrivedAtPickup || rideStarted) && !paymentSuccess && (
+          {(hasArrivedAtPickup || rideStarted) && !paymentSuccess && !waitingForPayment && (
             <Pressable
               style={styles.navigationButton}
               onPress={() => openMaps(
@@ -2098,10 +2414,86 @@ Thank you for driving with SakayNA!
               )}
             >
               <Ionicons name="navigate" size={20} color="#FFF" />
-              <Text style={styles.navigationButtonText}>Open in Google Maps</Text>
+              <Text style={styles.navigationButtonText}>Open Maps</Text>
             </Pressable>
           )}
         </View>
+
+        {/* Notification Center Modal */}
+        {showNotificationCenter && (
+          <Modal
+            visible={showNotificationCenter}
+            transparent={true}
+            animationType="slide"
+            onRequestClose={() => setShowNotificationCenter(false)}
+          >
+            <BlurView intensity={90} style={styles.notificationCenterOverlay}>
+              <View style={styles.notificationCenter}>
+                <View style={styles.notificationCenterHeader}>
+                  <Text style={styles.notificationCenterTitle}>Notifications</Text>
+                  <View style={styles.notificationCenterActions}>
+                    <TouchableOpacity onPress={markAllAsRead}>
+                      <Text style={styles.markAllReadText}>Mark all as read</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => setShowNotificationCenter(false)}>
+                      <Ionicons name="close" size={24} color="#666" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                <ScrollView style={styles.notificationCenterList}>
+                  {notifications.length === 0 ? (
+                    <View style={styles.emptyNotifications}>
+                      <Ionicons name="notifications-off-outline" size={48} color="#D1D5DB" />
+                      <Text style={styles.emptyNotificationsText}>No notifications</Text>
+                    </View>
+                  ) : (
+                    notifications.map(notification => (
+                      <TouchableOpacity 
+                        key={notification.id}
+                        style={[
+                          styles.notificationCenterItem,
+                          !notification.read && styles.unreadNotificationItem
+                        ]}
+                      >
+                        <View style={styles.notificationCenterIcon}>
+                          <Ionicons 
+                            name={getNotificationIcon(notification.type)} 
+                            size={24} 
+                            color={getNotificationColor(notification.type)} 
+                          />
+                        </View>
+                        <View style={styles.notificationCenterContent}>
+                          <Text style={styles.notificationCenterItemTitle}>
+                            {notification.title}
+                          </Text>
+                          <Text style={styles.notificationCenterItemMessage}>
+                            {notification.message}
+                          </Text>
+                          <Text style={styles.notificationCenterItemTime}>
+                            {new Date(notification.timestamp).toLocaleTimeString()}
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </ScrollView>
+              </View>
+            </BlurView>
+          </Modal>
+        )}
+
+        {/* Modern Alert Modal */}
+        <ModernAlert
+          visible={alertVisible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          onClose={() => setAlertVisible(false)}
+          onConfirm={alertConfig.onConfirm}
+          confirmText={alertConfig.confirmText}
+          cancelText={alertConfig.cancelText}
+        />
       </View>
     );
   }
@@ -2110,22 +2502,67 @@ Thank you for driving with SakayNA!
   if (pendingRequests.length > 0) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        {/* Cancelled Request Banner */}
-        {cancelledRequest && (
-          <View style={styles.cancelledBanner}>
-            <Ionicons name="alert-circle" size={24} color="#EF4444" />
-            <View style={styles.cancelledBannerText}>
-              <Text style={styles.cancelledTitle}>Booking Request Cancelled</Text>
-              <Text style={styles.cancelledMessage}>
-                Cancelled by {cancelledRequest.cancelled_by}
-                {cancelledRequest.reason ? `: ${cancelledRequest.reason}` : ''}
-              </Text>
-            </View>
-            <Pressable onPress={() => setCancelledRequest(null)}>
-              <Ionicons name="close" size={20} color="#666" />
-            </Pressable>
-          </View>
-        )}
+        {/* MODERN NOTIFICATION STACK */}
+        <View style={styles.notificationStack}>
+          {notifications.map((notification, index) => (
+            <Animated.View
+              key={notification.id}
+              style={[
+                styles.notificationCard,
+                {
+                  transform: [{
+                    translateY: notificationAnimation.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [index * -10, 0]
+                    })
+                  }],
+                  opacity: notificationAnimation,
+                  zIndex: notifications.length - index
+                }
+              ]}
+            >
+              <LinearGradient
+                colors={getNotificationColors(notification.type)}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.notificationGradient}
+              >
+                <View style={styles.notificationIcon}>
+                  <Ionicons 
+                    name={getNotificationIcon(notification.type)} 
+                    size={24} 
+                    color="#FFF" 
+                  />
+                </View>
+                <View style={styles.notificationContent}>
+                  <Text style={styles.notificationTitle}>{notification.title}</Text>
+                  <Text style={styles.notificationMessage} numberOfLines={2}>
+                    {notification.message}
+                  </Text>
+                </View>
+                {notification.actionable && (
+                  <TouchableOpacity 
+                    style={styles.notificationAction}
+                    onPress={() => {
+                      notification.onAction?.();
+                      removeNotification(notification.id);
+                    }}
+                  >
+                    <Text style={styles.notificationActionText}>
+                      {notification.actionText || 'View'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity 
+                  style={styles.notificationClose}
+                  onPress={() => removeNotification(notification.id)}
+                >
+                  <Ionicons name="close" size={18} color="#FFF" />
+                </TouchableOpacity>
+              </LinearGradient>
+            </Animated.View>
+          ))}
+        </View>
 
         <View style={styles.header}>
           <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -2135,9 +2572,19 @@ Thank you for driving with SakayNA!
             <Text style={styles.headerSubtitle}>New Bookings</Text>
             <Text style={styles.headerTitle}>{pendingRequests.length} Request{pendingRequests.length > 1 ? 's' : ''}</Text>
           </View>
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusText}>ONLINE</Text>
-          </View>
+          <TouchableOpacity 
+            style={styles.notificationBell}
+            onPress={() => setShowNotificationCenter(!showNotificationCenter)}
+          >
+            <Ionicons name="notifications" size={24} color="#FFF" />
+            {unreadCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
         <View style={styles.mapPreview}>
@@ -2324,6 +2771,18 @@ Thank you for driving with SakayNA!
             </Pressable>
           ))}
         </ScrollView>
+
+        {/* Modern Alert Modal */}
+        <ModernAlert
+          visible={alertVisible}
+          title={alertConfig.title}
+          message={alertConfig.message}
+          type={alertConfig.type}
+          onClose={() => setAlertVisible(false)}
+          onConfirm={alertConfig.onConfirm}
+          confirmText={alertConfig.confirmText}
+          cancelText={alertConfig.cancelText}
+        />
       </View>
     );
   }
@@ -2339,9 +2798,19 @@ Thank you for driving with SakayNA!
           <Text style={styles.headerSubtitle}>No Active Ride</Text>
           <Text style={styles.headerTitle}>Available</Text>
         </View>
-        <View style={styles.statusBadge}>
-          <Text style={styles.statusText}>ONLINE</Text>
-        </View>
+        <TouchableOpacity 
+          style={styles.notificationBell}
+          onPress={() => setShowNotificationCenter(!showNotificationCenter)}
+        >
+          <Ionicons name="notifications" size={24} color="#FFF" />
+          {unreadCount > 0 && (
+            <View style={styles.notificationBadge}>
+              <Text style={styles.notificationBadgeText}>
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       <View style={styles.emptyContainer}>
@@ -2357,15 +2826,78 @@ Thank you for driving with SakayNA!
             if (driverLocation) {
               await updateDriverLocation(driverLocation);
             }
-            Alert.alert("Online", "You are now online and ready to receive bookings!");
+            addNotification({
+              type: 'success',
+              title: 'Online',
+              message: 'You are now online and ready to receive bookings!',
+              duration: 3000
+            });
           }}
         >
           <Text style={styles.goOnlineText}>I'm Online</Text>
         </Pressable>
       </View>
+
+      {/* Modern Alert Modal */}
+      <ModernAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onClose={() => setAlertVisible(false)}
+        onConfirm={alertConfig.onConfirm}
+        confirmText={alertConfig.confirmText}
+        cancelText={alertConfig.cancelText}
+      />
     </View>
   );
 }
+
+// Helper functions for notifications
+const getNotificationColors = (type) => {
+  switch(type) {
+    case 'success':
+      return ['#10B981', '#059669'];
+    case 'error':
+      return ['#EF4444', '#DC2626'];
+    case 'warning':
+      return ['#F59E0B', '#D97706'];
+    case 'booking':
+      return ['#3B82F6', '#2563EB'];
+    case 'urgent':
+      return ['#8B5CF6', '#7C3AED'];
+    default:
+      return ['#6B7280', '#4B5563'];
+  }
+};
+
+const getNotificationIcon = (type) => {
+  switch(type) {
+    case 'success':
+      return 'checkmark-circle';
+    case 'error':
+      return 'alert-circle';
+    case 'warning':
+      return 'warning';
+    case 'booking':
+      return 'car';
+    case 'urgent':
+      return 'alert';
+    default:
+      return 'information-circle';
+  }
+};
+
+const getNotificationColor = (type) => {
+  switch(type) {
+    case 'success': return '#10B981';
+    case 'error': return '#EF4444';
+    case 'warning': return '#F59E0B';
+    case 'booking': return '#3B82F6';
+    case 'urgent': return '#8B5CF6';
+    default: return '#6B7280';
+  }
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -2400,6 +2932,166 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     color: "#FFF",
+  },
+  notificationBell: {
+    position: 'relative',
+    padding: 8,
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#183B5C',
+  },
+  notificationBadgeText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  notificationStack: {
+    position: 'absolute',
+    top: 100,
+    left: 20,
+    right: 20,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+  notificationCard: {
+    borderRadius: 12,
+    marginBottom: 8,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  notificationGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  notificationIcon: {
+    marginRight: 12,
+  },
+  notificationContent: {
+    flex: 1,
+  },
+  notificationTitle: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 2,
+  },
+  notificationMessage: {
+    color: '#FFF',
+    fontSize: 12,
+    opacity: 0.9,
+  },
+  notificationAction: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  notificationActionText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  notificationClose: {
+    padding: 4,
+  },
+  notificationCenterOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  notificationCenter: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: height * 0.7,
+  },
+  notificationCenterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  notificationCenterTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  notificationCenterActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  markAllReadText: {
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  notificationCenterList: {
+    padding: 20,
+  },
+  notificationCenterItem: {
+    flexDirection: 'row',
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  unreadNotificationItem: {
+    backgroundColor: '#EFF6FF',
+  },
+  notificationCenterIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  notificationCenterContent: {
+    flex: 1,
+  },
+  notificationCenterItemTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 2,
+  },
+  notificationCenterItemMessage: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 4,
+  },
+  notificationCenterItemTime: {
+    fontSize: 10,
+    color: '#999',
+  },
+  emptyNotifications: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  emptyNotificationsText: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 12,
   },
   requestBadge: {
     backgroundColor: "#FF3B30",
@@ -2638,6 +3330,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#1B5E20",
   },
+  waitingPaymentContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 15,
+    gap: 8,
+  },
+  waitingPaymentText: {
+    fontSize: 14,
+    color: "#D97706",
+    fontWeight: "500",
+    flex: 1,
+  },
   actionContainer: {
     flexDirection: "row",
     gap: 10,
@@ -2690,7 +3397,7 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#FEE2E2",
     padding: 14,
     borderRadius: 12,
     alignItems: "center",
@@ -2930,160 +3637,5 @@ const styles = StyleSheet.create({
   cancelledMessage: {
     fontSize: 12,
     color: "#7F1D1D",
-  },
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalContent: {
-    backgroundColor: "#FFF",
-    borderRadius: 20,
-    padding: 20,
-    width: "90%",
-    maxWidth: 400,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 20,
-    position: 'relative',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-    textAlign: "center",
-  },
-  closeButton: {
-    position: 'absolute',
-    right: 0,
-    padding: 5,
-  },
-  qrCodeContainer: {
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  qrPlaceholder: {
-    width: 220,
-    height: 220,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "#E5E7EB",
-    borderStyle: "dashed",
-  },
-  qrPlaceholderText: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 8,
-  },
-  qrWrapper: {
-    width: 220,
-    height: 220,
-    backgroundColor: "#FFF",
-    borderRadius: 16,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  paymentDetailsContainer: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-  },
-  paymentDetailRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  paymentDetailLabel: {
-    fontSize: 14,
-    color: "#666",
-  },
-  paymentDetailValue: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-  },
-  paymentDetailSubtext: {
-    fontSize: 12,
-    color: "#999",
-  },
-  instructionContainer: {
-    flexDirection: "row",
-    backgroundColor: "#EFF6FF",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 15,
-    gap: 8,
-  },
-  instructionText: {
-    flex: 1,
-    fontSize: 14,
-    color: "#3B82F6",
-    lineHeight: 20,
-  },
-  timerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 20,
-    gap: 8,
-  },
-  timerText: {
-    fontSize: 14,
-    color: "#666",
-    fontWeight: "500",
-  },
-  waitingContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 20,
-    gap: 8,
-    backgroundColor: "#E8F5E9",
-    padding: 12,
-    borderRadius: 12,
-  },
-  waitingText: {
-    fontSize: 14,
-    color: "#10B981",
-    fontWeight: "500",
-  },
-  modalActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  modalButton: {
-    flex: 1,
-    padding: 14,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  cancelModalButton: {
-    backgroundColor: "#F3F4F6",
-  },
-  cancelModalButtonText: {
-    color: "#666",
-    fontWeight: "600",
-  },
-  confirmModalButton: {
-    backgroundColor: "#10B981",
-  },
-  confirmModalButtonText: {
-    color: "#FFF",
-    fontWeight: "600",
   },
 });

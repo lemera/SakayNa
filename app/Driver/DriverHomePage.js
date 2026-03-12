@@ -46,12 +46,13 @@ export default function HomePage() {
   const [driverId, setDriverId] = useState(null);
   const [hasActiveBooking, setHasActiveBooking] = useState(false);
   const [hasPendingRequests, setHasPendingRequests] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0); // Fixed: Added pendingCount state
+  const [pendingCount, setPendingCount] = useState(0);
   const [sound, setSound] = useState(null);
 
   // Animation values
   const glowAnim = useRef(new Animated.Value(0)).current;
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
 
   // Fetch driver ID
   useEffect(() => {
@@ -99,11 +100,13 @@ export default function HomePage() {
           if (payload.new?.driver_id === driverId) {
             checkAllBookings(); // Recheck all bookings
             
-            // Trigger alert for NEW pending requests OR new accepted bookings
+            // Trigger alert for NEW pending requests
             if (payload.eventType === 'INSERT' && payload.new?.status === 'pending') {
               console.log("✅🔥 NEW PENDING REQUEST!");
               triggerBookingAlert();
-            } else if (payload.new?.status === 'accepted') {
+            } 
+            // Trigger alert for accepted bookings (active ride)
+            else if (payload.new?.status === 'accepted') {
               console.log("✅🔥 BOOKING ACCEPTED!");
               triggerBookingAlert();
             }
@@ -125,14 +128,14 @@ export default function HomePage() {
     };
   }, [driverId]);
 
-  // Animation effect - glow if has ACTIVE booking OR PENDING request
+  // Animation effect - enhanced glow for pending requests
   useEffect(() => {
     const shouldGlow = hasActiveBooking || hasPendingRequests;
     console.log("🎨 Animation effect - shouldGlow:", shouldGlow, 
                 "Active:", hasActiveBooking, "Pending:", hasPendingRequests);
     
     if (shouldGlow) {
-      startGlowAnimation();
+      startEnhancedGlowAnimation();
     } else {
       stopGlowAnimation();
     }
@@ -148,9 +151,26 @@ export default function HomePage() {
     };
   }, []);
 
-  const startGlowAnimation = () => {
-    console.log("✨ Starting glow animation");
+  const startEnhancedGlowAnimation = () => {
+    console.log("✨ Starting enhanced glow animation");
     
+    // Pulse animation for the button itself
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+
+    // Glow animation for the ring
     Animated.loop(
       Animated.sequence([
         Animated.timing(glowAnim, {
@@ -159,18 +179,40 @@ export default function HomePage() {
           useNativeDriver: true,
         }),
         Animated.timing(glowAnim, {
-          toValue: 0,
+          toValue: 0.3,
           duration: 1000,
           useNativeDriver: true,
         }),
       ])
     ).start();
+
+    // Subtle rotation for the icon when pending
+    if (hasPendingRequests && !hasActiveBooking) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(rotateAnim, {
+            toValue: 1,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(rotateAnim, {
+            toValue: 0,
+            duration: 2000,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    }
   };
 
   const stopGlowAnimation = () => {
     console.log("🛑 Stopping glow animation");
     glowAnim.stopAnimation();
+    pulseAnim.stopAnimation();
+    rotateAnim.stopAnimation();
     glowAnim.setValue(0);
+    pulseAnim.setValue(1);
+    rotateAnim.setValue(0);
   };
 
   const triggerBookingAlert = async () => {
@@ -241,10 +283,10 @@ export default function HomePage() {
 
       if (activeError) throw activeError;
       
-      // Check for PENDING requests and get count
-      const { data: pendingData, error: pendingError, count } = await supabase
-        .from("bookings")
-        .select("id, status", { count: "exact", head: false })
+      // Check for PENDING requests
+      const { data: pendingData, error: pendingError } = await supabase
+        .from("booking_requests")
+        .select("id, status")
         .eq("driver_id", driverId)
         .eq("status", "pending");
 
@@ -258,7 +300,7 @@ export default function HomePage() {
       
       setHasActiveBooking(hasActive);
       setHasPendingRequests(hasPending);
-      setPendingCount(pendingCountValue); // Store the count
+      setPendingCount(pendingCountValue);
       
     } catch (err) {
       console.log("Error checking bookings:", err);
@@ -285,7 +327,7 @@ export default function HomePage() {
     }
   };
 
-  // Fetch unread notifications - with better subscription
+  // Fetch unread notifications
   useEffect(() => {
     if (!driverId) return;
 
@@ -303,7 +345,6 @@ export default function HomePage() {
         },
         (payload) => {
           console.log("📦 Notification changed:", payload.eventType);
-          // Always fetch fresh count on any change
           fetchUnreadCount();
         }
       )
@@ -320,20 +361,49 @@ export default function HomePage() {
   // Animation interpolations
   const glowOpacity = glowAnim.interpolate({
     inputRange: [0, 0.5, 1],
-    outputRange: [0.3, 0.8, 0.3]
+    outputRange: [0.3, 0.9, 0.3]
   });
 
   const glowScale = glowAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.2]
+    inputRange: [0, 0.5, 1],
+    outputRange: [1, 1.3, 1]
   });
 
-  // Determine glow color based on what's pending/active
-  const getGlowColor = () => {
-    if (hasActiveBooking) return '#FF6B6B'; // Red for active ride
-    if (hasPendingRequests) return '#FFB37A'; // Orange for pending requests
-    return '#FFB37A'; // Default
+  const iconRotation = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '10deg']
+  });
+
+  // Determine glow color and style based on state
+  const getGlowConfig = () => {
+    if (hasActiveBooking) {
+      return {
+        color: '#FF6B6B', // Red for active ride
+        intensity: 0.9,
+        size: 75,
+        icon: 'bicycle',
+        message: 'Active Ride'
+      };
+    }
+    if (hasPendingRequests) {
+      return {
+        color: '#FFB37A', // Orange for pending requests
+        intensity: 1.0,
+        size: 80,
+        icon: 'navigate',
+        message: `${pendingCount} Request${pendingCount > 1 ? 's' : ''}`
+      };
+    }
+    return {
+      color: '#FFB37A',
+      intensity: 0.5,
+      size: 70,
+      icon: 'navigate',
+      message: ''
+    };
   };
+
+  const glowConfig = getGlowConfig();
 
   return (
     <Tab.Navigator
@@ -387,48 +457,87 @@ export default function HomePage() {
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Wallet" component={WalletScreen} />
 
-      {/* TRACK RIDE BUTTON WITH GLOW EFFECT - Glows for BOTH active AND pending */}
+      {/* TRACK RIDE BUTTON WITH ENHANCED GLOW EFFECT */}
       <Tab.Screen
         name="DriverTrackRideScreen"
         component={DriverTrackRideScreen}
         options={{
           tabBarLabel: "",
           tabBarIcon: () => (
-            <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
-              {/* Glow effect when has active booking OR pending request */}
+            <View style={{ position: 'relative', alignItems: 'center', marginTop: -50, justifyContent: 'center' }}>
+              {/* Outer glow rings - multiple for enhanced effect */}
               {(hasActiveBooking || hasPendingRequests) && (
-                <Animated.View
-                  style={[
-                    styles.glowRing,
-                    {
-                      opacity: glowOpacity,
-                      transform: [{ scale: glowScale }],
-                      backgroundColor: getGlowColor(),
-                    }
-                  ]}
-                />
+                <>
+                  {/* First glow ring */}
+                  <Animated.View
+                    style={[
+                      styles.glowRing,
+                      {
+                        width: glowConfig.size,
+                        height: glowConfig.size,
+                        borderRadius: glowConfig.size / 2,
+                        opacity: glowOpacity,
+                        transform: [{ scale: glowScale }],
+                        backgroundColor: glowConfig.color,
+                      }
+                    ]}
+                  />
+                  {/* Second smaller ring for depth */}
+                  <Animated.View
+                    style={[
+                      styles.glowRing,
+                      {
+                        width: glowConfig.size - 10,
+                        height: glowConfig.size - 10,
+                        borderRadius: (glowConfig.size - 10) / 2,
+                        opacity: glowOpacity * 0.7,
+                        transform: [{ scale: glowScale }],
+                        backgroundColor: glowConfig.color,
+                      }
+                    ]}
+                  />
+                </>
               )}
 
-              {/* Main button */}
-              <View style={navStyles.trackRideWrapper}>
-                <Ionicons 
-                  name={hasActiveBooking ? "bicycle" : "navigate"} 
-                  size={28} 
-                  color="#FFF" 
-                />
-              </View>
+              {/* Main button with pulse effect */}
+              <Animated.View
+                style={[
+                  navStyles.trackRideWrapper,
+                  (hasActiveBooking || hasPendingRequests) && {
+                    transform: [{ scale: pulseAnim }],
+                  }
+                ]}
+              >
+                <Animated.View style={{
+                  transform: hasPendingRequests && !hasActiveBooking 
+                    ? [{ rotate: iconRotation }] 
+                    : []
+                }}>
+                  <Ionicons 
+                    name={glowConfig.icon} 
+                    size={28} 
+                    color="#FFF" 
+                  />
+                </Animated.View>
+              </Animated.View>
 
-              {/* Indicator dot - different colors and counts for different states */}
+              {/* Status indicator - different for active vs pending */}
               {(hasActiveBooking || hasPendingRequests) && (
                 <View style={[
                   styles.indicatorDot,
-                  { backgroundColor: hasActiveBooking ? '#FF3B30' : '#FFB37A' }
+                  { 
+                    backgroundColor: hasActiveBooking ? '#FF3B30' : '#FFB37A',
+                    borderWidth: 2,
+                    borderColor: '#FFF',
+                  }
                 ]}>
                   <Text style={styles.indicatorDotText}>
-                    {hasActiveBooking ? '!' : hasPendingRequests ? (pendingCount > 9 ? '9+' : pendingCount) : ''}
+                    {hasActiveBooking ? '⚡' : hasPendingRequests ? pendingCount : ''}
                   </Text>
                 </View>
               )}
+
+              
             </View>
           ),
         }}
@@ -486,27 +595,46 @@ const styles = StyleSheet.create({
   glowRing: {
     position: 'absolute',
     marginTop: 15,
-    width: 70,
-    height: 70,
-    borderRadius: 35,
     zIndex: 1,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 5,
   },
   indicatorDot: {
     position: 'absolute',
     top: -2,
     right: -11,
     borderRadius: 50,
-    minWidth: 20,
-    height: 20,
+    minWidth: 22,
+    height: 22,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#FFF',
     zIndex: 3,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
   },
   indicatorDotText: {
     color: '#FFF',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  statusMessage: {
+    position: 'absolute',
+    bottom: -20,
+    backgroundColor: 'rgba(223, 43, 43, 0.7)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    zIndex: 4,
+  },
+  statusMessageText: {
+    color: '#FFF',
+    fontSize: 10,
+    fontWeight: '600',
   },
 });

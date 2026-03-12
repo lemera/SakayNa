@@ -12,10 +12,11 @@ import {
   Image,
   Switch,
   Linking,
-  KeyboardAvoidingView, // ← Add this
-  Platform, // ← Add this
+  KeyboardAvoidingView,
+  Platform,
   TouchableWithoutFeedback,
   Keyboard,
+  Share,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -23,7 +24,7 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
-// import * as DocumentPicker from "expo-document-picker";
+import QRCode from 'react-native-qrcode-svg'; // You need to install this: npm install react-native-qrcode-svg
 
 export default function DriverAccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -37,10 +38,17 @@ export default function DriverAccountScreen({ navigation }) {
     totalEarnings: 0,
     avgRating: 0,
     memberSince: null,
+    referrals: 0,
   });
   const [vehicle, setVehicle] = useState(null);
   const [documents, setDocuments] = useState(null);
   const [activeSubscription, setActiveSubscription] = useState(null);
+
+  // QR Code States
+  const [qrModalVisible, setQrModalVisible] = useState(false);
+  const [qrValue, setQrValue] = useState(null);
+  const [qrSize, setQrSize] = useState(250);
+  const [qrLogo, setQrLogo] = useState(null);
 
   // Modal states
   const [editProfileModal, setEditProfileModal] = useState(false);
@@ -73,9 +81,88 @@ export default function DriverAccountScreen({ navigation }) {
   useEffect(() => {
     if (driverId) {
       loadDriverData();
+      generateQRCode(); // Generate QR code when driver ID is available
     }
   }, [driverId]);
-  // Add this function BEFORE loadDriverData (around line 65-70)
+
+  // 👇 NEW: Generate QR Code
+  const generateQRCode = () => {
+    if (!driverId) return;
+    
+    // Create QR data with driver information
+    const qrData = {
+      type: "driver_qr",
+      driver_id: driverId,
+      name: driver ? `${driver.first_name} ${driver.last_name}` : "SakayNa Driver",
+      timestamp: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days validity
+    };
+    
+    setQrValue(JSON.stringify(qrData));
+    console.log("✅ QR Code generated for driver:", driverId);
+  };
+
+  // 👇 NEW: Refresh QR Code
+  const refreshQRCode = () => {
+    Alert.alert(
+      "Refresh QR Code",
+      "Generating a new QR code will make the old one invalid. Continue?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Generate New",
+          onPress: () => {
+            generateQRCode();
+            Alert.alert("✅ Success", "New QR code has been generated!");
+          }
+        }
+      ]
+    );
+  };
+
+  // 👇 NEW: Share QR Code
+  const shareQRCode = async () => {
+    try {
+      // Since we can't easily share the SVG, we'll share a message
+      const message = `🚲 SakayNa Driver QR Code\n\nDriver: ${driver?.first_name} ${driver?.last_name}\nVehicle: ${vehicle?.vehicle_type || 'N/A'} ${vehicle?.vehicle_color || ''}\nPlate: ${vehicle?.plate_number || 'N/A'}\n\nScan this QR code with the SakayNa app to book a ride directly!`;
+      
+      await Share.share({
+        message,
+        title: "My SakayNa Driver QR Code",
+      });
+    } catch (err) {
+      console.log("Error sharing QR code:", err);
+    }
+  };
+
+  // 👇 NEW: Print QR Code Instructions
+  const showPrintInstructions = () => {
+    Alert.alert(
+      "🖨️ Print QR Code",
+      "To print your QR code:\n\n1. Take a screenshot of this QR code\n2. Print the screenshot\n3. Cut and laminate the QR code\n4. Attach it to your vehicle where passengers can easily scan\n\nMake sure the QR code is clearly visible and not damaged.",
+      [{ text: "Got it!" }]
+    );
+  };
+
+  const fetchReferrals = async () => {
+    try {
+      const { count, error } = await supabase
+        .from("referrals")
+        .select("*", { count: "exact", head: true })
+        .eq("referrer_id", driverId)
+        .eq("referrer_type", "driver");
+
+      if (error) throw error;
+
+      setDriverStats(prev => ({
+        ...prev,
+        referrals: count || 0,
+      }));
+    } catch (err) {
+      console.log("Error fetching referrals:", err.message);
+    }
+  };
+
   const fetchSettings = async () => {
     try {
       const { data, error } = await supabase
@@ -87,16 +174,10 @@ export default function DriverAccountScreen({ navigation }) {
       if (error && error.code !== "PGRST116") throw error;
 
       if (data) {
-        setSettings({
-          notifications_enabled: data.notifications_enabled,
-          dark_mode_enabled: data.dark_mode_enabled,
-          language: data.language,
-        });
         setNotificationsEnabled(data.notifications_enabled);
         setDarkModeEnabled(data.dark_mode_enabled);
         setLanguage(data.language);
       } else {
-        // Create default settings if none exists
         await createDefaultSettings();
       }
     } catch (err) {
@@ -130,6 +211,7 @@ export default function DriverAccountScreen({ navigation }) {
         fetchVehicleInfo(),
         fetchDocuments(),
         fetchActiveSubscription(),
+        fetchReferrals(),
       ]);
     } catch (err) {
       console.log("Error loading driver data:", err);
@@ -141,6 +223,7 @@ export default function DriverAccountScreen({ navigation }) {
   const onRefresh = async () => {
     setRefreshing(true);
     await loadDriverData();
+    generateQRCode(); // Regenerate QR code on refresh
     setRefreshing(false);
   };
 
@@ -200,7 +283,7 @@ export default function DriverAccountScreen({ navigation }) {
 
   const fetchDriverStats = async () => {
     try {
-      // Get total trips and earnings Image
+      // Get total trips and earnings
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
         .select("actual_fare, commuter_rating")
@@ -223,12 +306,13 @@ export default function DriverAccountScreen({ navigation }) {
           ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
           : 0;
 
-      setDriverStats({
+      setDriverStats(prev => ({
+        ...prev,
         totalTrips,
         totalEarnings,
         avgRating,
         memberSince: driver?.created_at,
-      });
+      }));
     } catch (err) {
       console.log("Error fetching stats:", err.message);
     }
@@ -300,7 +384,7 @@ export default function DriverAccountScreen({ navigation }) {
 
   const handleUpdateProfile = async () => {
     try {
-      // Parse name loadDriverData
+      // Parse name
       const nameParts = editName.split(" ");
       const firstName = nameParts[0] || "";
       const lastName = nameParts.slice(1).join(" ") || "";
@@ -403,8 +487,6 @@ export default function DriverAccountScreen({ navigation }) {
       if (!result.canceled && result.assets && result.assets[0]) {
         const image = result.assets[0];
 
-        // Alert.alert("Uploading", "Please wait..."); car
-
         const fileName = `${Date.now()}.jpg`;
         const filePath = `${driverId}/${fileName}`;
 
@@ -470,7 +552,7 @@ export default function DriverAccountScreen({ navigation }) {
         return "#6B7280";
     }
   };
-  // pickImage fetchDriverProfile
+
   const getStatusIcon = (status) => {
     switch (status) {
       case "approved":
@@ -672,26 +754,6 @@ export default function DriverAccountScreen({ navigation }) {
               </Text>
             </View>
           </View>
-
-          {/* Edit Profile Button */}
-          <Pressable
-            style={{
-              backgroundColor: "#F3F4F6",
-              paddingHorizontal: 20,
-              paddingVertical: 10,
-              borderRadius: 20,
-              flexDirection: "row",
-              alignItems: "center",
-            }}
-            onPress={() => setEditProfileModal(true)}
-          >
-            <Ionicons name="pencil" size={16} color="#183B5C" />
-            <Text
-              style={{ color: "#183B5C", fontWeight: "600", marginLeft: 5 }}
-            >
-              Edit Profile
-            </Text>
-          </Pressable>
         </View>
 
         {/* Stats Grid */}
@@ -760,6 +822,242 @@ export default function DriverAccountScreen({ navigation }) {
               Rating
             </Text>
           </View>
+        </View>
+      </View>
+
+      {/* 👇 NEW: QR Code Section */}
+      <View
+        style={{
+          marginHorizontal: 20,
+          marginTop: 20,
+          backgroundColor: "#FFF",
+          borderRadius: 24,
+          padding: 20,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 8,
+          elevation: 2,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            color: "#333",
+            marginBottom: 15,
+          }}
+        >
+          📱 My QR Code
+        </Text>
+
+        <Text style={{ fontSize: 14, color: "#666", marginBottom: 15 }}>
+          Let passengers scan your QR code to book directly with you!
+        </Text>
+
+        {/* QR Code Display */}
+        <View style={{ alignItems: "center", marginBottom: 20 }}>
+          {qrValue ? (
+            <View
+              style={{
+                padding: 20,
+                backgroundColor: "#FFF",
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "#E5E7EB",
+                shadowColor: "#000",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.1,
+                shadowRadius: 4,
+                elevation: 3,
+              }}
+            >
+              <QRCode
+                value={qrValue}
+                size={qrSize}
+                color="#183B5C"
+                backgroundColor="#FFF"
+                logo={qrLogo}
+                logoSize={50}
+                logoBorderRadius={25}
+              />
+            </View>
+          ) : (
+            <View
+              style={{
+                width: qrSize,
+                height: qrSize,
+                backgroundColor: "#F3F4F6",
+                borderRadius: 16,
+                justifyContent: "center",
+                alignItems: "center",
+              }}
+            >
+              <ActivityIndicator size="large" color="#183B5C" />
+            </View>
+          )}
+        </View>
+
+        {/* QR Code Actions */}
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "#183B5C",
+              padding: 12,
+              borderRadius: 12,
+              alignItems: "center",
+              flexDirection: "row",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onPress={() => setQrModalVisible(true)}
+          >
+            <Ionicons name="qr-code-outline" size={20} color="#FFF" />
+            <Text style={{ color: "#FFF", fontWeight: "600" }}>View</Text>
+          </Pressable>
+
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "#10B981",
+              padding: 12,
+              borderRadius: 12,
+              alignItems: "center",
+              flexDirection: "row",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onPress={shareQRCode}
+          >
+            <Ionicons name="share-outline" size={20} color="#FFF" />
+            <Text style={{ color: "#FFF", fontWeight: "600" }}>Share</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "#F3F4F6",
+              padding: 10,
+              borderRadius: 12,
+              alignItems: "center",
+              flexDirection: "row",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onPress={refreshQRCode}
+          >
+            <Ionicons name="refresh-outline" size={18} color="#183B5C" />
+            <Text style={{ color: "#183B5C", fontWeight: "600" }}>Refresh</Text>
+          </Pressable>
+
+          <Pressable
+            style={{
+              flex: 1,
+              backgroundColor: "#F3F4F6",
+              padding: 10,
+              borderRadius: 12,
+              alignItems: "center",
+              flexDirection: "row",
+              justifyContent: "center",
+              gap: 6,
+            }}
+            onPress={showPrintInstructions}
+          >
+            <Ionicons name="print-outline" size={18} color="#183B5C" />
+            <Text style={{ color: "#183B5C", fontWeight: "600" }}>Print</Text>
+          </Pressable>
+        </View>
+
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginTop: 15,
+            paddingTop: 15,
+            borderTopWidth: 1,
+            borderTopColor: "#F3F4F6",
+          }}
+        >
+          <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
+          <Text style={{ fontSize: 12, color: "#666", marginLeft: 6, flex: 1 }}>
+            Print and attach this QR code to your vehicle. Passengers can scan it to book directly with you!
+          </Text>
+        </View>
+      </View>
+
+      {/* Referrals Section */}
+      <View
+        style={{
+          marginHorizontal: 20,
+          marginTop: 20,
+          backgroundColor: "#FFF",
+          borderRadius: 24,
+          padding: 20,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 8,
+          elevation: 2,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            color: "#333",
+            marginBottom: 15,
+          }}
+        >
+          🤝 Referrals
+        </Text>
+
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <View>
+            <Text style={{ fontSize: 14, color: "#666", marginBottom: 4 }}>
+              Total Referrals
+            </Text>
+            <Text
+              style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}
+            >
+              {driverStats.referrals}
+            </Text>
+          </View>
+          <Pressable
+            style={{
+              backgroundColor: "#183B5C",
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 20,
+            }}
+            onPress={() => navigation.navigate("ReferralScreen")}
+          >
+            <Text style={{ color: "#FFF", fontWeight: "600" }}>Invite</Text>
+          </Pressable>
+        </View>
+
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            marginTop: 10,
+            paddingTop: 10,
+            borderTopWidth: 1,
+            borderTopColor: "#F3F4F6",
+          }}
+        >
+          <Ionicons name="gift-outline" size={18} color="#F59E0B" />
+          <Text style={{ fontSize: 12, color: "#666", marginLeft: 6 }}>
+            Earn rewards for every successful referral!
+          </Text>
         </View>
       </View>
 
@@ -1141,7 +1439,8 @@ export default function DriverAccountScreen({ navigation }) {
           <Text style={{ flex: 1, color: "#333" }}>Verification Status</Text>
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
-{/* Sign Out */}
+
+        {/* Sign Out */}
         <Pressable
           style={{
             flexDirection: "row",
@@ -1231,6 +1530,97 @@ export default function DriverAccountScreen({ navigation }) {
           Member since: {formatDate(driver?.created_at)}
         </Text>
       </View>
+
+      {/* QR Code Full View Modal */}
+      <Modal
+        visible={qrModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setQrModalVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.9)",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Pressable
+            style={{ position: "absolute", top: 50, right: 20, zIndex: 10 }}
+            onPress={() => setQrModalVisible(false)}
+          >
+            <Ionicons name="close-circle" size={40} color="#FFF" />
+          </Pressable>
+
+          <View style={{ alignItems: "center", padding: 20 }}>
+            <Text
+              style={{
+                color: "#FFF",
+                fontSize: 24,
+                fontWeight: "bold",
+                marginBottom: 10,
+              }}
+            >
+              My QR Code
+            </Text>
+            <Text style={{ color: "#CCC", fontSize: 14, marginBottom: 30 }}>
+              {driver?.first_name} {driver?.last_name}
+            </Text>
+
+            {qrValue ? (
+              <View
+                style={{
+                  padding: 30,
+                  backgroundColor: "#FFF",
+                  borderRadius: 24,
+                }}
+              >
+                <QRCode
+                  value={qrValue}
+                  size={300}
+                  color="#183B5C"
+                  backgroundColor="#FFF"
+                />
+              </View>
+            ) : (
+              <ActivityIndicator size="large" color="#FFF" />
+            )}
+
+            <View style={{ flexDirection: "row", gap: 20, marginTop: 30 }}>
+              <Pressable
+                style={{
+                  backgroundColor: "#183B5C",
+                  padding: 15,
+                  borderRadius: 30,
+                  width: 60,
+                  height: 60,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+                onPress={shareQRCode}
+              >
+                <Ionicons name="share-outline" size={30} color="#FFF" />
+              </Pressable>
+
+              <Pressable
+                style={{
+                  backgroundColor: "#10B981",
+                  padding: 15,
+                  borderRadius: 30,
+                  width: 60,
+                  height: 60,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+                onPress={refreshQRCode}
+              >
+                <Ionicons name="refresh-outline" size={30} color="#FFF" />
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Edit Profile Modal */}
       <Modal

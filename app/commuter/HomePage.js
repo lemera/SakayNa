@@ -1,9 +1,11 @@
 // HomePage.js - Main navigation for commuter with custom TrackRide button
-import React, { useState } from "react";
-import { View, Image, Pressable } from "react-native";
+import React, { useState, useEffect } from "react";
+import { View, Image, Pressable, StyleSheet, Text } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
+import { supabase } from "../../lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import HomeScreen from "./HomeScreen";
 import WalletScreen from "./WalletScreen";
@@ -41,6 +43,90 @@ const TrackRideButton = ({ accessibilityState }) => {
 
 export default function HomePage() {
   const navigation = useNavigation();
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [userId, setUserId] = useState(null);
+
+  // Fetch user ID
+  useEffect(() => {
+    const getUserId = async () => {
+      const id = await AsyncStorage.getItem("user_id");
+      setUserId(id);
+    };
+    getUserId();
+  }, []);
+
+  // Fetch unread notifications count
+  const fetchUnreadCount = async () => {
+    try {
+      if (!userId) return;
+      
+      console.log("🔍 Fetching unread notifications for user:", userId);
+      
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("user_type", "commuter")
+        .eq("is_read", false);
+
+      if (error) throw error;
+      
+      console.log("📊 Unread notifications count:", count);
+      setUnreadCount(count || 0);
+    } catch (err) {
+      console.log("Error fetching unread count:", err.message);
+    }
+  };
+
+  // Set up real-time subscription for notifications
+  useEffect(() => {
+    if (!userId) return;
+
+    // Initial fetch
+    fetchUnreadCount();
+
+    // Subscribe to notification changes
+    const notificationSubscription = supabase
+      .channel('commuter-notifications')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => {
+          console.log("📦 Notification changed:", payload.eventType);
+          fetchUnreadCount();
+        }
+      )
+      .subscribe((status) => {
+        console.log("📡 Notification subscription status:", status);
+      });
+
+    // Refresh count when screen comes into focus
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      console.log("🏠 Home screen focused - refreshing unread count");
+      fetchUnreadCount();
+    });
+
+    return () => {
+      notificationSubscription.unsubscribe();
+      unsubscribeFocus();
+    };
+  }, [userId, navigation]);
+
+  // Periodic refresh every 10 seconds as backup
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (userId) {
+        fetchUnreadCount();
+      }
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [userId]);
 
   return (
     <Tab.Navigator
@@ -78,6 +164,24 @@ export default function HomePage() {
               iconName = focused ? "person" : "person-outline";
               break;
           }
+          
+          // Handle Inbox with notification badge
+          if (route.name === "Inbox") {
+            return (
+              <View style={{ position: 'relative', width: size, height: size }}>
+                <Ionicons name={iconName} size={size} color={color} />
+                {unreadCount > 0 && (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          }
+          
+          // For all other tabs, just return the icon
           return route.name !== "TrackRide" ? <Ionicons name={iconName} size={size} color={color} /> : null;
         },
       })}
@@ -102,3 +206,30 @@ export default function HomePage() {
     </Tab.Navigator>
   );
 }
+
+const styles = StyleSheet.create({
+  badge: {
+    position: 'absolute',
+    top: -8,
+    right: -12,
+    backgroundColor: '#FF3B30',
+    borderRadius: 12,
+    minWidth: 22,
+    height: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#FFF',
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 4,
+  },
+  badgeText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+});
