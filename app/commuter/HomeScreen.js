@@ -2300,42 +2300,39 @@ export default function CommuterHomeScreen() {
           </View>
 
           {/* SCAN TO RIDE BUTTON - Large and Prominent */}
-          <Pressable
-            style={[
-              styles.scanButton,
-              (!pickup || !dropoff) && styles.scanButtonDisabled,
-            ]}
-            onPress={openScanner}
-            disabled={!pickup || !dropoff}
-          >
-            <Ionicons name="qr-code" size={28} color="#FFF" />
-            <View style={styles.scanButtonTextContainer}>
-              <Text style={styles.scanButtonTitle}>Scan to Ride</Text>
-              <Text style={styles.scanButtonSubtitle}>
-                {(!pickup || !dropoff) 
-                  ? "Set pickup and dropoff first" 
-                  : "Scan driver's QR code to book directly"}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={24} color="#FFF" />
-          </Pressable>
+<View style={styles.buttonRow}>
+  
+  <Pressable
+    style={[
+      styles.optionCard,
+      (!pickup || !dropoff) && styles.disabledCard
+    ]}
+    onPress={openScanner}
+    disabled={!pickup || !dropoff}
+  >
+    <Ionicons name="qr-code-outline" size={26} color="#16a34a" />
+    <Text style={styles.optionTitle}>Scan Driver QR</Text>
+    <Text style={styles.optionSubtitle}>
+      Scan the driver to ride instantly
+    </Text>
+  </Pressable>
 
-          <View style={styles.dividerContainer}>
-            <View style={styles.divider} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.divider} />
-          </View>
+  <Pressable
+    style={[
+      styles.optionCard,
+      (!pickup || !dropoff) && styles.disabledCard
+    ]}
+    onPress={handleBookRide}
+    disabled={!pickup || !dropoff}
+  >
+    <Ionicons name="car-outline" size={26} color="#2563eb" />
+    <Text style={styles.optionTitle}>Find Driver</Text>
+    <Text style={styles.optionSubtitle}>
+      Search for nearby drivers
+    </Text>
+  </Pressable>
 
-          <Pressable
-            style={[
-              styles.bookButton,
-              (!pickup || !dropoff) && styles.bookButtonDisabled,
-            ]}
-            onPress={handleBookRide}
-            disabled={!pickup || !dropoff}
-          >
-            <Text style={styles.bookButtonText}>Find Driver via Queue</Text>
-          </Pressable>
+</View>
 
           <View style={styles.queueInfo}>
             <Ionicons name="information-circle" size={16} color="#666" />
@@ -3042,4 +3039,36 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+  buttonRow: {
+  flexDirection: "row",
+  gap: 12,
+},
+
+optionCard: {
+  flex: 1,
+  backgroundColor: "#FFF",
+  padding: 16,
+  borderRadius: 14,
+  borderWidth: 1,
+  borderColor: "#E5E7EB",
+  alignItems: "center",
+  justifyContent: "center",
+},
+
+optionTitle: {
+  fontSize: 15,
+  fontWeight: "600",
+  marginTop: 6,
+},
+
+optionSubtitle: {
+  fontSize: 12,
+  color: "#6B7280",
+  textAlign: "center",
+  marginTop: 2,
+},
+
+disabledCard: {
+  opacity: 0.5
+},
 });

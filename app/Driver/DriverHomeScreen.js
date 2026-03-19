@@ -323,6 +323,40 @@ const TripItem = memo(({ item, navigation }) => (
   </Pressable>
 ));
 
+// ================= STATUS INDICATOR COMPONENT =================
+const StatusIndicator = ({ isOnline, lastRefreshTime }) => (
+  <View style={{
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    marginRight: 10,
+  }}>
+    <View style={{
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: isOnline ? '#10B981' : '#EF4444',
+      marginRight: 5,
+    }} />
+    <Text style={{
+      fontSize: 12,
+      color: '#4B5563',
+      marginRight: 5,
+    }}>
+      {isOnline ? 'Online' : 'Offline'}
+    </Text>
+    <Text style={{
+      fontSize: 10,
+      color: '#9CA3AF',
+    }}>
+      {new Date(lastRefreshTime).toLocaleTimeString()}
+    </Text>
+  </View>
+);
+
 // ================= MAIN COMPONENT =================
 export default function DriverHomeScreen() {
   const insets = useSafeAreaInsets();
@@ -340,6 +374,10 @@ export default function DriverHomeScreen() {
   const [heartbeatInterval, setHeartbeatInterval] = useState(null);
   const [subscriptionExpiryCheckInterval, setSubscriptionExpiryCheckInterval] = useState(null);
   const [isToggling, setIsToggling] = useState(false);
+  
+  // Auto refresh states
+  const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
+  const autoRefreshInterval = useRef(null);
   
   // Track if screen is focused
   const isScreenFocused = useRef(true);
@@ -434,13 +472,13 @@ export default function DriverHomeScreen() {
         })
         .eq("driver_id", driver.id);
       
-      console.log("Heartbeat sent at:", new Date().toLocaleTimeString());
+      console.log("🟢 Heartbeat sent at:", new Date().toLocaleTimeString());
     } catch (err) {
       console.log("Heartbeat error:", err);
     }
   }, [driver?.id, isOnline]);
 
-  // * ================= HEARTBEAT EFFECT =================
+  // * ================= IMPROVED HEARTBEAT EFFECT =================
   useEffect(() => {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
@@ -449,26 +487,112 @@ export default function DriverHomeScreen() {
     
     if (driver?.id && isOnline) {
       console.log("Starting heartbeat service...");
-      sendHeartbeat();
-      const interval = setInterval(sendHeartbeat, 30000);
-      setHeartbeatInterval(interval);
+      
+      let isActive = true;
+      let timeoutId = null;
+      
+      const scheduleHeartbeat = () => {
+        if (!isActive || !isOnline) return;
+        
+        sendHeartbeat();
+        
+        // Schedule next heartbeat - 15 seconds para mas frequent
+        timeoutId = setTimeout(scheduleHeartbeat, 15000);
+      };
+      
+      scheduleHeartbeat();
+      setHeartbeatInterval(timeoutId);
       
       return () => {
         console.log("Cleaning up heartbeat service...");
-        if (interval) clearInterval(interval);
+        isActive = false;
+        if (timeoutId) clearTimeout(timeoutId);
       };
     }
   }, [driver?.id, isOnline, sendHeartbeat]);
 
-  // * ================= SUBSCRIPTION CHECK (FIXED) =================
+  // * ================= AUTO REFRESH FUNCTION =================
+  const checkAndRefresh = useCallback(async () => {
+    if (!driver?.id || !isScreenFocused.current) return;
+    
+    console.log("🔄 Auto-refreshing driver status...");
+    
+    try {
+      // Check current status sa database
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("is_active, online_status")
+        .eq("id", driver.id)
+        .single();
+        
+      if (error) throw error;
+      
+      console.log("Current DB status:", data);
+      console.log("Current UI status:", { isOnline });
+      
+      // Check if may discrepancy
+      const dbOnline = data.is_active === true || data.online_status === 'online';
+      
+      if (dbOnline !== isOnline) {
+        console.log("⚠️ Status mismatch detected! Syncing...");
+        
+        // Update UI to match database
+        setIsOnline(dbOnline);
+        
+        // Show notification
+        showAlert(
+          "Status Synced",
+          dbOnline ? "You are now online" : "You are now offline",
+          'info',
+          { confirmText: "OK" }
+        );
+        
+        // If naging online, restart location tracking
+        if (dbOnline && !locationSubscription) {
+          await startLocationUpdates(driver.id);
+        }
+        // If naging offline, stop location tracking
+        else if (!dbOnline && locationSubscription) {
+          await stopLocationUpdates(driver.id);
+        }
+      }
+      
+      setLastRefreshTime(Date.now());
+    } catch (err) {
+      console.log("Auto-refresh error:", err);
+    }
+  }, [driver?.id, isOnline, locationSubscription]);
+
+  // * ================= AUTO REFRESH EFFECT =================
+  useEffect(() => {
+    // Clear existing interval
+    if (autoRefreshInterval.current) {
+      clearInterval(autoRefreshInterval.current);
+    }
+    
+    // Start new interval if driver exists
+    if (driver?.id) {
+      console.log("Starting auto-refresh service...");
+      autoRefreshInterval.current = setInterval(checkAndRefresh, 30000); // Every 30 seconds
+    }
+    
+    return () => {
+      if (autoRefreshInterval.current) {
+        clearInterval(autoRefreshInterval.current);
+        console.log("Auto-refresh service stopped");
+      }
+    };
+  }, [driver?.id, checkAndRefresh]);
+
+  // * ================= FIXED SUBSCRIPTION CHECK =================
   const checkAndHandleSubscription = useCallback(async (driverId, currentOnlineStatus) => {
     // ONLY run check if screen is focused
     if (!isScreenFocused.current) {
       console.log("Screen not focused - skipping subscription check");
-      return true;
+      return currentOnlineStatus;
     }
     
-    if (!driverId || subscriptionCheckInProgress) return false;
+    if (!driverId || subscriptionCheckInProgress) return currentOnlineStatus;
     
     try {
       setSubscriptionCheckInProgress(true);
@@ -476,36 +600,36 @@ export default function DriverHomeScreen() {
       const subscription = await fetchActiveSubscription(driverId, false);
       setActiveSubscription(subscription);
       
-      // Only consider it invalid if we actually got a subscription record with non-active status
-      // If subscription is null (error or no record), don't assume it's invalid
+      // Determine if subscription is valid
       let hasValidSubscription = false;
+      let subscriptionStatus = null;
+      let endDate = null;
       
       if (subscription) {
-        // We have a subscription record, check if it's valid
+        subscriptionStatus = subscription.status;
+        endDate = subscription.end_date;
         hasValidSubscription = subscription.status === 'active' && 
           new Date(subscription.end_date) > new Date();
-      } else {
-        // No subscription record found - this could be a temporary error
-        // Don't force offline, just log it
-        console.log("No subscription record found for driver", driverId);
-        
-        // If we're online, keep online but show a warning only if screen is focused
-        if (currentOnlineStatus && isScreenFocused.current) {
-          // Use console log instead of notification to avoid disrupting user
-          console.log("Unable to verify subscription status. You may continue online.");
-        }
-        
-        setHasActiveSubscription(false);
-        setSubscriptionCheckInProgress(false);
-        return true; // Return true to keep online status
       }
       
       setHasActiveSubscription(hasValidSubscription);
       
-      // ONLY force offline if we have a subscription record that is explicitly expired/inactive
-      // AND screen is still focused
-      if (!hasValidSubscription && currentOnlineStatus && subscription && isScreenFocused.current) {
-        console.log("Subscription is explicitly inactive - forcing driver offline");
+      // Debug log
+      console.log("Subscription check result:", {
+        driverId,
+        hasSubscription: !!subscription,
+        subscriptionStatus,
+        endDate,
+        isValid: hasValidSubscription,
+        currentOnline: currentOnlineStatus,
+        willForceOffline: subscription && !hasValidSubscription && currentOnlineStatus
+      });
+      
+      // IMPORTANT: Only force offline if:
+      // 1. May subscription record at ito ay inactive/expired
+      // 2. At ang driver ay currently online
+      if (subscription && !hasValidSubscription && currentOnlineStatus) {
+        console.log("Subscription is inactive/expired - forcing driver offline");
         
         setIsOnline(false);
         
@@ -514,32 +638,21 @@ export default function DriverHomeScreen() {
           setHeartbeatInterval(null);
         }
         
+        // Update driver status - BOTH fields!
+        const now = new Date().toISOString();
         await supabase
           .from("drivers")
           .update({
             is_active: false,
-            updated_at: new Date().toISOString(),
+            online_status: 'offline',
+            updated_at: now,
           })
           .eq("id", driverId);
         
         await stopLocationUpdates(driverId);
         
-        // Show appropriate alert based on subscription status
-        if (subscription.status !== 'active') {
-          showAlert(
-            "Subscription Not Active",
-            `Your subscription is ${subscription.status}. You have been set to offline mode.`,
-            'warning',
-            {
-              confirmText: "Renew Now",
-              onConfirm: () => {
-                setAlertVisible(false);
-                navigation.navigate("SubscriptionScreen");
-              },
-              cancelText: "OK",
-            }
-          );
-        } else if (new Date(subscription.end_date) <= new Date()) {
+        // Show appropriate alert
+        if (subscription.status === 'expired' || new Date(subscription.end_date) <= new Date()) {
           showAlert(
             "Subscription Expired",
             "Your subscription has expired. You have been set to offline mode.",
@@ -553,22 +666,37 @@ export default function DriverHomeScreen() {
               cancelText: "OK",
             }
           );
+        } else if (subscription.status !== 'active') {
+          showAlert(
+            "Subscription Not Active",
+            `Your subscription is ${subscription.status}. You have been set to offline mode.`,
+            'warning',
+            {
+              confirmText: "Contact Support",
+              onConfirm: () => {
+                setAlertVisible(false);
+                navigation.navigate("SupportScreen");
+              },
+              cancelText: "OK",
+            }
+          );
         }
         
         return false;
       }
       
-      return hasValidSubscription;
+      // Kung walang subscription record, huwag mag-offline
+      // Kung may subscription pero valid, stay online
+      return currentOnlineStatus;
     } catch (err) {
       console.log("Error checking subscription:", err);
-      // Don't force offline on errors
-      return true; // Return true to keep online status
+      return currentOnlineStatus; // Keep current status on error
     } finally {
       setSubscriptionCheckInProgress(false);
     }
   }, [heartbeatInterval, navigation]);
 
-  // * ================= SUBSCRIPTION EXPIRY CHECK EFFECT =================
+  // * ================= SINGLE SUBSCRIPTION EXPIRY CHECK EFFECT =================
   useEffect(() => {
     if (!driver?.id) return;
     
@@ -580,7 +708,8 @@ export default function DriverHomeScreen() {
       // Only check if screen is focused AND driver is online
       if (isOnline && isScreenFocused.current) {
         console.log("Checking subscription expiry...");
-        await checkAndHandleSubscription(driver.id, isOnline);
+        const result = await checkAndHandleSubscription(driver.id, isOnline);
+        console.log("Subscription check completed, online status:", result);
       } else {
         console.log("Skipping subscription check - screen not focused or offline");
       }
@@ -892,52 +1021,52 @@ export default function DriverHomeScreen() {
     }
   }, []);
 
-const fetchActiveSubscription = useCallback(async (driverId, useCache = true) => {
-  if (!driverId) return null;
-  
-  if (useCache && dataCache.current.subscription && dataCache.current.timestamp && 
-      (Date.now() - dataCache.current.timestamp) < 30000) {
-    return dataCache.current.subscription;
-  }
-  
-  try {
-    const { data, error } = await supabase
-      .from("driver_subscriptions")
-      .select(
-        `
-        id,
-        plan_id,
-        start_date,
-        end_date,
-        status,
-        subscription_plans (
-          plan_name,
-          plan_type,
-          price
+  const fetchActiveSubscription = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    
+    if (useCache && dataCache.current.subscription && dataCache.current.timestamp && 
+        (Date.now() - dataCache.current.timestamp) < 30000) {
+      return dataCache.current.subscription;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from("driver_subscriptions")
+        .select(
+          `
+          id,
+          plan_id,
+          start_date,
+          end_date,
+          status,
+          subscription_plans (
+            plan_name,
+            plan_type,
+            price
+          )
+        `,
         )
-      `,
-      )
-      .eq("driver_id", driverId)
-      .in("status", ["active", "expired"])
-      .order("end_date", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+        .eq("driver_id", driverId)
+        .in("status", ["active", "expired"])
+        .order("end_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
-    if (error) {
-      // Log but don't throw - just return null
-      console.log("Subscription fetch error (non-critical):", error.message);
-      dataCache.current.subscription = null;
+      if (error) {
+        // Log but don't throw - just return null
+        console.log("Subscription fetch error (non-critical):", error.message);
+        dataCache.current.subscription = null;
+        return null;
+      }
+
+      dataCache.current.subscription = data;
+      return data;
+    } catch (err) {
+      console.log("Exception fetching subscription:", err.message);
+      // Return null but don't throw - this prevents the app from crashing
       return null;
     }
-
-    dataCache.current.subscription = data;
-    return data;
-  } catch (err) {
-    console.log("Exception fetching subscription:", err.message);
-    // Return null but don't throw - this prevents the app from crashing
-    return null;
-  }
-}, []);
+  }, []);
 
   const fetchMissionProgress = useCallback(async (driverId, useCache = true) => {
     if (!driverId) return null;
@@ -1138,6 +1267,16 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
       }
       
       setActiveSubscription(subscriptionResult);
+      
+      // Determine if subscription is valid
+      if (subscriptionResult) {
+        const isValid = subscriptionResult.status === 'active' && 
+          new Date(subscriptionResult.end_date) > new Date();
+        setHasActiveSubscription(isValid);
+      } else {
+        setHasActiveSubscription(false);
+      }
+      
       setMissionProgress(missionResult);
       setUnreadNotifications(notificationsResult);
       
@@ -1156,7 +1295,7 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
       fetchWeeklyData, fetchActiveSubscription, fetchMissionProgress, 
       fetchUnreadNotifications, fetchDriverRank]);
 
-  // * ================= INITIAL LOAD =================
+  // * ================= FIXED INITIAL LOAD =================
   useEffect(() => {
     const getDriver = async () => {
       try {
@@ -1178,6 +1317,7 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
             last_name, 
             status, 
             is_active,
+            online_status,
             email,
             phone,
             profile_picture
@@ -1195,28 +1335,55 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
         setDriver(data);
         
         const subscription = await fetchActiveSubscription(data.id, false);
-        const hasValidSubscription = !!subscription && 
-          subscription.status === 'active' && 
-          new Date(subscription.end_date) > new Date();
+        
+        // Determine if subscription is valid
+        let hasValidSubscription = false;
+        if (subscription) {
+          hasValidSubscription = subscription.status === 'active' && 
+            new Date(subscription.end_date) > new Date();
+        }
         
         setActiveSubscription(subscription);
         setHasActiveSubscription(hasValidSubscription);
         
-        const shouldBeOnline = hasValidSubscription && data?.is_active;
+        // Check BOTH is_active AND online_status
+        const wasOnline = data?.is_active === true || data?.online_status === 'online';
+        
+        console.log("Initial online status check:", {
+          is_active: data?.is_active,
+          online_status: data?.online_status,
+          wasOnline,
+          hasValidSubscription,
+          driverStatus: data?.status
+        });
+        
+        // Only set online if:
+        // 1. Driver is approved
+        // 2. Has valid subscription
+        // 3. Was previously online (either field)
+        const shouldBeOnline = data?.status === "approved" && 
+          hasValidSubscription && 
+          wasOnline;
+        
         setIsOnline(shouldBeOnline);
 
         await setupLocationPermission();
 
-        if (data?.status === "approved" && shouldBeOnline) {
-          await startLocationUpdates(data.id);
-        } else if (data?.is_active && !hasValidSubscription) {
+        // If should be online but no valid subscription, force offline
+        if (wasOnline && !hasValidSubscription) {
+          console.log("Driver was online but has no valid subscription - forcing offline");
           await supabase
             .from("drivers")
             .update({
               is_active: false,
+              online_status: 'offline',
               updated_at: new Date().toISOString(),
             })
             .eq("id", data.id);
+        } 
+        // If should be online and has valid subscription, start location updates
+        else if (shouldBeOnline) {
+          await startLocationUpdates(data.id);
         }
 
         await loadDriverData(true);
@@ -1232,34 +1399,30 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
     getDriver();
   }, []);
 
-  // * ================= PERIODIC SUBSCRIPTION CHECK =================
-  useEffect(() => {
-    if (!driver?.id) return;
-    
-    const intervalId = setInterval(async () => {
-      // Only check if screen is focused AND driver is online
-      if (isOnline && isScreenFocused.current) {
-        console.log("Periodic subscription check running...");
-        await checkAndHandleSubscription(driver.id, isOnline);
-      } else {
-        console.log("Skipping periodic check - screen not focused or offline");
-      }
-    }, 60000); // Check every minute
-    
-    return () => clearInterval(intervalId);
-  }, [driver?.id, isOnline, checkAndHandleSubscription]);
-
-  // * ================= REFRESH HANDLER =================
+  // * ================= IMPROVED REFRESH HANDLER =================
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    
+    // Check status first
+    await checkAndRefresh();
+    
+    // Then reload all data
     await loadDriverData(true);
     
+    // Check subscription ulit
     if (driver?.id && isScreenFocused.current) {
       await checkAndHandleSubscription(driver.id, isOnline);
     }
     
     setRefreshing(false);
-  }, [loadDriverData, driver?.id, isOnline, checkAndHandleSubscription]);
+    
+    showAlert(
+      "Refreshed",
+      "Your dashboard has been updated",
+      'success',
+      { confirmText: "OK" }
+    );
+  }, [loadDriverData, driver?.id, isOnline, checkAndHandleSubscription, checkAndRefresh]);
 
   // * ================= FOCUS EFFECT =================
   useFocusEffect(
@@ -1289,7 +1452,7 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
     };
   }, [locationSubscription, heartbeatInterval, subscriptionExpiryCheckInterval]);
 
-  // * ================= APP STATE HANDLER =================
+  // * ================= IMPROVED APP STATE HANDLER =================
   useEffect(() => {
     const subscription = AppState.addEventListener("change", async (nextAppState) => {
       const previousAppState = appState.current;
@@ -1301,13 +1464,16 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
         if (driver?.id) {
           await loadDriverData(false);
           
+          // Immediate status check
+          await checkAndRefresh();
+          
           // Only check subscription if screen is focused
           if (isScreenFocused.current) {
-            const hasValidSubscription = await checkAndHandleSubscription(driver.id, isOnline);
+            const newOnlineStatus = await checkAndHandleSubscription(driver.id, isOnline);
             
-            if (hasValidSubscription && isOnline && !locationSubscription) {
+            if (newOnlineStatus && isOnline && !locationSubscription) {
               await startLocationUpdates(driver.id);
-            } else if (hasValidSubscription && isOnline) {
+            } else if (newOnlineStatus && isOnline) {
               await sendHeartbeat();
               
               try {
@@ -1342,6 +1508,7 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
             
             const now = new Date().toISOString();
             
+            // Send final heartbeat with location
             await supabase
               .from("driver_locations")
               .update({
@@ -1349,8 +1516,18 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
                 longitude: location.coords.longitude,
                 last_updated: now,
                 last_heartbeat: now,
+                is_online: true
               })
               .eq("driver_id", driver.id);
+              
+            // Also update drivers table as backup
+            await supabase
+              .from("drivers")
+              .update({
+                last_online: now,
+                updated_at: now
+              })
+              .eq("id", driver.id);
               
             console.log("Final heartbeat sent before background");
           } catch (err) {
@@ -1371,9 +1548,9 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
     });
 
     return () => subscription.remove();
-  }, [isOnline, driver?.id, loadDriverData, locationSubscription, checkAndHandleSubscription, sendHeartbeat]);
+  }, [isOnline, driver?.id, loadDriverData, locationSubscription, checkAndHandleSubscription, sendHeartbeat, checkAndRefresh]);
 
-  // * ================= TOGGLE ONLINE =================
+  // * ================= FAST TOGGLE ONLINE =================
   const toggleAvailability = async () => {
     if (isToggling) {
       console.log("Toggle already in progress, ignoring...");
@@ -1390,10 +1567,16 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
       return;
     }
 
+    // Immediate UI feedback
     setIsToggling(true);
+    const newOnlineStatus = !isOnline;
+    
+    // Optimistic update - magpalit na agad ng UI
+    setIsOnline(newOnlineStatus);
 
     try {
-      if (!isOnline) {
+      // Check subscription kung mag-o-online
+      if (newOnlineStatus) {
         const subscription = await fetchActiveSubscription(driver.id, false);
         
         const hasValidSubscription = !!subscription && 
@@ -1404,6 +1587,9 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
         setHasActiveSubscription(hasValidSubscription);
         
         if (!hasValidSubscription) {
+          // Revert UI kung walang subscription
+          setIsOnline(false);
+          
           let message = "You need an active subscription to go online.";
           if (subscription && subscription.status === 'expired') {
             message = "Your subscription has expired. Please renew to go online.";
@@ -1416,7 +1602,7 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
             message,
             'warning',
             {
-              confirmText: "Subscribe",
+              confirmText: subscription?.status === 'expired' ? "Renew Now" : "Subscribe",
               onConfirm: () => {
                 setAlertVisible(false);
                 navigation.navigate("SubscriptionScreen");
@@ -1429,56 +1615,58 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
         }
       }
 
-      if (!locationPermission) {
+      // Check location permission kung mag-o-online
+      if (newOnlineStatus && !locationPermission) {
         const granted = await setupLocationPermission();
         if (!granted) {
+          // Revert UI kung walang permission
+          setIsOnline(false);
           setIsToggling(false);
           return;
         }
       }
 
-      const newOnlineStatus = !isOnline;
       const now = new Date().toISOString();
       
-      const { error } = await supabase
-        .from("drivers")
-        .update({
-          is_active: newOnlineStatus,
-          updated_at: now,
-        })
-        .eq("id", driver.id);
+      // Update driver status sa database - BOTH fields!
+      console.log("Toggling online status:", {
+        from: !newOnlineStatus,
+        to: newOnlineStatus,
+        online_status: newOnlineStatus ? 'online' : 'offline'
+      });
 
-      if (error) {
-        console.log(error.message);
-        showAlert(
-          "Error",
-          "Failed to update status. Please try again.",
-          'error',
-          { confirmText: "OK" }
-        );
-        setIsToggling(false);
-        return;
-      }
+      // Do this in parallel para mas mabilis
+      await Promise.all([
+        supabase
+          .from("drivers")
+          .update({
+            is_active: newOnlineStatus,
+            online_status: newOnlineStatus ? 'online' : 'offline',
+            updated_at: now,
+          })
+          .eq("id", driver.id),
+        
+        // Update location tracking
+        newOnlineStatus 
+          ? startLocationUpdates(driver.id)
+          : stopLocationUpdates(driver.id)
+      ]);
 
-      setIsOnline(newOnlineStatus);
-
-      if (newOnlineStatus) {
-        await startLocationUpdates(driver.id);
-      } else {
-        await stopLocationUpdates(driver.id);
-      }
-
+      // No need for success alert - mas maganda kung subtle lang
+      // Pero show parin para may feedback
       showAlert(
         newOnlineStatus ? "You're Online! 🟢" : "You're Offline 🔴",
         newOnlineStatus 
-          ? "You can now receive booking requests. Your location is being tracked while the app is open."
-          : "You will no longer receive booking requests.",
+          ? "Ready to accept bookings"
+          : "Not accepting bookings",
         newOnlineStatus ? 'success' : 'info',
         { confirmText: "OK" }
       );
+      
     } catch (err) {
-      setIsOnline(!isOnline);
       console.log(err.message);
+      // Revert UI on error
+      setIsOnline(!newOnlineStatus);
       showAlert(
         "Error",
         "Failed to update status. Please try again.",
@@ -1486,11 +1674,56 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
         { confirmText: "OK" }
       );
     } finally {
-      setTimeout(() => {
-        setIsToggling(false);
-      }, 1000);
+      setIsToggling(false);
+      setLastRefreshTime(Date.now());
     }
   };
+
+  // * ================= MANUAL REFRESH BUTTON =================
+  const ManualRefreshButton = () => (
+    <TouchableOpacity
+      onPress={async () => {
+        setRefreshing(true);
+        await checkAndRefresh();
+        await loadDriverData(true);
+        setRefreshing(false);
+      }}
+      style={{
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        backgroundColor: '#183B5C',
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5,
+        zIndex: 999,
+      }}
+      disabled={refreshing}
+    >
+      <Ionicons 
+        name="refresh" 
+        size={24} 
+        color="#FFF" 
+        style={{
+          transform: [{ rotate: refreshing ? '360deg' : '0deg' }]
+        }}
+      />
+      {refreshing && (
+        <ActivityIndicator 
+          size="small" 
+          color="#FFF" 
+          style={{ position: 'absolute' }}
+        />
+      )}
+    </TouchableOpacity>
+  );
 
   // * ================= ANIMATED TOGGLE =================
   const toggleAnim = useRef(new Animated.Value(0)).current;
@@ -1530,7 +1763,12 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
         style={[styles.container, { paddingTop: insets.top }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh}
+            colors={['#183B5C']}
+            tintColor="#183B5C"
+          />
         }
         removeClippedSubviews={true}
         maxToRenderPerBatch={5}
@@ -1553,29 +1791,34 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
             </View>
 
             <View style={styles.headerContent}>
-              <View style={styles.onlineBadge}>
-                <View
-                  style={[
-                    styles.onlineDot,
-                    {
-                      backgroundColor:
-                        driver?.status === "approved" ? "#00FF00" : "#FF0000",
-                    },
-                  ]}
-                />
-                <Text style={[styles.onlineText, { color: "#FFF" }]}>
-                  {driver?.status === "approved"
-                    ? "Verified"
-                    : driver?.status === "under_review"
-                      ? "Under Review"
-                      : driver?.status === "pending"
-                        ? "Not Verified"
-                        : driver?.status === "rejected"
-                          ? "Rejected"
-                          : driver?.status === "suspended"
-                            ? "Suspended"
-                            : "Inactive"}
-                </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={styles.onlineBadge}>
+                  <View
+                    style={[
+                      styles.onlineDot,
+                      {
+                        backgroundColor:
+                          driver?.status === "approved" ? "#00FF00" : "#FF0000",
+                      },
+                    ]}
+                  />
+                  <Text style={[styles.onlineText, { color: "#FFF" }]}>
+                    {driver?.status === "approved"
+                      ? "Verified"
+                      : driver?.status === "under_review"
+                        ? "Under Review"
+                        : driver?.status === "pending"
+                          ? "Not Verified"
+                          : driver?.status === "rejected"
+                            ? "Rejected"
+                            : driver?.status === "suspended"
+                              ? "Suspended"
+                              : "Inactive"}
+                  </Text>
+                </View>
+                
+                {/* Status indicator */}
+                <StatusIndicator isOnline={isOnline} lastRefreshTime={lastRefreshTime} />
               </View>
 
               <Text style={[styles.userName, { color: "#FFF" }]}>
@@ -2573,6 +2816,9 @@ const fetchActiveSubscription = useCallback(async (driverId, useCache = true) =>
           )}
         </View>
       </ScrollView>
+
+      {/* Manual refresh button */}
+      <ManualRefreshButton />
 
       {/* Modern Alert Modal */}
       <ModernAlert

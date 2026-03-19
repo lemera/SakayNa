@@ -1,4 +1,3 @@
-
 import 'react-native-gesture-handler';
 import React from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -6,17 +5,12 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 /* ============================= */
-/* Screens */
+/* Screens Import */
 /* ============================= */
-
 import SplashScreen from './app/SplashScreen.js';
 import UserTypeScreen from './app/UserTypeScreen.js';
 
-
-/* ============================= */
-/* Commuter Flow */
-/* ============================= */
-
+// Commuter Flow
 import CommuterLoginScreen from './app/commuter/CommuterLogin.js';
 import OtpScreen from './app/commuter/OtpScreen.js';
 import CommuterDetails from './app/commuter/CommuterDetails.js';
@@ -24,7 +18,6 @@ import HomePage from "./app/commuter/HomePage.js";
 import SelectDriverScreen from "./app/commuter/SelectDriverScreen";
 import TrackRideScreen from "./app/commuter/TrackRideScreen.js";
 import PaymentScreen from "./app/commuter/PaymentScreen.js";
-
 import MapPickerScreen from "./app/commuter/MapPickerScreen.js";
 import TransactionHistory from "./app/commuter/TransactionHistory.js";
 import PaymentMethods from './app/commuter/PaymentMethods.js';
@@ -39,11 +32,7 @@ import RateRide from './app/commuter/RateRide';
 import RideHistoryScreen from './app/commuter/RideHistoryScreen.js';
 import ReferralsScreen from './app/commuter/ReferralsScreen.js';
 
-
-/* ============================= */
-/* Driver Flow */
-/* ============================= */
-
+// Driver Flow
 import DriverLoginScreen from './app/Driver/DriverLogin.js';
 import DriverOtpScreen from './app/Driver/DriverOtpScreen.js';
 import DriverDetails from './app/Driver/DriverDetails.js';
@@ -53,27 +42,41 @@ import DriverVerificationScreen from './app/Driver/DriverVerificationScreen.js';
 import SubscriptionScreen from './app/Driver/SubscriptionScreen.js';
 import TripDetailsScreen from "./app/Driver/TripDetailsScreen";
 import ActiveRideScreen from './app/Driver/ActiveRideScreen';
+import PaymentWebView from './app/Driver/PaymentWebView.js';
+import PaymentSuccess from './app/Driver/PaymentSuccess.js';
+
 const Stack = createNativeStackNavigator();
+
+/* ============================= */
+/* Deep Linking Configuration */
+/* ============================= */
+const linking = {
+  // Ito ang scheme na nilagay mo sa app.json
+  prefixes: ['sakayna://'],
+  config: {
+    screens: {
+      // "ScreenName": "url-path"
+      PaymentSuccess: 'payment-success',
+      DriverHomePage: 'payment-failed', 
+    },
+  },
+};
 
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <NavigationContainer>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {/* Idinagdag ang linking prop dito */}
+      <NavigationContainer linking={linking}>
+        <Stack.Navigator 
+          initialRouteName="Splash"
+          screenOptions={{ headerShown: false }}
+        >
 
-          {/* ============================= */}
-          {/* Splash (App Entry Point) */}
-          {/* ============================= */}
+          {/* Splash & Auth */}
           <Stack.Screen name="Splash" component={SplashScreen} />
-
-          {/* ============================= */}
-          {/* User Type Selection */}
-          {/* ============================= */}
           <Stack.Screen name="UserType" component={UserTypeScreen} />
 
-          {/* ============================= */}
           {/* Commuter Flow */}
-          {/* ============================= */}
           <Stack.Screen name="CommuterLogin" component={CommuterLoginScreen} />
           <Stack.Screen name="OtpScreen" component={OtpScreen} />
           <Stack.Screen name="CommuterDetails" component={CommuterDetails} />
@@ -82,7 +85,6 @@ export default function App() {
           <Stack.Screen name="TrackRideScreen" component={TrackRideScreen} />
           <Stack.Screen name="PaymentScreen" component={PaymentScreen} />
           <Stack.Screen name="MapPicker" component={MapPickerScreen} />
-
           <Stack.Screen name="TransactionHistory" component={TransactionHistory} />
           <Stack.Screen name="PaymentMethods" component={PaymentMethods} />
           <Stack.Screen name="PointsRewards" component={PointsRewards} />
@@ -95,12 +97,8 @@ export default function App() {
           <Stack.Screen name="RateRide" component={RateRide} />
           <Stack.Screen name="RideHistoryScreen" component={RideHistoryScreen} />
           <Stack.Screen name="ReferralsScreen" component={ReferralsScreen} />
-          
 
-
-          {/* ============================= */}
           {/* Driver Flow */}
-          {/* ============================= */}
           <Stack.Screen name="DriverLoginScreen" component={DriverLoginScreen} />
           <Stack.Screen name="DriverOtpScreen" component={DriverOtpScreen} />
           <Stack.Screen name="DriverDetails" component={DriverDetails} />
@@ -110,8 +108,8 @@ export default function App() {
           <Stack.Screen name="SubscriptionScreen" component={SubscriptionScreen} />
           <Stack.Screen name="TripDetailsScreen" component={TripDetailsScreen} />
           <Stack.Screen name="ActiveRideScreen" component={ActiveRideScreen} />
-          {/* <Stack.Screen name="DriverHome" component={DriverHomeScreen} />
-          <Stack.Screen name="DriverTrackRide" component={DriverTrackRideScreen} /> */}
+          <Stack.Screen name="PaymentWebView" component={PaymentWebView} />
+          <Stack.Screen name="PaymentSuccess" component={PaymentSuccess} />
 
         </Stack.Navigator>
       </NavigationContainer>
