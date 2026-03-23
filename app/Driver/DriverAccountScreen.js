@@ -24,7 +24,7 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
-import QRCode from 'react-native-qrcode-svg'; // You need to install this: npm install react-native-qrcode-svg
+import QRCode from 'react-native-qrcode-svg';
 
 export default function DriverAccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -43,6 +43,22 @@ export default function DriverAccountScreen({ navigation }) {
   const [vehicle, setVehicle] = useState(null);
   const [documents, setDocuments] = useState(null);
   const [activeSubscription, setActiveSubscription] = useState(null);
+
+  // Withdrawal Settings States
+  const [withdrawalSettings, setWithdrawalSettings] = useState(null);
+  const [showWithdrawalSettingsModal, setShowWithdrawalSettingsModal] = useState(false);
+  const [editWithdrawalSettings, setEditWithdrawalSettings] = useState({
+    auto_withdraw: false,
+    auto_withdraw_threshold: "",
+    daily_withdrawal_limit: "",
+    weekly_withdrawal_limit: "",
+    monthly_withdrawal_limit: "",
+    notifications_enabled: true,
+    withdrawal_pin: "",
+  });
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [tempPin, setTempPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
 
   // QR Code States
   const [qrModalVisible, setQrModalVisible] = useState(false);
@@ -81,28 +97,26 @@ export default function DriverAccountScreen({ navigation }) {
   useEffect(() => {
     if (driverId) {
       loadDriverData();
-      generateQRCode(); // Generate QR code when driver ID is available
+      generateQRCode();
     }
   }, [driverId]);
 
-  // 👇 NEW: Generate QR Code
+  // Generate QR Code
   const generateQRCode = () => {
     if (!driverId) return;
     
-    // Create QR data with driver information
     const qrData = {
       type: "driver_qr",
       driver_id: driverId,
       name: driver ? `${driver.first_name} ${driver.last_name}` : "SakayNa Driver",
       timestamp: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days validity
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     };
     
     setQrValue(JSON.stringify(qrData));
-    console.log("✅ QR Code generated for driver:", driverId);
   };
 
-  // 👇 NEW: Refresh QR Code
+  // Refresh QR Code
   const refreshQRCode = () => {
     Alert.alert(
       "Refresh QR Code",
@@ -120,10 +134,9 @@ export default function DriverAccountScreen({ navigation }) {
     );
   };
 
-  // 👇 NEW: Share QR Code
+  // Share QR Code
   const shareQRCode = async () => {
     try {
-      // Since we can't easily share the SVG, we'll share a message
       const message = `🚲 SakayNa Driver QR Code\n\nDriver: ${driver?.first_name} ${driver?.last_name}\nVehicle: ${vehicle?.vehicle_type || 'N/A'} ${vehicle?.vehicle_color || ''}\nPlate: ${vehicle?.plate_number || 'N/A'}\n\nScan this QR code with the SakayNa app to book a ride directly!`;
       
       await Share.share({
@@ -135,7 +148,7 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
-  // 👇 NEW: Print QR Code Instructions
+  // Print QR Code Instructions
   const showPrintInstructions = () => {
     Alert.alert(
       "🖨️ Print QR Code",
@@ -144,6 +157,117 @@ export default function DriverAccountScreen({ navigation }) {
     );
   };
 
+  // Fetch Withdrawal Settings
+  const fetchWithdrawalSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("withdrawal_settings")
+        .select("*")
+        .eq("user_id", driverId)
+        .eq("user_type", "driver")
+        .maybeSingle();
+
+      if (error) throw error;
+
+      if (data) {
+        setWithdrawalSettings(data);
+        setEditWithdrawalSettings({
+          auto_withdraw: data.auto_withdraw || false,
+          auto_withdraw_threshold: data.auto_withdraw_threshold?.toString() || "",
+          daily_withdrawal_limit: data.daily_withdrawal_limit?.toString() || "",
+          weekly_withdrawal_limit: data.weekly_withdrawal_limit?.toString() || "",
+          monthly_withdrawal_limit: data.monthly_withdrawal_limit?.toString() || "",
+          notifications_enabled: data.notifications_enabled !== false,
+          withdrawal_pin: "", // Don't load the actual PIN for security
+        });
+      } else {
+        // Create default settings if none exist
+        const { error: insertError } = await supabase
+          .from("withdrawal_settings")
+          .insert({
+            user_id: driverId,
+            user_type: "driver",
+            auto_withdraw: false,
+            notifications_enabled: true,
+            created_at: new Date(),
+            updated_at: new Date(),
+          });
+
+        if (insertError) throw insertError;
+
+        // Fetch again to get the created settings
+        await fetchWithdrawalSettings();
+      }
+    } catch (err) {
+      console.log("Error fetching withdrawal settings:", err.message);
+    }
+  };
+
+  // Save Withdrawal Settings
+  const saveWithdrawalSettings = async () => {
+    try {
+      const updates = {
+        auto_withdraw: editWithdrawalSettings.auto_withdraw,
+        notifications_enabled: editWithdrawalSettings.notifications_enabled,
+        updated_at: new Date(),
+      };
+
+      // Only include numeric fields if they have values
+      if (editWithdrawalSettings.auto_withdraw_threshold) {
+        updates.auto_withdraw_threshold = parseFloat(editWithdrawalSettings.auto_withdraw_threshold);
+      } else {
+        updates.auto_withdraw_threshold = null;
+      }
+
+      if (editWithdrawalSettings.daily_withdrawal_limit) {
+        updates.daily_withdrawal_limit = parseFloat(editWithdrawalSettings.daily_withdrawal_limit);
+      } else {
+        updates.daily_withdrawal_limit = null;
+      }
+
+      if (editWithdrawalSettings.weekly_withdrawal_limit) {
+        updates.weekly_withdrawal_limit = parseFloat(editWithdrawalSettings.weekly_withdrawal_limit);
+      } else {
+        updates.weekly_withdrawal_limit = null;
+      }
+
+      if (editWithdrawalSettings.monthly_withdrawal_limit) {
+        updates.monthly_withdrawal_limit = parseFloat(editWithdrawalSettings.monthly_withdrawal_limit);
+      } else {
+        updates.monthly_withdrawal_limit = null;
+      }
+
+      // Handle PIN
+      if (editWithdrawalSettings.withdrawal_pin) {
+        if (editWithdrawalSettings.withdrawal_pin.length < 4) {
+          Alert.alert("Error", "PIN must be at least 4 digits");
+          return;
+        }
+        // In production, hash this! For now, store as is (not secure for production)
+        updates.withdrawal_pin = editWithdrawalSettings.withdrawal_pin;
+      } else if (withdrawalSettings?.withdrawal_pin && !editWithdrawalSettings.withdrawal_pin) {
+        // If user wants to remove PIN
+        updates.withdrawal_pin = null;
+      }
+
+      const { error } = await supabase
+        .from("withdrawal_settings")
+        .update(updates)
+        .eq("user_id", driverId)
+        .eq("user_type", "driver");
+
+      if (error) throw error;
+
+      Alert.alert("✅ Success", "Withdrawal settings updated successfully!");
+      setShowWithdrawalSettingsModal(false);
+      await fetchWithdrawalSettings();
+    } catch (err) {
+      console.log("Error saving withdrawal settings:", err.message);
+      Alert.alert("Error", "Failed to save withdrawal settings");
+    }
+  };
+
+  // Fetch Referrals
   const fetchReferrals = async () => {
     try {
       const { count, error } = await supabase
@@ -163,6 +287,7 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
+  // Fetch Settings
   const fetchSettings = async () => {
     try {
       const { data, error } = await supabase
@@ -212,6 +337,7 @@ export default function DriverAccountScreen({ navigation }) {
         fetchDocuments(),
         fetchActiveSubscription(),
         fetchReferrals(),
+        fetchWithdrawalSettings(),
       ]);
     } catch (err) {
       console.log("Error loading driver data:", err);
@@ -223,7 +349,7 @@ export default function DriverAccountScreen({ navigation }) {
   const onRefresh = async () => {
     setRefreshing(true);
     await loadDriverData();
-    generateQRCode(); // Regenerate QR code on refresh
+    generateQRCode();
     setRefreshing(false);
   };
 
@@ -250,14 +376,8 @@ export default function DriverAccountScreen({ navigation }) {
 
       if (error) throw error;
 
-      // Debug: See what's actually stored in database
-      console.log("Raw profile_picture from DB:", data.profile_picture);
-
-      // Fix the profile picture URL if needed
       if (data.profile_picture) {
-        // Check if it's already a full URL
         if (!data.profile_picture.startsWith("http")) {
-          // If it's just a filename, construct the full URL
           const { data: urlData } = supabase.storage
             .from("driver-profiles")
             .getPublicUrl(data.profile_picture);
@@ -265,7 +385,6 @@ export default function DriverAccountScreen({ navigation }) {
           data.profile_picture = urlData.publicUrl;
         }
 
-        // Add timestamp for cache busting
         data.profile_picture = data.profile_picture + "?t=" + Date.now();
       }
 
@@ -283,7 +402,6 @@ export default function DriverAccountScreen({ navigation }) {
 
   const fetchDriverStats = async () => {
     try {
-      // Get total trips and earnings
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
         .select("actual_fare, commuter_rating")
@@ -296,7 +414,6 @@ export default function DriverAccountScreen({ navigation }) {
       const totalEarnings =
         bookings?.reduce((sum, b) => sum + (b.actual_fare || 0), 0) || 0;
 
-      // Calculate average rating
       const ratings =
         bookings
           ?.filter((b) => b.commuter_rating)
@@ -384,7 +501,6 @@ export default function DriverAccountScreen({ navigation }) {
 
   const handleUpdateProfile = async () => {
     try {
-      // Parse name
       const nameParts = editName.split(" ");
       const firstName = nameParts[0] || "";
       const lastName = nameParts.slice(1).join(" ") || "";
@@ -414,7 +530,6 @@ export default function DriverAccountScreen({ navigation }) {
   const handleUpdateVehicle = async () => {
     try {
       if (vehicle) {
-        // Update existing vehicle
         const { error } = await supabase
           .from("driver_vehicles")
           .update({
@@ -427,7 +542,6 @@ export default function DriverAccountScreen({ navigation }) {
 
         if (error) throw error;
       } else {
-        // Insert new vehicle
         const { error } = await supabase.from("driver_vehicles").insert([
           {
             driver_id: driverId,
@@ -490,11 +604,9 @@ export default function DriverAccountScreen({ navigation }) {
         const fileName = `${Date.now()}.jpg`;
         const filePath = `${driverId}/${fileName}`;
 
-        // Convert image to arrayBuffer instead of blob
         const response = await fetch(image.uri);
         const arrayBuffer = await response.arrayBuffer();
 
-        // Upload using arrayBuffer
         const { data, error } = await supabase.storage
           .from("driver-profiles")
           .upload(filePath, arrayBuffer, {
@@ -504,14 +616,10 @@ export default function DriverAccountScreen({ navigation }) {
 
         if (error) throw error;
 
-        // Get public URL
         const { data: urlData } = supabase.storage
           .from("driver-profiles")
           .getPublicUrl(filePath);
 
-        console.log("Upload successful:", urlData.publicUrl);
-
-        // Update database
         const { error: updateError } = await supabase
           .from("drivers")
           .update({
@@ -522,7 +630,6 @@ export default function DriverAccountScreen({ navigation }) {
 
         if (updateError) throw updateError;
 
-        // Update state
         setDriver((prevDriver) => ({
           ...prevDriver,
           profile_picture: urlData.publicUrl + "?t=" + Date.now(),
@@ -650,7 +757,6 @@ export default function DriverAccountScreen({ navigation }) {
         }}
       >
         <View style={{ alignItems: "center" }}>
-          {/* Profile Picture */}
           <Pressable
             onPress={pickImage}
             style={{ position: "relative", marginBottom: 10 }}
@@ -673,22 +779,11 @@ export default function DriverAccountScreen({ navigation }) {
                     uri: driver.profile_picture,
                   }}
                   style={{ width: "100%", height: "100%", borderRadius: 50 }}
-                  onLoad={() =>
-                    console.log(
-                      "✅ Image loaded successfully:",
-                      driver.profile_picture,
-                    )
-                  }
-                  onError={(e) => {
-                    console.log("❌ Image load error:", e.nativeEvent.error);
-                    console.log("❌ Failed URL:", driver.profile_picture);
-                  }}
                 />
               ) : (
                 <Ionicons name="person" size={50} color="#9CA3AF" />
               )}
             </View>
-            {/* Camera icon */}
             <View
               style={{
                 position: "absolute",
@@ -708,7 +803,6 @@ export default function DriverAccountScreen({ navigation }) {
             </View>
           </Pressable>
 
-          {/* Name and Status */}
           <Text
             style={{
               fontSize: 22,
@@ -825,7 +919,7 @@ export default function DriverAccountScreen({ navigation }) {
         </View>
       </View>
 
-      {/* 👇 NEW: QR Code Section */}
+      {/* QR Code Section */}
       <View
         style={{
           marginHorizontal: 20,
@@ -855,7 +949,6 @@ export default function DriverAccountScreen({ navigation }) {
           Let passengers scan your QR code to book directly with you!
         </Text>
 
-        {/* QR Code Display */}
         <View style={{ alignItems: "center", marginBottom: 20 }}>
           {qrValue ? (
             <View
@@ -898,7 +991,6 @@ export default function DriverAccountScreen({ navigation }) {
           )}
         </View>
 
-        {/* QR Code Actions */}
         <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
           <Pressable
             style={{
@@ -986,6 +1078,162 @@ export default function DriverAccountScreen({ navigation }) {
             Print and attach this QR code to your vehicle. Passengers can scan it to book directly with you!
           </Text>
         </View>
+      </View>
+
+      {/* Withdrawal Settings Section - NEW */}
+      <View
+        style={{
+          marginHorizontal: 20,
+          marginTop: 20,
+          backgroundColor: "#FFF",
+          borderRadius: 24,
+          padding: 20,
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.05,
+          shadowRadius: 8,
+          elevation: 2,
+        }}
+      >
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            color: "#333",
+            marginBottom: 15,
+          }}
+        >
+          💰 Withdrawal Settings
+        </Text>
+
+        {/* Auto Withdraw Toggle */}
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
+          <View>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
+              Auto Withdraw
+            </Text>
+            <Text style={{ fontSize: 12, color: "#666" }}>
+              Auto-convert points when reaching threshold
+            </Text>
+          </View>
+          <Switch
+            value={withdrawalSettings?.auto_withdraw || false}
+            onValueChange={async (value) => {
+              const { error } = await supabase
+                .from("withdrawal_settings")
+                .update({ auto_withdraw: value, updated_at: new Date() })
+                .eq("user_id", driverId)
+                .eq("user_type", "driver");
+              
+              if (!error) {
+                fetchWithdrawalSettings();
+                Alert.alert("Success", `Auto withdraw ${value ? "enabled" : "disabled"}`);
+              }
+            }}
+            trackColor={{ false: "#E5E7EB", true: "#183B5C" }}
+          />
+        </View>
+
+        {/* Auto Withdraw Threshold */}
+        {withdrawalSettings?.auto_withdraw && (
+          <View style={{ marginBottom: 12, paddingLeft: 8 }}>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
+              Auto Withdraw Threshold
+            </Text>
+            <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C" }}>
+              {withdrawalSettings?.auto_withdraw_threshold 
+                ? `${withdrawalSettings.auto_withdraw_threshold} points` 
+                : "Not set"}
+            </Text>
+            <Text style={{ fontSize: 11, color: "#9CA3AF" }}>
+              Will auto-convert when points reach this amount
+            </Text>
+          </View>
+        )}
+
+        {/* Withdrawal Limits Preview */}
+        <View
+          style={{
+            marginTop: 12,
+            paddingTop: 12,
+            borderTopWidth: 1,
+            borderTopColor: "#F3F4F6",
+          }}
+        >
+          <Text style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>
+            Current Limits
+          </Text>
+          <View style={{ flexDirection: "row", gap: 15 }}>
+            <View>
+              <Text style={{ fontSize: 11, color: "#9CA3AF" }}>Daily</Text>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
+                {withdrawalSettings?.daily_withdrawal_limit 
+                  ? `₱${withdrawalSettings.daily_withdrawal_limit}` 
+                  : "No limit"}
+              </Text>
+            </View>
+            <View>
+              <Text style={{ fontSize: 11, color: "#9CA3AF" }}>Weekly</Text>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
+                {withdrawalSettings?.weekly_withdrawal_limit 
+                  ? `₱${withdrawalSettings.weekly_withdrawal_limit}` 
+                  : "No limit"}
+              </Text>
+            </View>
+            <View>
+              <Text style={{ fontSize: 11, color: "#9CA3AF" }}>Monthly</Text>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
+                {withdrawalSettings?.monthly_withdrawal_limit 
+                  ? `₱${withdrawalSettings.monthly_withdrawal_limit}` 
+                  : "No limit"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* PIN Status */}
+        <View
+          style={{
+            marginTop: 12,
+            paddingTop: 12,
+            borderTopWidth: 1,
+            borderTopColor: "#F3F4F6",
+          }}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <View>
+              <Text style={{ fontSize: 12, color: "#666" }}>Withdrawal PIN</Text>
+              <Text style={{ fontSize: 14, fontWeight: "600", color: withdrawalSettings?.withdrawal_pin ? "#10B981" : "#F59E0B" }}>
+                {withdrawalSettings?.withdrawal_pin ? "✓ Enabled" : "Not Set"}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 11, color: "#9CA3AF" }}>
+              Extra security for withdrawals
+            </Text>
+          </View>
+        </View>
+
+        <Pressable
+          style={{
+            backgroundColor: "#F3F4F6",
+            padding: 12,
+            borderRadius: 12,
+            alignItems: "center",
+            marginTop: 15,
+          }}
+          onPress={() => setShowWithdrawalSettingsModal(true)}
+        >
+          <Text style={{ color: "#183B5C", fontWeight: "600" }}>
+            Configure Withdrawal Settings
+          </Text>
+        </Pressable>
       </View>
 
       {/* Referrals Section */}
@@ -1440,7 +1688,6 @@ export default function DriverAccountScreen({ navigation }) {
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
 
-        {/* Sign Out */}
         <Pressable
           style={{
             flexDirection: "row",
@@ -1622,6 +1869,335 @@ export default function DriverAccountScreen({ navigation }) {
         </View>
       </Modal>
 
+      {/* Withdrawal Settings Modal */}
+      <Modal
+        visible={showWithdrawalSettingsModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowWithdrawalSettingsModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "flex-end",
+            }}
+          >
+            <View
+              style={{
+                backgroundColor: "#FFF",
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                padding: 20,
+                maxHeight: "90%",
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 20,
+                }}
+              >
+                <Text
+                  style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
+                >
+                  Withdrawal Settings
+                </Text>
+                <Pressable onPress={() => setShowWithdrawalSettingsModal(false)}>
+                  <Ionicons name="close" size={24} color="#666" />
+                </Pressable>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={true}>
+                {/* Auto Withdraw Toggle */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 20,
+                  }}
+                >
+                  <View>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "600",
+                        color: "#333",
+                      }}
+                    >
+                      Auto Withdraw
+                    </Text>
+                    <Text style={{ fontSize: 12, color: "#666" }}>
+                      Automatically convert points to cash
+                    </Text>
+                  </View>
+                  <Switch
+                    value={editWithdrawalSettings.auto_withdraw}
+                    onValueChange={(value) =>
+                      setEditWithdrawalSettings({
+                        ...editWithdrawalSettings,
+                        auto_withdraw: value,
+                      })
+                    }
+                    trackColor={{ false: "#E5E7EB", true: "#183B5C" }}
+                  />
+                </View>
+
+                {/* Auto Withdraw Threshold */}
+                {editWithdrawalSettings.auto_withdraw && (
+                  <View style={{ marginBottom: 20 }}>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "600",
+                        color: "#333",
+                        marginBottom: 8,
+                      }}
+                    >
+                      Auto Withdraw Threshold (Points)
+                    </Text>
+                    <TextInput
+                      style={{
+                        borderWidth: 1,
+                        borderColor: "#E5E7EB",
+                        borderRadius: 12,
+                        padding: 12,
+                        fontSize: 16,
+                      }}
+                      placeholder="e.g., 5000"
+                      keyboardType="numeric"
+                      value={editWithdrawalSettings.auto_withdraw_threshold}
+                      onChangeText={(text) =>
+                        setEditWithdrawalSettings({
+                          ...editWithdrawalSettings,
+                          auto_withdraw_threshold: text,
+                        })
+                      }
+                    />
+                    <Text style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                      Auto-convert when points reach this amount
+                    </Text>
+                  </View>
+                )}
+
+                {/* Daily Limit */}
+                <View style={{ marginBottom: 20 }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Daily Withdrawal Limit (₱)
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                    }}
+                    placeholder="No limit"
+                    keyboardType="numeric"
+                    value={editWithdrawalSettings.daily_withdrawal_limit}
+                    onChangeText={(text) =>
+                      setEditWithdrawalSettings({
+                        ...editWithdrawalSettings,
+                        daily_withdrawal_limit: text,
+                      })
+                    }
+                  />
+                  <Text style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                    Maximum amount you can withdraw per day
+                  </Text>
+                </View>
+
+                {/* Weekly Limit */}
+                <View style={{ marginBottom: 20 }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Weekly Withdrawal Limit (₱)
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                    }}
+                    placeholder="No limit"
+                    keyboardType="numeric"
+                    value={editWithdrawalSettings.weekly_withdrawal_limit}
+                    onChangeText={(text) =>
+                      setEditWithdrawalSettings({
+                        ...editWithdrawalSettings,
+                        weekly_withdrawal_limit: text,
+                      })
+                    }
+                  />
+                </View>
+
+                {/* Monthly Limit */}
+                <View style={{ marginBottom: 20 }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Monthly Withdrawal Limit (₱)
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                    }}
+                    placeholder="No limit"
+                    keyboardType="numeric"
+                    value={editWithdrawalSettings.monthly_withdrawal_limit}
+                    onChangeText={(text) =>
+                      setEditWithdrawalSettings({
+                        ...editWithdrawalSettings,
+                        monthly_withdrawal_limit: text,
+                      })
+                    }
+                  />
+                </View>
+
+                {/* Withdrawal PIN */}
+                <View style={{ marginBottom: 20 }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Withdrawal PIN
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                    }}
+                    placeholder="Set a 4-6 digit PIN"
+                    keyboardType="numeric"
+                    secureTextEntry
+                    maxLength={6}
+                    value={editWithdrawalSettings.withdrawal_pin}
+                    onChangeText={(text) =>
+                      setEditWithdrawalSettings({
+                        ...editWithdrawalSettings,
+                        withdrawal_pin: text,
+                      })
+                    }
+                  />
+                  <Text style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                    {withdrawalSettings?.withdrawal_pin
+                      ? "Leave blank to keep current PIN"
+                      : "Optional: Add extra security for withdrawals"}
+                  </Text>
+                </View>
+
+                {/* Notifications Toggle */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 30,
+                  }}
+                >
+                  <View>
+                    <Text
+                      style={{
+                        fontSize: 14,
+                        fontWeight: "600",
+                        color: "#333",
+                      }}
+                    >
+                      Withdrawal Notifications
+                    </Text>
+                    <Text style={{ fontSize: 12, color: "#666" }}>
+                      Receive alerts for withdrawal updates
+                    </Text>
+                  </View>
+                  <Switch
+                    value={editWithdrawalSettings.notifications_enabled}
+                    onValueChange={(value) =>
+                      setEditWithdrawalSettings({
+                        ...editWithdrawalSettings,
+                        notifications_enabled: value,
+                      })
+                    }
+                    trackColor={{ false: "#E5E7EB", true: "#183B5C" }}
+                  />
+                </View>
+
+                {/* Save Button */}
+                <View style={{ flexDirection: "row", gap: 10, marginBottom: 20 }}>
+                  <Pressable
+                    style={{
+                      flex: 1,
+                      backgroundColor: "#F3F4F6",
+                      padding: 14,
+                      borderRadius: 12,
+                      alignItems: "center",
+                    }}
+                    onPress={() => setShowWithdrawalSettingsModal(false)}
+                  >
+                    <Text style={{ color: "#333", fontWeight: "600" }}>
+                      Cancel
+                    </Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={{
+                      flex: 1,
+                      backgroundColor: "#183B5C",
+                      padding: 14,
+                      borderRadius: 12,
+                      alignItems: "center",
+                    }}
+                    onPress={saveWithdrawalSettings}
+                  >
+                    <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                      Save Settings
+                    </Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {/* Edit Profile Modal */}
       <Modal
         visible={editProfileModal}
@@ -1777,7 +2353,6 @@ export default function DriverAccountScreen({ navigation }) {
         animationType="slide"
         onRequestClose={() => setVehicleModal(false)}
       >
-        {/* Add KeyboardAvoidingView here */}
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={{ flex: 1 }}
@@ -1795,7 +2370,7 @@ export default function DriverAccountScreen({ navigation }) {
                 borderTopLeftRadius: 24,
                 borderTopRightRadius: 24,
                 padding: 20,
-                maxHeight: "90%", // Limit height para di lumagpas
+                maxHeight: "90%",
               }}
             >
               <View
@@ -1818,9 +2393,8 @@ export default function DriverAccountScreen({ navigation }) {
 
               <ScrollView
                 showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled" // Para mag-dismiss keyboard kapag nag-tap sa labas
+                keyboardShouldPersistTaps="handled"
               >
-                {/* Plate Number */}
                 <Text
                   style={{
                     fontSize: 14,
@@ -1844,10 +2418,9 @@ export default function DriverAccountScreen({ navigation }) {
                   placeholder="ABC-1234"
                   value={editPlate}
                   onChangeText={setEditPlate}
-                  returnKeyType="done" // Para may "Done" button sa keyboard
+                  returnKeyType="done"
                 />
 
-                {/* Vehicle Type */}
                 <Text
                   style={{
                     fontSize: 14,
@@ -1906,7 +2479,6 @@ export default function DriverAccountScreen({ navigation }) {
                   ))}
                 </View>
 
-                {/* Vehicle Color */}
                 <Text
                   style={{
                     fontSize: 14,
@@ -1982,7 +2554,6 @@ export default function DriverAccountScreen({ navigation }) {
                   ))}
                 </View>
 
-                {/* Buttons */}
                 <View
                   style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}
                 >
