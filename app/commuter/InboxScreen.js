@@ -1,5 +1,5 @@
 // screens/commuter/InboxScreen.js
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -12,6 +12,8 @@ import {
   Modal,
   TextInput,
   ScrollView,
+  AppState,
+  TouchableWithoutFeedback,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -32,53 +34,123 @@ export default function InboxScreen() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
-  const [filterType, setFilterType] = useState('all'); // 'all', 'unread', 'booking', 'payment', 'promo', 'system'
+  const [filterType, setFilterType] = useState('all');
+  const [subscription, setSubscription] = useState(null);
+  const [updateSubscription, setUpdateSubscription] = useState(null);
+  const [isMarkingRead, setIsMarkingRead] = useState(false);
+  
+  const modalAnimationRef = useRef(null);
+  const selectedNotificationRef = useRef(null);
 
   // Load user data on focus
   useFocusEffect(
-    React.useCallback(() => {
+    useCallback(() => {
       loadUserData();
     }, [])
   );
 
-  // Auto-mark all as read when screen is focused
-  useFocusEffect(
-    React.useCallback(() => {
-      const markAllAsReadOnFocus = async () => {
-        if (userId && notifications.some(n => !n.is_read)) {
-          try {
-            const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
+  // Set up real-time subscription when userId is available
+  useEffect(() => {
+    if (userId) {
+      setupRealtimeSubscription();
+    }
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      if (subscription) {
+        supabase.removeChannel(subscription);
+      }
+      if (updateSubscription) {
+        supabase.removeChannel(updateSubscription);
+      }
+    };
+  }, [userId]);
+
+  const setupRealtimeSubscription = async () => {
+    try {
+      console.log("📡 Setting up real-time subscription for user:", userId);
+      
+      // Remove existing subscriptions if any
+      if (subscription) {
+        await supabase.removeChannel(subscription);
+      }
+      if (updateSubscription) {
+        await supabase.removeChannel(updateSubscription);
+      }
+
+      // Subscribe to new notifications (INSERT)
+      const newChannel = supabase
+        .channel('notifications-new-channel')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${userId}`
+          },
+          (payload) => {
+            console.log("🔔 New notification received:", payload.new);
             
-            if (unreadIds.length > 0) {
-              console.log("📱 Marking all notifications as read on focus:", unreadIds.length);
-              
-              const { error } = await supabase
-                .from("notifications")
-                .update({ 
-                  is_read: true,
-                  read_at: new Date().toISOString()
-                })
-                .in("id", unreadIds);
-
-              if (error) throw error;
-
-              // Update local state
-              setNotifications(prev => 
-                prev.map(n => ({ ...n, is_read: true }))
-              );
-              
-              setUnreadCount(0);
-              console.log("✅ All notifications marked as read on focus");
-            }
-          } catch (err) {
-            console.log("Error marking all as read on focus:", err);
+            // Add the new notification to the list
+            setNotifications(prev => [payload.new, ...prev]);
+            
+            // Update unread count
+            setUnreadCount(prev => prev + 1);
+            
+            // Haptic feedback
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
-        }
-      };
+        )
+        .subscribe();
 
-      markAllAsReadOnFocus();
-    }, [userId, notifications])
-  );
+      // Subscribe to updates (when notifications are marked as read)
+      const updateChannel = supabase
+        .channel('notifications-update-channel')
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'notifications',
+            filter: `user_id=eq.${userId}`
+          },
+          (payload) => {
+            console.log("📝 Notification updated:", payload.new);
+            
+            // Don't update the list if this notification is currently being viewed in modal
+            if (selectedNotificationRef.current?.id === payload.new.id && showNotificationModal) {
+              // Just update the selected notification without closing modal
+              setSelectedNotification(prev => prev ? { ...prev, ...payload.new } : null);
+              return;
+            }
+            
+            // Update the notification in the list
+            setNotifications(prev => 
+              prev.map(n => 
+                n.id === payload.new.id ? { ...n, ...payload.new } : n
+              )
+            );
+            
+            // Recalculate unread count
+            setUnreadCount(prev => {
+              const newUnreadCount = notifications
+                .map(n => n.id === payload.new.id ? payload.new : n)
+                .filter(n => !n.is_read).length;
+              return newUnreadCount;
+            });
+          }
+        )
+        .subscribe();
+
+      setSubscription(newChannel);
+      setUpdateSubscription(updateChannel);
+      
+      console.log("✅ Real-time subscription established");
+    } catch (err) {
+      console.log("Error setting up real-time subscription:", err);
+    }
+  };
 
   const loadUserData = async () => {
     try {
@@ -124,7 +196,11 @@ export default function InboxScreen() {
   };
 
   const markAsRead = async (notificationId) => {
+    // Prevent multiple mark as read calls
+    if (isMarkingRead) return;
+    
     try {
+      setIsMarkingRead(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       
       console.log("📱 Marking notification as read:", notificationId);
@@ -139,7 +215,13 @@ export default function InboxScreen() {
 
       if (error) throw error;
 
-      // Update local state
+      // Update local state without removing from filtered list if modal is open
+      if (selectedNotificationRef.current?.id === notificationId && showNotificationModal) {
+        // Update the selected notification
+        setSelectedNotification(prev => prev ? { ...prev, is_read: true } : null);
+      }
+      
+      // Update the notifications list
       setNotifications(prev => 
         prev.map(n => 
           n.id === notificationId ? { ...n, is_read: true } : n
@@ -152,6 +234,8 @@ export default function InboxScreen() {
       console.log("✅ Notification marked as read");
     } catch (err) {
       console.log("Error marking as read:", err);
+    } finally {
+      setIsMarkingRead(false);
     }
   };
 
@@ -193,9 +277,12 @@ export default function InboxScreen() {
   };
 
   const handleNotificationPress = (notification) => {
+    // Store reference to the notification being viewed
+    selectedNotificationRef.current = notification;
     setSelectedNotification(notification);
     setShowNotificationModal(true);
     
+    // Mark as read in the background without affecting the modal
     if (!notification.is_read) {
       markAsRead(notification.id);
     }
@@ -203,17 +290,23 @@ export default function InboxScreen() {
 
   const handleNotificationAction = (notification) => {
     setShowNotificationModal(false);
+    selectedNotificationRef.current = null;
     
-    if (notification.action_url) {
-      // Navigate based on action URL
-      if (notification.reference_type === 'booking') {
-        navigation.navigate("BookingDetails", { id: notification.reference_id });
-      } else if (notification.reference_type === 'promo') {
-        navigation.navigate("Promos");
-      } else if (notification.type === 'payment') {
-        navigation.navigate("Wallet");
+    // Small delay to ensure modal closes before navigation
+    setTimeout(() => {
+      if (notification.action_url) {
+        // Navigate based on action URL
+        if (notification.reference_type === 'booking') {
+          navigation.navigate("BookingDetails", { id: notification.reference_id });
+        } else if (notification.reference_type === 'promo') {
+          navigation.navigate("Promos");
+        } else if (notification.type === 'payment') {
+          navigation.navigate("Wallet");
+        } else if (notification.reference_type === 'withdrawal') {
+          navigation.navigate("Wallet");
+        }
       }
-    }
+    }, 100);
   };
 
   const deleteNotification = async (notificationId) => {
@@ -241,12 +334,16 @@ export default function InboxScreen() {
               // Update local state
               setNotifications(prev => prev.filter(n => n.id !== notificationId));
               
-              if (!selectedNotification?.is_read) {
+              // Update unread count if the deleted notification was unread
+              const deletedNotification = notifications.find(n => n.id === notificationId);
+              if (deletedNotification && !deletedNotification.is_read) {
                 setUnreadCount(prev => Math.max(0, prev - 1));
               }
               
               if (selectedNotification?.id === notificationId) {
                 setShowNotificationModal(false);
+                setSelectedNotification(null);
+                selectedNotificationRef.current = null;
               }
               
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -258,6 +355,17 @@ export default function InboxScreen() {
         }
       ]
     );
+  };
+
+  const closeModal = () => {
+    setShowNotificationModal(false);
+    // Clear selected notification after animation
+    setTimeout(() => {
+      if (!showNotificationModal) {
+        setSelectedNotification(null);
+        selectedNotificationRef.current = null;
+      }
+    }, 300);
   };
 
   const getNotificationIcon = (type) => {
@@ -274,6 +382,8 @@ export default function InboxScreen() {
         return { name: 'information-circle', color: '#6B7280', bg: '#F3F4F6' };
       case 'support':
         return { name: 'chatbubble', color: '#EF4444', bg: '#FEE2E2' };
+      case 'mission':
+        return { name: 'trophy', color: '#F59E0B', bg: '#FEF3C7' };
       default:
         return { name: 'notifications', color: '#6B7280', bg: '#F3F4F6' };
     }
@@ -350,83 +460,93 @@ export default function InboxScreen() {
       visible={showNotificationModal}
       animationType="slide"
       transparent={true}
-      onRequestClose={() => setShowNotificationModal(false)}
+      onRequestClose={closeModal}
+      statusBarTranslucent={true}
     >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {selectedNotification && (
-            <>
-              <View style={styles.modalHeader}>
-                <Pressable 
-                  style={styles.modalCloseButton}
-                  onPress={() => setShowNotificationModal(false)}
-                >
-                  <Ionicons name="close" size={24} color="#666" />
-                </Pressable>
-                <Text style={styles.modalTitle}>Notification</Text>
-                <Pressable 
-                  style={styles.modalDeleteButton}
-                  onPress={() => deleteNotification(selectedNotification.id)}
-                >
-                  <Ionicons name="trash-outline" size={20} color="#EF4444" />
-                </Pressable>
-              </View>
-
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={styles.notificationDetail}>
-                  <View style={[
-                    styles.detailIcon,
-                    { backgroundColor: getNotificationIcon(selectedNotification.type).bg }
-                  ]}>
-                    <Ionicons 
-                      name={getNotificationIcon(selectedNotification.type).name} 
-                      size={32} 
-                      color={getNotificationIcon(selectedNotification.type).color} 
-                    />
-                  </View>
-
-                  <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
-                  <Text style={styles.detailTime}>
-                    {new Date(selectedNotification.created_at).toLocaleString('en-US', {
-                      weekday: 'long',
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </Text>
-
-                  <View style={styles.detailMessageContainer}>
-                    <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
-                  </View>
-
-                  {selectedNotification.data && (
-                    <View style={styles.detailData}>
-                      {Object.entries(selectedNotification.data).map(([key, value]) => (
-                        <View key={key} style={styles.detailDataRow}>
-                          <Text style={styles.detailDataKey}>{key}:</Text>
-                          <Text style={styles.detailDataValue}>{String(value)}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {selectedNotification.action_url && (
-                    <Pressable
-                      style={styles.detailActionButton}
-                      onPress={() => handleNotificationAction(selectedNotification)}
+      <TouchableWithoutFeedback onPress={closeModal}>
+        <View style={styles.modalOverlay}>
+          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalContent}>
+              {selectedNotification && (
+                <>
+                  <View style={styles.modalHeader}>
+                    <Pressable 
+                      style={styles.modalCloseButton}
+                      onPress={closeModal}
                     >
-                      <Text style={styles.detailActionText}>View Details</Text>
-                      <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                      <Ionicons name="close" size={24} color="#666" />
                     </Pressable>
-                  )}
-                </View>
-              </ScrollView>
-            </>
-          )}
+                    <Text style={styles.modalTitle}>Notification</Text>
+                    <Pressable 
+                      style={styles.modalDeleteButton}
+                      onPress={() => deleteNotification(selectedNotification.id)}
+                    >
+                      <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                    </Pressable>
+                  </View>
+
+                  <ScrollView 
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={styles.modalScrollContent}
+                  >
+                    <View style={styles.notificationDetail}>
+                      <View style={[
+                        styles.detailIcon,
+                        { backgroundColor: getNotificationIcon(selectedNotification.type).bg }
+                      ]}>
+                        <Ionicons 
+                          name={getNotificationIcon(selectedNotification.type).name} 
+                          size={32} 
+                          color={getNotificationIcon(selectedNotification.type).color} 
+                        />
+                      </View>
+
+                      <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
+                      <Text style={styles.detailTime}>
+                        {new Date(selectedNotification.created_at).toLocaleString('en-US', {
+                          weekday: 'long',
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </Text>
+
+                      <View style={styles.detailMessageContainer}>
+                        <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
+                      </View>
+
+                      {selectedNotification.data && Object.keys(selectedNotification.data).length > 0 && (
+                        <View style={styles.detailData}>
+                          {Object.entries(selectedNotification.data).map(([key, value]) => (
+                            <View key={key} style={styles.detailDataRow}>
+                              <Text style={styles.detailDataKey}>{key.replace(/_/g, ' ').toUpperCase()}:</Text>
+                              <Text style={styles.detailDataValue}>{String(value)}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      )}
+
+                      {(selectedNotification.reference_type === 'booking' || 
+                        selectedNotification.reference_type === 'withdrawal' ||
+                        selectedNotification.type === 'payment') && (
+                        <Pressable
+                          style={styles.detailActionButton}
+                          onPress={() => handleNotificationAction(selectedNotification)}
+                        >
+                          <Text style={styles.detailActionText}>View Details</Text>
+                          <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                        </Pressable>
+                      )}
+                    </View>
+                  </ScrollView>
+                </>
+              )}
+            </View>
+          </TouchableWithoutFeedback>
         </View>
-      </View>
+      </TouchableWithoutFeedback>
     </Modal>
   );
 
@@ -467,7 +587,7 @@ export default function InboxScreen() {
             onPress={() => setFilterType('all')}
           >
             <Text style={[styles.filterText, filterType === 'all' && styles.filterTextActive]}>
-              All {filterType === 'all' && `(${notifications.length})`}
+              All {notifications.length > 0 && `(${notifications.length})`}
             </Text>
           </Pressable>
           <Pressable
@@ -475,7 +595,7 @@ export default function InboxScreen() {
             onPress={() => setFilterType('unread')}
           >
             <Text style={[styles.filterText, filterType === 'unread' && styles.filterTextActive]}>
-              Unread {filterType === 'unread' && `(${unreadCount})`}
+              Unread {unreadCount > 0 && `(${unreadCount})`}
             </Text>
           </Pressable>
           <Pressable
@@ -533,6 +653,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
+    backgroundColor: "#F5F7FA",
   },
   loadingText: {
     marginTop: 12,
@@ -693,11 +814,17 @@ const styles = StyleSheet.create({
     padding: 20,
     maxHeight: "80%",
   },
+  modalScrollContent: {
+    paddingBottom: 20,
+  },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
   },
   modalCloseButton: {
     width: 40,

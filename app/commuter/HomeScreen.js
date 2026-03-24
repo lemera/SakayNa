@@ -774,30 +774,48 @@ export default function CommuterHomeScreen() {
     return points;
   };
 
-  const calculateFareWithPassengers = (distanceKm) => {
-    if (!distanceKm) return;
+const calculateFareWithPassengers = (distanceKm) => {
+  if (!distanceKm) return;
 
-    const exactDistance = parseFloat(distanceKm);
-    setEstimatedDistance(exactDistance.toFixed(1));
-
-    let farePerPassenger;
-
-    if (exactDistance <= 2.0) {
-      farePerPassenger = fareSettings.minimumFare;
-    } else {
-      const roundedKm = Math.ceil(exactDistance);
-      const additionalKm = roundedKm - 1;
-      farePerPassenger =
-        fareSettings.baseFare + additionalKm * fareSettings.perKmRate;
-    }
-
-    const totalFare = farePerPassenger * passengerCount;
-    setEstimatedFare(totalFare);
-
-    console.log(
-      `Distance: ${exactDistance}km, Fare per passenger: ₱${farePerPassenger}, Total: ₱${totalFare}`,
-    );
-  };
+  const exactDistance = parseFloat(distanceKm);
+  setEstimatedDistance(exactDistance.toFixed(2));
+  
+  let farePerPassenger;
+  
+  if (exactDistance <= 1.0) {
+    // 0-1km: ₱20
+    farePerPassenger = 20;
+    
+  } else if (exactDistance < 2.0) {
+    // 1.1km to 1.9km: ₱30 fixed
+    farePerPassenger = 30;
+    
+  } else {
+    // 2km and above: Round up to next half kilometer (0.5km)
+    // Examples:
+    // 2.0km → 2.0 × 20 = ₱40
+    // 2.27km → 2.5 × 20 = ₱50
+    // 2.5km → 2.5 × 20 = ₱50
+    // 2.6km → 3.0 × 20 = ₱60
+    // 2.9km → 3.0 × 20 = ₱60
+    
+    const roundedToHalf = Math.ceil(exactDistance * 2) / 2;
+    farePerPassenger = roundedToHalf * 20;
+  }
+  
+  const totalFare = farePerPassenger * passengerCount;
+  setEstimatedFare(totalFare);
+  
+  console.log(`💰 FARE CALCULATION:
+    Distance: ${exactDistance.toFixed(2)}km
+    ${exactDistance <= 1 ? 'Minimum Fare (₱20)' : 
+      exactDistance < 2 ? 'Special Rate (1-2km = ₱30)' : 
+      `Rounded to: ${Math.ceil(exactDistance * 2) / 2}km × ₱20 = ₱${farePerPassenger}`}
+    Per passenger: ₱${farePerPassenger}
+    Passengers: ${passengerCount}
+    TOTAL FARE: ₱${totalFare}
+  `);
+};
 
   useEffect(() => {
     if (pickup && dropoff && estimatedDistance) {
@@ -2220,77 +2238,89 @@ export default function CommuterHomeScreen() {
             </View>
           )}
 
-          {pickup && dropoff && estimatedDistance && (
-            <View style={styles.tripSummary}>
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryItem}>
-                  <Ionicons name="map-outline" size={16} color="#666" />
-                  <Text style={styles.summaryLabel}>Distance</Text>
-                  <Text style={styles.summaryValue}>
-                    {estimatedDistance} km
-                  </Text>
-                </View>
-                <View style={styles.summaryItem}>
-                  <Ionicons name="time-outline" size={16} color="#666" />
-                  <Text style={styles.summaryLabel}>Est. Time</Text>
-                  <Text style={styles.summaryValue}>{estimatedTime} min</Text>
-                </View>
-                <View style={styles.summaryItem}>
-                  <Ionicons name="people-outline" size={16} color="#666" />
-                  <Text style={styles.summaryLabel}>Passengers</Text>
-                  <Text style={styles.summaryValue}>{passengerCount}</Text>
-                </View>
-              </View>
+{pickup && dropoff && estimatedDistance && (
+  <View style={styles.tripSummary}>
+    <View style={styles.summaryRow}>
+      <View style={styles.summaryItem}>
+        <Ionicons name="map-outline" size={16} color="#666" />
+        <Text style={styles.summaryLabel}>Distance</Text>
+        <Text style={styles.summaryValue}>{estimatedDistance} km</Text>
+      </View>
+      <View style={styles.summaryItem}>
+        <Ionicons name="time-outline" size={16} color="#666" />
+        <Text style={styles.summaryLabel}>Est. Time</Text>
+        <Text style={styles.summaryValue}>{estimatedTime} min</Text>
+      </View>
+      <View style={styles.summaryItem}>
+        <Ionicons name="people-outline" size={16} color="#666" />
+        <Text style={styles.summaryLabel}>Passengers</Text>
+        <Text style={styles.summaryValue}>{passengerCount}</Text>
+      </View>
+    </View>
 
-              <View style={styles.fareBreakdown}>
-                <View style={styles.fareRow}>
-                  <Text style={styles.fareBreakdownLabel}>
-                    First 2 kilometers
-                  </Text>
-                  <Text style={styles.fareBreakdownValue}>
-                    ₱{fareSettings.minimumFare}
-                  </Text>
-                </View>
-                {parseFloat(estimatedDistance) > 2.0 && (
-                  <View style={styles.fareRow}>
-                    <Text style={styles.fareBreakdownLabel}>
-                      Additional {Math.ceil(parseFloat(estimatedDistance)) - 2}{" "}
-                      km (₱{fareSettings.perKmRate}/km)
-                    </Text>
-                    <Text style={styles.fareBreakdownValue}>
-                      ₱
-                      {(Math.ceil(parseFloat(estimatedDistance)) - 2) *
-                        fareSettings.perKmRate}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.fareRow}>
-                  <Text style={styles.fareBreakdownLabel}>
-                    Subtotal (per passenger)
-                  </Text>
-                  <Text style={styles.fareBreakdownValue}>
-                    ₱
-                    {fareSettings.baseFare +
-                      Math.max(
-                        0,
-                        Math.ceil(parseFloat(estimatedDistance)) - 2,
-                      ) *
-                        fareSettings.perKmRate}
-                  </Text>
-                </View>
-                <View style={styles.fareRow}>
-                  <Text style={styles.fareBreakdownLabel}>Passengers</Text>
-                  <Text style={styles.fareBreakdownValue}>
-                    × {passengerCount}
-                  </Text>
-                </View>
-                <View style={styles.fareTotal}>
-                  <Text style={styles.fareTotalLabel}>Total Fare</Text>
-                  <Text style={styles.fareTotalValue}>₱{estimatedFare}</Text>
-                </View>
-              </View>
-            </View>
-          )}
+    <View style={styles.fareCard}>
+      <View style={styles.fareHeader}>
+        <Text style={styles.fareHeaderTitle}>FARE DETAILS</Text>
+      </View>
+      
+      {parseFloat(estimatedDistance) <= 1 ? (
+        <View style={styles.fareRow}>
+          <Text style={styles.fareLabel}>Minimum Fare (0-1km)</Text>
+          <Text style={styles.fareValue}>₱20</Text>
+        </View>
+      ) : parseFloat(estimatedDistance) < 2 ? (
+        <View style={styles.fareRow}>
+          <Text style={styles.fareLabel}>Special Rate (1-2km)</Text>
+          <Text style={styles.fareValue}>₱30</Text>
+        </View>
+      ) : (
+        <>
+          <View style={styles.fareRow}>
+            <Text style={styles.fareLabel}>
+              Distance: {Math.ceil(parseFloat(estimatedDistance) * 2) / 2} km
+            </Text>
+            <Text style={styles.fareValue}>
+              × ₱20/km
+            </Text>
+          </View>
+          <View style={styles.fareRow}>
+            <Text style={styles.fareLabel}>Subtotal (per passenger)</Text>
+            <Text style={styles.fareValue}>
+              ₱{Math.ceil(parseFloat(estimatedDistance) * 2) / 2 * 20}
+            </Text>
+          </View>
+        </>
+      )}
+      
+      <View style={styles.fareRow}>
+        <Text style={styles.fareLabel}>
+          × {passengerCount} passenger{passengerCount > 1 ? 's' : ''}
+        </Text>
+        <Text style={styles.fareValue}>
+          × {passengerCount}
+        </Text>
+      </View>
+      
+      <View style={styles.fareDivider} />
+      
+      <View style={styles.fareTotal}>
+        <Text style={styles.fareTotalLabel}>TOTAL FARE</Text>
+        <Text style={styles.fareTotalValue}>₱{estimatedFare}</Text>
+      </View>
+      
+      {parseFloat(estimatedDistance) > 1 && parseFloat(estimatedDistance) < 2 && (
+        <Text style={styles.fareNote}>
+          * Fixed rate of ₱30 for distances between 1-2km
+        </Text>
+      )}
+      {parseFloat(estimatedDistance) >= 2 && (
+        <Text style={styles.fareNote}>
+          * Rounded to nearest half kilometer (0.5km) then ₱20 per km
+        </Text>
+      )}
+    </View>
+  </View>
+)}
 
           <View style={styles.driversInfo}>
             <Ionicons name="people-circle" size={20} color="#183B5C" />
@@ -3071,4 +3101,66 @@ optionSubtitle: {
 disabledCard: {
   opacity: 0.5
 },
+
+fareCard: {
+    backgroundColor: "#FFF",
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  fareHeader: {
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  fareHeaderTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B7280",
+    letterSpacing: 0.5,
+  },
+  fareRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  fareLabel: {
+    fontSize: 14,
+    color: "#4B5563",
+  },
+  fareValue: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#1F2937",
+  },
+  fareDivider: {
+    height: 1,
+    backgroundColor: "#E5E7EB",
+    marginVertical: 12,
+  },
+  fareTotal: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  fareTotalLabel: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#111827",
+  },
+  fareTotalValue: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#183B5C",
+  },
+  fareNote: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    marginTop: 8,
+    textAlign: "center",
+    fontStyle: "italic",
+  },
 });

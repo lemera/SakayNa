@@ -24,7 +24,6 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 
-// Simple base64 to array buffer function (no dependency needed)
 const base64ToArrayBuffer = (base64) => {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
@@ -50,11 +49,38 @@ export default function AccountScreen({ navigation }) {
     referrals: 0,
   });
 
+  // Withdrawal Settings State
+  const [withdrawalSettings, setWithdrawalSettings] = useState({
+    default_payment_method_id: null,
+    auto_withdraw: false,
+    auto_withdraw_threshold: null,
+    withdrawal_pin: null,
+    daily_withdrawal_limit: null,
+    weekly_withdrawal_limit: null,
+    monthly_withdrawal_limit: null,
+    notifications_enabled: true,
+  });
+  
+  // Payout methods for settings
+  const [payoutMethods, setPayoutMethods] = useState([]);
+  
   // Modal states
   const [editProfileModal, setEditProfileModal] = useState(false);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
+  
+  // Withdrawal Settings Modal
+  const [showWithdrawalSettingsModal, setShowWithdrawalSettingsModal] = useState(false);
+  const [tempSettings, setTempSettings] = useState(null);
+  
+  // PIN Change Modal
+  const [showPinChangeModal, setShowPinChangeModal] = useState(false);
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [changingPin, setChangingPin] = useState(false);
 
   // Fetch user ID
   useFocusEffect(
@@ -73,6 +99,8 @@ export default function AccountScreen({ navigation }) {
   useEffect(() => {
     if (userId) {
       loadUserData();
+      loadWithdrawalSettings();
+      loadPayoutMethods();
     }
   }, [userId]);
 
@@ -90,45 +118,177 @@ export default function AccountScreen({ navigation }) {
     }
   };
 
+  const loadWithdrawalSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("withdrawal_settings")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      
+      if (data) {
+        setWithdrawalSettings(data);
+        setTempSettings(data);
+      } else {
+        // Create default settings
+        const defaultSettings = {
+          user_id: userId,
+          user_type: "commuter",
+          auto_withdraw: false,
+          notifications_enabled: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        const { data: newSettings, error: insertError } = await supabase
+          .from("withdrawal_settings")
+          .insert(defaultSettings)
+          .select()
+          .single();
+          
+        if (!insertError && newSettings) {
+          setWithdrawalSettings(newSettings);
+          setTempSettings(newSettings);
+        }
+      }
+    } catch (err) {
+      console.log("Error loading withdrawal settings:", err.message);
+    }
+  };
+
+  const loadPayoutMethods = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("user_payment_methods")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("user_type", "commuter")
+        .eq("is_active", true);
+
+      if (error) throw error;
+      setPayoutMethods(data || []);
+    } catch (err) {
+      console.log("Error loading payout methods:", err.message);
+    }
+  };
+
+  const updateWithdrawalSettings = async () => {
+    try {
+      const { error } = await supabase
+        .from("withdrawal_settings")
+        .update({
+          default_payment_method_id: tempSettings.default_payment_method_id,
+          auto_withdraw: tempSettings.auto_withdraw,
+          auto_withdraw_threshold: tempSettings.auto_withdraw_threshold,
+          daily_withdrawal_limit: tempSettings.daily_withdrawal_limit,
+          weekly_withdrawal_limit: tempSettings.weekly_withdrawal_limit,
+          monthly_withdrawal_limit: tempSettings.monthly_withdrawal_limit,
+          notifications_enabled: tempSettings.notifications_enabled,
+          updated_at: new Date().toISOString()
+        })
+        .eq("user_id", userId);
+
+      if (error) throw error;
+      
+      setWithdrawalSettings(tempSettings);
+      setShowWithdrawalSettingsModal(false);
+      Alert.alert("Success", "Withdrawal settings updated successfully!");
+    } catch (err) {
+      console.log("Error updating withdrawal settings:", err.message);
+      Alert.alert("Error", "Failed to update withdrawal settings");
+    }
+  };
+
+  const changePin = async () => {
+    if (newPin.length !== 4) {
+      setPinError("PIN must be exactly 4 digits");
+      return;
+    }
+    
+    if (!/^\d{4}$/.test(newPin)) {
+      setPinError("PIN must contain only numbers");
+      return;
+    }
+    
+    if (newPin !== confirmPin) {
+      setPinError("PINs do not match");
+      return;
+    }
+    
+    // Verify current PIN
+    if (withdrawalSettings.withdrawal_pin && withdrawalSettings.withdrawal_pin !== currentPin) {
+      setPinError("Current PIN is incorrect");
+      return;
+    }
+    
+    setChangingPin(true);
+    
+    try {
+      const { error } = await supabase
+        .from("withdrawal_settings")
+        .update({
+          withdrawal_pin: newPin,
+          updated_at: new Date().toISOString()
+        })
+        .eq("user_id", userId);
+
+      if (error) throw error;
+      
+      setWithdrawalSettings({ ...withdrawalSettings, withdrawal_pin: newPin });
+      setShowPinChangeModal(false);
+      setCurrentPin("");
+      setNewPin("");
+      setConfirmPin("");
+      setPinError("");
+      
+      Alert.alert("Success", "Withdrawal PIN changed successfully!");
+    } catch (err) {
+      console.log("Error changing PIN:", err.message);
+      setPinError("Failed to change PIN. Please try again.");
+    } finally {
+      setChangingPin(false);
+    }
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadUserData();
+    await Promise.all([
+      loadUserData(),
+      loadWithdrawalSettings(),
+      loadPayoutMethods()
+    ]);
     setRefreshing(false);
   };
 
-const fetchProfile = async () => {
-  try {
-    const table = userType === 'commuter' ? 'commuters' : 'drivers';
-    
-    const { data, error } = await supabase
-      .from(table)
-      .select("*")
-      .eq("id", userId)
-      .single();
+  const fetchProfile = async () => {
+    try {
+      const table = userType === 'commuter' ? 'commuters' : 'drivers';
+      
+      const { data, error } = await supabase
+        .from(table)
+        .select("*")
+        .eq("id", userId)
+        .single();
 
-    if (error) throw error;
+      if (error) throw error;
 
-    // Debug: See what's stored
-    console.log("Raw profile_picture from DB:", data.profile_picture);
+      if (data.profile_picture) {
+        data.profile_picture = data.profile_picture + "?t=" + Date.now();
+      }
 
-    // No need to modify URL if we store full URL
-    if (data.profile_picture) {
-      // Add timestamp for cache busting
-      data.profile_picture = data.profile_picture + "?t=" + Date.now();
+      setProfile(data);
+      setEditName(`${data.first_name || ''} ${data.last_name || ''}`.trim());
+      setEditPhone(data.phone || "");
+      setEditEmail(data.email || "");
+    } catch (err) {
+      console.log("Error fetching profile:", err.message);
     }
-
-    setProfile(data);
-    setEditName(`${data.first_name || ''} ${data.last_name || ''}`.trim());
-    setEditPhone(data.phone || "");
-    setEditEmail(data.email || "");
-  } catch (err) {
-    console.log("Error fetching profile:", err.message);
-  }
-};
+  };
 
   const fetchStats = async () => {
     try {
-      // Get total trips and spending
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
         .select("fare, actual_fare, status, created_at")
@@ -140,7 +300,6 @@ const fetchProfile = async () => {
       const totalTrips = bookings?.length || 0;
       const totalSpent = bookings?.reduce((sum, b) => sum + (b.actual_fare || b.fare || 0), 0) || 0;
 
-      // Get total points
       let points = 0;
       try {
         const { data: walletData } = await supabase
@@ -153,7 +312,6 @@ const fetchProfile = async () => {
         console.log("No wallet found:", walletErr.message);
       }
 
-      // Get referrals count
       let referrals = 0;
       try {
         const { count: referralsCount } = await supabase
@@ -166,7 +324,6 @@ const fetchProfile = async () => {
         console.log("Error fetching referrals:", refErr.message);
       }
 
-      // Get member since (first booking or created_at)
       const memberSince = bookings && bookings.length > 0 
         ? bookings[bookings.length - 1]?.created_at 
         : profile?.created_at;
@@ -185,7 +342,6 @@ const fetchProfile = async () => {
 
   const handleUpdateProfile = async () => {
     try {
-      // Parse name
       const nameParts = editName.split(" ");
       const firstName = nameParts[0] || "";
       const lastName = nameParts.slice(1).join(" ") || "";
@@ -233,77 +389,69 @@ const fetchProfile = async () => {
     ]);
   };
 
-const pickImage = async () => {
-  try {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
-    if (status !== "granted") {
-      Alert.alert("Permission Required", "Please enable photo access");
-      return;
+  const pickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (status !== "granted") {
+        Alert.alert("Permission Required", "Please enable photo access");
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        const image = result.assets[0];
+
+        Alert.alert("Uploading", "Please wait...");
+
+        const fileName = `${Date.now()}.jpg`;
+        const filePath = `${userId}/${fileName}`;
+
+        const response = await fetch(image.uri);
+        const arrayBuffer = await response.arrayBuffer();
+
+        const { data, error } = await supabase.storage
+          .from("commuter-profiles")
+          .upload(filePath, arrayBuffer, {
+            contentType: "image/jpeg",
+            upsert: true,
+          });
+
+        if (error) throw error;
+
+        const { data: urlData } = supabase.storage
+          .from("commuter-profiles")
+          .getPublicUrl(filePath);
+
+        const table = userType === 'commuter' ? 'commuters' : 'drivers';
+        const { error: updateError } = await supabase
+          .from(table)
+          .update({
+            profile_picture: urlData.publicUrl,
+            updated_at: new Date(),
+          })
+          .eq("id", userId);
+
+        if (updateError) throw updateError;
+
+        setProfile(prev => ({
+          ...prev,
+          profile_picture: urlData.publicUrl + "?t=" + Date.now(),
+        }));
+
+        Alert.alert("Success", "Profile picture updated!");
+      }
+    } catch (err) {
+      console.log("Error:", err);
+      Alert.alert("Upload Failed", err.message);
     }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8, // Same quality as driver
-    });
-
-    if (!result.canceled && result.assets && result.assets[0]) {
-      const image = result.assets[0];
-
-      Alert.alert("Uploading", "Please wait...");
-
-      // Same simple file naming as driver
-      const fileName = `${Date.now()}.jpg`;
-      const filePath = `${userId}/${fileName}`;
-
-      // Convert to arrayBuffer (same as driver)
-      const response = await fetch(image.uri);
-      const arrayBuffer = await response.arrayBuffer();
-
-      // Use new bucket name
-      const { data, error } = await supabase.storage
-        .from("commuter-profiles")  // Changed from "profiles" to "commuter-profiles"
-        .upload(filePath, arrayBuffer, {
-          contentType: "image/jpeg",
-          upsert: true,
-        });
-
-      if (error) throw error;
-
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from("commuter-profiles")
-        .getPublicUrl(filePath);
-
-      console.log("Upload successful:", urlData.publicUrl);
-
-      // Update database
-      const table = userType === 'commuter' ? 'commuters' : 'drivers';
-      const { error: updateError } = await supabase
-        .from(table)
-        .update({
-          profile_picture: urlData.publicUrl,  // Store full URL
-          updated_at: new Date(),
-        })
-        .eq("id", userId);
-
-      if (updateError) throw updateError;
-
-      // Update state with cache busting
-      setProfile(prev => ({
-        ...prev,
-        profile_picture: urlData.publicUrl + "?t=" + Date.now(),
-      }));
-
-      Alert.alert("Success", "Profile picture updated!");
-    }
-  } catch (err) {
-    console.log("Error:", err);
-    Alert.alert("Upload Failed", err.message);
-  }
-};
+  };
 
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
@@ -312,6 +460,11 @@ const pickImage = async () => {
       month: "long",
       day: "numeric",
     });
+  };
+
+  const getDefaultPaymentMethod = () => {
+    if (!withdrawalSettings.default_payment_method_id) return null;
+    return payoutMethods.find(m => m.id === withdrawalSettings.default_payment_method_id);
   };
 
   if (loading && !refreshing) {
@@ -379,7 +532,10 @@ const pickImage = async () => {
             <Text style={styles.userTypeText}>Passenger</Text>
           </View>
 
-
+          <Pressable style={styles.editProfileButton} onPress={() => setEditProfileModal(true)}>
+            <Ionicons name="create-outline" size={16} color="#183B5C" />
+            <Text style={styles.editProfileText}>Edit Profile</Text>
+          </Pressable>
         </View>
 
         {/* Stats Grid */}
@@ -441,6 +597,32 @@ const pickImage = async () => {
             <Text style={styles.inviteButtonText}>Invite</Text>
           </Pressable>
         </View>
+      </View>
+
+      {/* Withdrawal Settings Section */}
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>💰 Withdrawal Settings</Text>
+
+        <Pressable style={styles.menuItem} onPress={() => setShowWithdrawalSettingsModal(true)}>
+          <Ionicons name="settings-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Withdrawal Preferences</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+
+        <Pressable style={styles.menuItem} onPress={() => setShowPinChangeModal(true)}>
+          <Ionicons name="key-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+          <Text style={styles.menuText}>Change Withdrawal PIN</Text>
+          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+        </Pressable>
+
+        {getDefaultPaymentMethod() && (
+          <View style={styles.defaultMethodInfo}>
+            <Ionicons name="card-outline" size={16} color="#10B981" />
+            <Text style={styles.defaultMethodText}>
+              Default: {getDefaultPaymentMethod().payment_type.toUpperCase()} - {getDefaultPaymentMethod().account_number}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Account Settings */}
@@ -569,6 +751,255 @@ const pickImage = async () => {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Withdrawal Settings Modal */}
+      <Modal
+        visible={showWithdrawalSettingsModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowWithdrawalSettingsModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={styles.modalContainer}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Withdrawal Preferences</Text>
+                <Pressable onPress={() => setShowWithdrawalSettingsModal(false)}>
+                  <Ionicons name="close" size={24} color="#666" />
+                </Pressable>
+              </View>
+
+              <ScrollView keyboardShouldPersistTaps="handled">
+                {/* Default Payout Method */}
+                <Text style={styles.inputLabel}>Default Payout Method</Text>
+                <View style={styles.pickerContainer}>
+                  <Pressable
+                    style={styles.pickerButton}
+                  >
+                    <Text style={styles.pickerButtonText}>
+                      {getDefaultPaymentMethod() 
+                        ? `${getDefaultPaymentMethod().payment_type.toUpperCase()} - ${getDefaultPaymentMethod().account_number}`
+                        : "Select payout method"}
+                    </Text>
+                    <Ionicons name="chevron-forward" size={20} color="#666" />
+                  </Pressable>
+                </View>
+
+                {/* Auto Withdraw Toggle */}
+                <View style={styles.toggleContainer}>
+                  <View>
+                    <Text style={styles.inputLabel}>Auto Withdraw</Text>
+                    <Text style={styles.toggleDescription}>
+                      Automatically withdraw when balance reaches threshold
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => setTempSettings({
+                      ...tempSettings,
+                      auto_withdraw: !tempSettings.auto_withdraw
+                    })}
+                  >
+                    <View style={[styles.toggle, tempSettings.auto_withdraw && styles.toggleActive]}>
+                      <View style={[styles.toggleHandle, tempSettings.auto_withdraw && styles.toggleHandleActive]} />
+                    </View>
+                  </Pressable>
+                </View>
+
+                {/* Auto Withdraw Threshold */}
+                {tempSettings.auto_withdraw && (
+                  <>
+                    <Text style={styles.inputLabel}>Auto Withdraw Threshold (₱)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g., 500"
+                      keyboardType="numeric"
+                      value={tempSettings.auto_withdraw_threshold?.toString() || ""}
+                      onChangeText={(text) => setTempSettings({
+                        ...tempSettings,
+                        auto_withdraw_threshold: text ? parseFloat(text) : null
+                      })}
+                    />
+                  </>
+                )}
+
+                {/* Withdrawal Limits */}
+                <Text style={styles.sectionSubtitle}>Withdrawal Limits</Text>
+                
+                <Text style={styles.inputLabel}>Daily Limit (₱)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 5000"
+                  keyboardType="numeric"
+                  value={tempSettings.daily_withdrawal_limit?.toString() || ""}
+                  onChangeText={(text) => setTempSettings({
+                    ...tempSettings,
+                    daily_withdrawal_limit: text ? parseFloat(text) : null
+                  })}
+                />
+
+                <Text style={styles.inputLabel}>Weekly Limit (₱)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 20000"
+                  keyboardType="numeric"
+                  value={tempSettings.weekly_withdrawal_limit?.toString() || ""}
+                  onChangeText={(text) => setTempSettings({
+                    ...tempSettings,
+                    weekly_withdrawal_limit: text ? parseFloat(text) : null
+                  })}
+                />
+
+                <Text style={styles.inputLabel}>Monthly Limit (₱)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 50000"
+                  keyboardType="numeric"
+                  value={tempSettings.monthly_withdrawal_limit?.toString() || ""}
+                  onChangeText={(text) => setTempSettings({
+                    ...tempSettings,
+                    monthly_withdrawal_limit: text ? parseFloat(text) : null
+                  })}
+                />
+
+                {/* Notification Toggle */}
+                <View style={styles.toggleContainer}>
+                  <View>
+                    <Text style={styles.inputLabel}>Withdrawal Notifications</Text>
+                    <Text style={styles.toggleDescription}>
+                      Receive notifications about your withdrawals
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => setTempSettings({
+                      ...tempSettings,
+                      notifications_enabled: !tempSettings.notifications_enabled
+                    })}
+                  >
+                    <View style={[styles.toggle, tempSettings.notifications_enabled && styles.toggleActive]}>
+                      <View style={[styles.toggleHandle, tempSettings.notifications_enabled && styles.toggleHandleActive]} />
+                    </View>
+                  </Pressable>
+                </View>
+
+                <View style={styles.modalButtons}>
+                  <Pressable
+                    style={styles.cancelButton}
+                    onPress={() => setShowWithdrawalSettingsModal(false)}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.saveButton}
+                    onPress={updateWithdrawalSettings}
+                  >
+                    <Text style={styles.saveButtonText}>Save Settings</Text>
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Change PIN Modal */}
+      <Modal
+        visible={showPinChangeModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowPinChangeModal(false)}
+      >
+        <View style={styles.modalOverlayCenter}>
+          <View style={styles.modalCenterContent}>
+            <View style={styles.modalCenterHeader}>
+              <Ionicons name="key" size={48} color="#183B5C" />
+              <Text style={styles.modalCenterTitle}>Change Withdrawal PIN</Text>
+              <Text style={styles.modalCenterSubtitle}>
+                Enter your current PIN and create a new one
+              </Text>
+            </View>
+
+            {withdrawalSettings.withdrawal_pin && (
+              <>
+                <Text style={styles.inputLabel}>Current PIN</Text>
+                <TextInput
+                  style={[styles.pinInput, pinError && styles.pinInputError]}
+                  placeholder="****"
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  secureTextEntry
+                  value={currentPin}
+                  onChangeText={(text) => {
+                    setCurrentPin(text);
+                    setPinError("");
+                  }}
+                />
+              </>
+            )}
+
+            <Text style={styles.inputLabel}>New PIN</Text>
+            <TextInput
+              style={[styles.pinInput, pinError && styles.pinInputError]}
+              placeholder="****"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              value={newPin}
+              onChangeText={(text) => {
+                setNewPin(text);
+                setPinError("");
+              }}
+            />
+
+            <Text style={styles.inputLabel}>Confirm New PIN</Text>
+            <TextInput
+              style={[styles.pinInput, pinError && styles.pinInputError]}
+              placeholder="****"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              value={confirmPin}
+              onChangeText={(text) => {
+                setConfirmPin(text);
+                setPinError("");
+              }}
+            />
+
+            {pinError ? (
+              <Text style={styles.pinErrorText}>{pinError}</Text>
+            ) : null}
+
+            <View style={styles.modalCenterActions}>
+              <Pressable
+                style={styles.modalCenterCancel}
+                onPress={() => {
+                  setShowPinChangeModal(false);
+                  setCurrentPin("");
+                  setNewPin("");
+                  setConfirmPin("");
+                  setPinError("");
+                }}
+              >
+                <Text style={styles.modalCenterCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.modalCenterConfirm}
+                onPress={changePin}
+                disabled={changingPin}
+              >
+                {changingPin ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={styles.modalCenterConfirmText}>Change PIN</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -675,7 +1106,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 20,
-    marginBottom: 15,
+    marginBottom: 10,
   },
   userTypeText: {
     color: "#666",
@@ -685,7 +1116,7 @@ const styles = StyleSheet.create({
   editProfileButton: {
     backgroundColor: "#F3F4F6",
     paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderRadius: 20,
     flexDirection: "row",
     alignItems: "center",
@@ -738,6 +1169,13 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#333",
     marginBottom: 15,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#333",
+    marginTop: 15,
+    marginBottom: 10,
   },
   contactItem: {
     marginBottom: 12,
@@ -798,6 +1236,20 @@ const styles = StyleSheet.create({
     flex: 1,
     color: "#333",
   },
+  defaultMethodInfo: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: "#F0FDF4",
+    borderRadius: 12,
+    gap: 8,
+  },
+  defaultMethodText: {
+    fontSize: 12,
+    color: "#10B981",
+    flex: 1,
+  },
   signOutButton: {
     flexDirection: "row",
     alignItems: "center",
@@ -837,12 +1289,67 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "flex-end",
   },
+  modalOverlayCenter: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   modalContent: {
     backgroundColor: "#FFF",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     maxHeight: "90%",
+  },
+  modalCenterContent: {
+    backgroundColor: "#FFF",
+    borderRadius: 24,
+    padding: 20,
+    width: "90%",
+    maxWidth: 350,
+  },
+  modalCenterHeader: {
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  modalCenterTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    marginTop: 10,
+  },
+  modalCenterSubtitle: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 5,
+  },
+  modalCenterActions: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 10,
+  },
+  modalCenterCancel: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#F3F4F6",
+  },
+  modalCenterCancelText: {
+    textAlign: "center",
+    color: "#666",
+  },
+  modalCenterConfirm: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: "#183B5C",
+  },
+  modalCenterConfirmText: {
+    textAlign: "center",
+    color: "#FFF",
+    fontWeight: "600",
   },
   modalHeader: {
     flexDirection: "row",
@@ -868,6 +1375,25 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginBottom: 15,
+  },
+  pinInput: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 24,
+    textAlign: "center",
+    letterSpacing: 8,
+    marginBottom: 15,
+  },
+  pinInputError: {
+    borderColor: "#EF4444",
+  },
+  pinErrorText: {
+    color: "#EF4444",
+    fontSize: 12,
+    marginBottom: 15,
+    textAlign: "center",
   },
   modalButtons: {
     flexDirection: "row",
@@ -895,5 +1421,52 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: "#FFF",
     fontWeight: "600",
+  },
+  pickerContainer: {
+    marginBottom: 15,
+  },
+  pickerButton: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "#F9FAFB",
+  },
+  pickerButtonText: {
+    fontSize: 16,
+    color: "#333",
+  },
+  toggleContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  toggleDescription: {
+    fontSize: 12,
+    color: "#666",
+    marginTop: 2,
+  },
+  toggle: {
+    width: 50,
+    height: 28,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 28,
+    padding: 2,
+  },
+  toggleActive: {
+    backgroundColor: "#10B981",
+  },
+  toggleHandle: {
+    width: 24,
+    height: 24,
+    backgroundColor: "#FFF",
+    borderRadius: 24,
+  },
+  toggleHandleActive: {
+    transform: [{ translateX: 22 }],
   },
 });

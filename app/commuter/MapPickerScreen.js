@@ -1,4 +1,4 @@
-// /commuter/MapPickerScreen.js
+// screens/commuter/MapPickerScreen.js
 import React, { useState, useRef, useEffect } from "react";
 import {
   View,
@@ -10,6 +10,10 @@ import {
   ActivityIndicator,
   Platform,
   FlatList,
+  Keyboard,
+  TouchableOpacity,
+  Dimensions,
+  Animated,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
@@ -17,6 +21,9 @@ import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import Constants from "expo-constants";
+import * as Haptics from 'expo-haptics';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function MapPickerScreen() {
   const insets = useSafeAreaInsets();
@@ -24,6 +31,7 @@ export default function MapPickerScreen() {
   const route = useRoute();
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
+  const bottomSheetAnim = useRef(new Animated.Value(0)).current;
   
   const { type, onSelect, initialLocation } = route.params || {};
   const [selectedLocation, setSelectedLocation] = useState(initialLocation || null);
@@ -32,14 +40,22 @@ export default function MapPickerScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [initialRegion, setInitialRegion] = useState({
-    latitude: 14.5995,
-    longitude: 120.9842,
-    latitudeDelta: 0.0922,
-    longitudeDelta: 0.0421,
-  });
-
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+  const [mapReady, setMapReady] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+  
+  // Animate bottom sheet on mount
+  useEffect(() => {
+    Animated.spring(bottomSheetAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      tension: 65,
+      friction: 11,
+    }).start();
+  }, []);
 
   // Get current location on mount
   useEffect(() => {
@@ -50,18 +66,17 @@ export default function MapPickerScreen() {
   useEffect(() => {
     if (searchQuery.length < 3) {
       setSearchResults([]);
+      setShowSearchResults(false);
       return;
     }
 
-    // Clear previous timeout
     if (searchTimeout.current) {
       clearTimeout(searchTimeout.current);
     }
 
-    // Set new timeout for auto-search
     searchTimeout.current = setTimeout(() => {
       performSearch();
-    }, 500); // Search after 500ms of no typing
+    }, 500);
 
     return () => {
       if (searchTimeout.current) {
@@ -77,23 +92,37 @@ export default function MapPickerScreen() {
       getAddressFromCoords(initialLocation);
       
       setTimeout(() => {
-        mapRef.current?.animateToRegion({
-          latitude: initialLocation.latitude,
-          longitude: initialLocation.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        }, 500);
+        if (mapRef.current) {
+          mapRef.current.animateToRegion({
+            latitude: initialLocation.latitude,
+            longitude: initialLocation.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          }, 500);
+        }
       }, 500);
     }
   }, [initialLocation]);
 
   const getCurrentLocation = async () => {
     try {
-      setLoading(true);
+      setIsLocating(true);
+      setErrorMessage("");
+      
+      // Haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission Denied", "Location permission is needed to select location");
-        setLoading(false);
+        Alert.alert(
+          "Location Permission Required",
+          "Please enable location access to find your current location. You can manually search for locations instead.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Open Settings", onPress: () => Location.openSettings() }
+          ]
+        );
+        setIsLocating(false);
         return;
       }
 
@@ -106,29 +135,28 @@ export default function MapPickerScreen() {
         longitude: location.coords.longitude,
       };
 
-      setInitialRegion({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      });
-
-      if (!initialLocation) {
-        setSelectedLocation(coords);
-        getAddressFromCoords(coords);
-      }
-
+      // Animate to current location
       mapRef.current?.animateToRegion({
         latitude: coords.latitude,
         longitude: coords.longitude,
         latitudeDelta: 0.01,
         longitudeDelta: 0.01,
       }, 1000);
+
+      if (!initialLocation) {
+        setSelectedLocation(coords);
+        await getAddressFromCoords(coords);
+      }
+      
+      // Success feedback
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      
     } catch (err) {
       console.log("Error getting location:", err);
-      Alert.alert("Error", "Failed to get current location");
+      setErrorMessage("Unable to get your location. Please check your GPS or try searching manually.");
+      setTimeout(() => setErrorMessage(""), 3000);
     } finally {
-      setLoading(false);
+      setIsLocating(false);
     }
   };
 
@@ -142,17 +170,20 @@ export default function MapPickerScreen() {
         
         const addressParts = [];
         
+        // Build a user-friendly address
         if (addr.street) addressParts.push(addr.street);
         else if (addr.name) addressParts.push(addr.name);
         
-        if (addr.city) addressParts.push(addr.city);
+        if (addr.district) addressParts.push(addr.district);
         else if (addr.subregion) addressParts.push(addr.subregion);
         
-        if (addr.region) addressParts.push(addr.region);
+        if (addr.city) addressParts.push(addr.city);
+        else if (addr.region) addressParts.push(addr.region);
         
         const fullAddress = addressParts.filter(Boolean).join(", ");
-        
         setAddress(fullAddress || "Selected Location");
+      } else {
+        setAddress("Selected Location");
       }
     } catch (err) {
       console.log("Error getting address:", err);
@@ -166,9 +197,15 @@ export default function MapPickerScreen() {
     const coords = event.nativeEvent.coordinate;
     setSelectedLocation(coords);
     getAddressFromCoords(coords);
-    // Clear search when manually selecting on map
+    
+    // Clear search and hide results
     setSearchQuery("");
     setSearchResults([]);
+    setShowSearchResults(false);
+    Keyboard.dismiss();
+    
+    // Haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const performSearch = async () => {
@@ -190,12 +227,15 @@ export default function MapPickerScreen() {
           location: result.geometry.location,
         }));
         setSearchResults(results);
+        setShowSearchResults(true);
       } else {
         setSearchResults([]);
+        setShowSearchResults(false);
       }
     } catch (err) {
       console.log("Search error:", err);
       setSearchResults([]);
+      setShowSearchResults(false);
     } finally {
       setSearching(false);
     }
@@ -211,21 +251,31 @@ export default function MapPickerScreen() {
     setAddress(result.address);
     setSearchQuery("");
     setSearchResults([]);
+    setShowSearchResults(false);
+    Keyboard.dismiss();
 
     mapRef.current?.animateToRegion({
       latitude: coords.latitude,
       longitude: coords.longitude,
       latitudeDelta: 0.01,
       longitudeDelta: 0.01,
-    }, 1000);
+    }, 500);
+    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleConfirm = () => {
     if (!selectedLocation) {
-      Alert.alert("No Location", "Please select a location on the map");
+      Alert.alert(
+        "No Location Selected",
+        "Please select a location on the map by tapping or searching",
+        [{ text: "OK" }]
+      );
       return;
     }
 
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    
     if (onSelect) {
       onSelect(selectedLocation, address);
     }
@@ -234,69 +284,118 @@ export default function MapPickerScreen() {
   };
 
   const renderSearchResult = ({ item }) => (
-    <Pressable
+    <TouchableOpacity
       style={styles.searchResultItem}
       onPress={() => handleSelectSearchResult(item)}
+      activeOpacity={0.7}
     >
-      <Ionicons name="location" size={20} color="#183B5C" />
-      <Text style={styles.searchResultText} numberOfLines={2}>
-        {item.address}
-      </Text>
-    </Pressable>
+      <View style={styles.searchResultIcon}>
+        <Ionicons name="location-outline" size={20} color="#183B5C" />
+      </View>
+      <View style={styles.searchResultContent}>
+        <Text style={styles.searchResultText} numberOfLines={2}>
+          {item.address}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
+    </TouchableOpacity>
   );
+
+  const bottomSheetTransform = {
+    transform: [{
+      translateY: bottomSheetAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [300, 0],
+      })
+    }]
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity 
+          onPress={() => navigation.goBack()} 
+          style={styles.headerButton}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={24} color="#183B5C" />
-        </Pressable>
-        <Text style={styles.headerTitle}>
-          Select {type === "pickup" ? "Pickup" : "Dropoff"} Location
-        </Text>
-        <Pressable onPress={getCurrentLocation} style={styles.currentLocationButton}>
-          <Ionicons name="locate" size={24} color="#183B5C" />
-        </Pressable>
+        </TouchableOpacity>
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitle}>
+            Set {type === "pickup" ? "Pickup" : "Dropoff"} Location
+          </Text>
+          <Text style={styles.headerSubtitle}>
+            Tap on map or search for a place
+          </Text>
+        </View>
+        <TouchableOpacity 
+          onPress={getCurrentLocation} 
+          style={styles.headerButton}
+          disabled={isLocating}
+          activeOpacity={0.7}
+        >
+          {isLocating ? (
+            <ActivityIndicator size="small" color="#183B5C" />
+          ) : (
+            <Ionicons name="location" size={24} color="#183B5C" />
+          )}
+        </TouchableOpacity>
       </View>
 
-      {/* Search Bar - Auto-search, no button */}
+      {/* Error Message */}
+      {errorMessage ? (
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={18} color="#EF4444" />
+          <Text style={styles.errorText}>{errorMessage}</Text>
+        </View>
+      ) : null}
+
+      {/* Search Bar */}
       <View style={styles.searchContainer}>
         <View style={styles.searchBox}>
-          <Ionicons name="search" size={20} color="#999" />
+          <Ionicons name="search" size={20} color="#94A3B8" />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search for a place..."
+            placeholder="Search for a place, address, or landmark..."
+            placeholderTextColor="#94A3B8"
             value={searchQuery}
             onChangeText={setSearchQuery}
             returnKeyType="search"
-            placeholderTextColor="#999"
             autoCapitalize="none"
             autoCorrect={false}
+            onSubmitEditing={performSearch}
           />
-          {searchQuery.length > 0 && (
-            <Pressable onPress={() => {
+          {searching ? (
+            <ActivityIndicator size="small" color="#183B5C" />
+          ) : searchQuery.length > 0 ? (
+            <TouchableOpacity onPress={() => {
               setSearchQuery("");
               setSearchResults([]);
+              setShowSearchResults(false);
             }}>
-              <Ionicons name="close-circle" size={20} color="#999" />
-            </Pressable>
-          )}
+              <Ionicons name="close-circle" size={20} color="#94A3B8" />
+            </TouchableOpacity>
+          ) : null}
         </View>
-        {searching && (
-          <ActivityIndicator size="small" color="#183B5C" style={styles.searchingIndicator} />
-        )}
       </View>
 
-      {/* Search Results - Auto display */}
-      {searchResults.length > 0 && (
+      {/* Search Results */}
+      {showSearchResults && searchResults.length > 0 && (
         <View style={styles.searchResultsContainer}>
+          <View style={styles.searchResultsHeader}>
+            <Text style={styles.searchResultsTitle}>Search Results</Text>
+            <TouchableOpacity onPress={() => setShowSearchResults(false)}>
+              <Ionicons name="close" size={20} color="#94A3B8" />
+            </TouchableOpacity>
+          </View>
           <FlatList
             data={searchResults}
             renderItem={renderSearchResult}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            maxToRenderPerBatch={10}
           />
         </View>
       )}
@@ -306,20 +405,35 @@ export default function MapPickerScreen() {
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_GOOGLE}
-        initialRegion={initialRegion}
+        initialRegion={{
+          latitude: 14.5995,
+          longitude: 120.9842,
+          latitudeDelta: 0.0922,
+          longitudeDelta: 0.0421,
+        }}
         onPress={handleMapPress}
         showsUserLocation={true}
         showsMyLocationButton={false}
         showsCompass={true}
+        showsScale={true}
         loadingEnabled={true}
         loadingIndicatorColor="#183B5C"
         loadingBackgroundColor="#F5F7FA"
+        onMapReady={() => setMapReady(true)}
+        onError={() => Alert.alert("Map Error", "Unable to load map. Please check your connection.")}
       >
         {selectedLocation && (
           <Marker
             coordinate={selectedLocation}
             title={type === "pickup" ? "Pickup Location" : "Dropoff Location"}
             description={address}
+            draggable={true}
+            onDragEnd={(e) => {
+              const coords = e.nativeEvent.coordinate;
+              setSelectedLocation(coords);
+              getAddressFromCoords(coords);
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }}
           >
             <View style={[
               styles.marker,
@@ -335,57 +449,89 @@ export default function MapPickerScreen() {
         )}
       </MapView>
 
+      {/* Recenter Button */}
+      <TouchableOpacity 
+        style={styles.recenterButton} 
+        onPress={getCurrentLocation}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="locate" size={24} color="#183B5C" />
+      </TouchableOpacity>
+
       {/* Bottom Sheet */}
-      <View style={styles.bottomSheet}>
+      <Animated.View style={[styles.bottomSheet, bottomSheetTransform]}>
+        <View style={styles.bottomSheetHandle}>
+          <View style={styles.handle} />
+        </View>
+        
         {loading ? (
-          <ActivityIndicator size="large" color="#183B5C" />
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#183B5C" />
+            <Text style={styles.loadingText}>Getting address...</Text>
+          </View>
         ) : (
           <>
             <View style={styles.addressContainer}>
-              <Ionicons 
-                name={type === "pickup" ? "location" : "flag"} 
-                size={24} 
-                color={type === "pickup" ? "#10B981" : "#EF4444"} 
-              />
-              <Text style={styles.addressText} numberOfLines={2}>
-                {address || "Tap on the map to select a location"}
-              </Text>
+              <View style={[
+                styles.addressIcon,
+                type === "pickup" ? styles.pickupIconBg : styles.dropoffIconBg
+              ]}>
+                <Ionicons 
+                  name={type === "pickup" ? "location" : "flag"} 
+                  size={20} 
+                  color={type === "pickup" ? "#10B981" : "#EF4444"} 
+                />
+              </View>
+              <View style={styles.addressContent}>
+                <Text style={styles.addressLabel}>
+                  {type === "pickup" ? "Pickup Location" : "Dropoff Location"}
+                </Text>
+                <Text style={styles.addressText} numberOfLines={2}>
+                  {address || "Tap on the map to select a location"}
+                </Text>
+              </View>
             </View>
+
+            {selectedLocation && (
+              <View style={styles.coordinatesContainer}>
+                <Text style={styles.coordinatesText}>
+                  📍 {selectedLocation.latitude.toFixed(6)}, {selectedLocation.longitude.toFixed(6)}
+                </Text>
+              </View>
+            )}
 
             <View style={styles.instructionContainer}>
-              <Ionicons name="hand-right" size={16} color="#666" />
+              <Ionicons name="hand-right" size={16} color="#94A3B8" />
               <Text style={styles.instructionText}>
-                Tap on the map to set exact location or search above
+                Tip: You can drag the marker to adjust the exact location
               </Text>
             </View>
 
-            <Pressable 
+            <TouchableOpacity 
               style={[
                 styles.confirmButton,
                 (!selectedLocation || loading) && styles.confirmButtonDisabled
               ]}
               onPress={handleConfirm}
               disabled={!selectedLocation || loading}
+              activeOpacity={0.8}
             >
               <Text style={styles.confirmButtonText}>
                 Confirm {type === "pickup" ? "Pickup" : "Dropoff"} Location
               </Text>
-            </Pressable>
+              <Ionicons name="checkmark" size={20} color="#FFF" />
+            </TouchableOpacity>
 
-            <Pressable 
+            <TouchableOpacity 
               style={styles.cancelButton}
               onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
             >
               <Text style={styles.cancelButtonText}>Cancel</Text>
-            </Pressable>
+            </TouchableOpacity>
           </>
         )}
-      </View>
-
-      {/* Recenter Button */}
-      <Pressable style={styles.recenterButton} onPress={getCurrentLocation}>
-        <Ionicons name="locate" size={24} color="#183B5C" />
-      </Pressable>
+      </Animated.View>
     </View>
   );
 }
@@ -399,79 +545,128 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: "#FFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
   },
-  backButton: {
-    padding: 8,
+  headerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  headerTitleContainer: {
+    flex: 1,
+    alignItems: "center",
   },
   headerTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "600",
     color: "#183B5C",
   },
-  currentLocationButton: {
-    padding: 8,
+  headerSubtitle: {
+    fontSize: 12,
+    color: "#6B7280",
+    marginTop: 2,
   },
-  searchContainer: {
+  errorContainer: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 15,
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 16,
     paddingVertical: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FEE2E2",
+  },
+  errorText: {
+    marginLeft: 8,
+    fontSize: 12,
+    color: "#EF4444",
+    flex: 1,
+  },
+  searchContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: "#FFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
     zIndex: 3,
   },
   searchBox: {
-    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F3F4F6",
-    borderRadius: 8,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 8,
-    fontSize: 14,
+    fontSize: 15,
     color: "#333",
-  },
-  searchingIndicator: {
-    marginLeft: 10,
   },
   searchResultsContainer: {
     position: "absolute",
-    top: 110,
-    left: 15,
-    right: 15,
+    top: 120,
+    left: 16,
+    right: 16,
     backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 10,
-    maxHeight: 300,
+    borderRadius: 16,
+    padding: 8,
+    maxHeight: SCREEN_HEIGHT * 0.4,
     zIndex: 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  searchResultsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+  searchResultsTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#183B5C",
   },
   searchResultItem: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 12,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F3F4F6",
   },
-  searchResultText: {
+  searchResultIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#EFF6FF",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  searchResultContent: {
     flex: 1,
-    marginLeft: 10,
+  },
+  searchResultText: {
     fontSize: 14,
     color: "#333",
+    lineHeight: 20,
   },
   map: {
     flex: 1,
@@ -481,6 +676,11 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 2,
     borderColor: "#FFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   pickupMarker: {
     backgroundColor: "#10B981",
@@ -494,9 +694,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: "#FFF",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1,
@@ -504,42 +705,94 @@ const styles = StyleSheet.create({
     elevation: 10,
     zIndex: 2,
   },
+  bottomSheetHandle: {
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 2,
+  },
+  loadingContainer: {
+    alignItems: "center",
+    paddingVertical: 20,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#6B7280",
+  },
   addressContainer: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 10,
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  addressIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  pickupIconBg: {
+    backgroundColor: "#E8F5E9",
+  },
+  dropoffIconBg: {
+    backgroundColor: "#FEE2E2",
+  },
+  addressContent: {
+    flex: 1,
+  },
+  addressLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B7280",
+    marginBottom: 4,
   },
   addressText: {
-    flex: 1,
-    marginLeft: 10,
     fontSize: 14,
     color: "#333",
     lineHeight: 20,
   },
+  coordinatesContainer: {
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  coordinatesText: {
+    fontSize: 11,
+    color: "#9CA3AF",
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
   instructionContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 15,
-    paddingHorizontal: 5,
+    marginBottom: 20,
+    paddingHorizontal: 4,
   },
   instructionText: {
     marginLeft: 8,
     fontSize: 12,
-    color: "#666",
+    color: "#94A3B8",
     flex: 1,
   },
   confirmButton: {
     backgroundColor: "#183B5C",
-    padding: 16,
+    paddingVertical: 16,
     borderRadius: 12,
+    flexDirection: "row",
     alignItems: "center",
-    marginBottom: 10,
+    justifyContent: "center",
+    marginBottom: 12,
+    gap: 8,
   },
   confirmButtonDisabled: {
-    backgroundColor: "#9CA3AF",
+    backgroundColor: "#CBD5E1",
   },
   confirmButtonText: {
     color: "#FFF",
@@ -547,17 +800,17 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   cancelButton: {
-    padding: 12,
+    paddingVertical: 12,
     alignItems: "center",
   },
   cancelButtonText: {
     color: "#EF4444",
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 15,
+    fontWeight: "500",
   },
   recenterButton: {
     position: "absolute",
-    bottom: 200,
+    bottom: 220,
     right: 20,
     backgroundColor: "#FFF",
     width: 50,
@@ -568,7 +821,7 @@ const styles = StyleSheet.create({
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowRadius: 8,
     elevation: 5,
     zIndex: 2,
   },
