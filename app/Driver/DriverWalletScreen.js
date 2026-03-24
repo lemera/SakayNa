@@ -13,6 +13,7 @@ import {
   Dimensions,
   KeyboardAvoidingView,
   Platform,
+  TouchableOpacity,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -29,6 +30,14 @@ export default function DriverWalletScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState(null);
   const [driverName, setDriverName] = useState("");
+  
+  // Loading states for buttons
+  const [addingPayout, setAddingPayout] = useState(false);
+  const [processingWithdrawal, setProcessingWithdrawal] = useState(false);
+  const [settingDefault, setSettingDefault] = useState(false);
+  const [deletingPayout, setDeletingPayout] = useState(false);
+  const [settingPin, setSettingPin] = useState(false);
+  const [verifyingPin, setVerifyingPin] = useState(false);
   
   // Points data (primary currency for withdrawal)
   const [pointsData, setPointsData] = useState({
@@ -58,6 +67,15 @@ export default function DriverWalletScreen({ navigation }) {
   const [showAddPayoutModal, setShowAddPayoutModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [showPayoutMethodsModal, setShowPayoutMethodsModal] = useState(false);
+  
+  // PIN related state
+  const [hasPin, setHasPin] = useState(false);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [showPinSetupModal, setShowPinSetupModal] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [withdrawalPending, setWithdrawalPending] = useState(null);
   
   // Payout form
   const [newPayoutMethod, setNewPayoutMethod] = useState({
@@ -92,6 +110,7 @@ export default function DriverWalletScreen({ navigation }) {
             await fetchDriverName(id);
             await loadPayoutMethods(id);
             await loadWithdrawalHistory(id);
+            await checkPinStatus(id);
           }
         } catch (error) {
           console.log("Error getting driver ID:", error);
@@ -118,6 +137,124 @@ export default function DriverWalletScreen({ navigation }) {
       if (data) setDriverName(`${data.first_name} ${data.last_name}`);
     } catch (err) {
       console.log("Error fetching driver name:", err.message);
+    }
+  };
+
+  const checkPinStatus = async (userId) => {
+    try {
+      const { data, error } = await supabase
+        .from("withdrawal_settings")
+        .select("withdrawal_pin")
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      setHasPin(!!data?.withdrawal_pin);
+    } catch (err) {
+      console.log("Error checking PIN status:", err.message);
+    }
+  };
+
+  const setupPin = async () => {
+    if (pinInput.length !== 4) {
+      setPinError("PIN must be exactly 4 digits");
+      return;
+    }
+    
+    if (!/^\d{4}$/.test(pinInput)) {
+      setPinError("PIN must contain only numbers");
+      return;
+    }
+    
+    if (pinInput !== pinConfirm) {
+      setPinError("PINs do not match");
+      return;
+    }
+    
+    setSettingPin(true);
+    
+    try {
+      // Check if settings already exist
+      const { data: existing, error: checkError } = await supabase
+        .from("withdrawal_settings")
+        .select("id")
+        .eq("user_id", driverId)
+        .maybeSingle();
+      
+      if (checkError) throw checkError;
+      
+      let error;
+      if (existing) {
+        // Update existing
+        const { error: updateError } = await supabase
+          .from("withdrawal_settings")
+          .update({ withdrawal_pin: pinInput, updated_at: new Date().toISOString() })
+          .eq("user_id", driverId);
+        error = updateError;
+      } else {
+        // Insert new
+        const { error: insertError } = await supabase
+          .from("withdrawal_settings")
+          .insert({
+            user_id: driverId,
+            user_type: "driver",
+            withdrawal_pin: pinInput,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+        error = insertError;
+      }
+      
+      if (error) throw error;
+      
+      setHasPin(true);
+      setShowPinSetupModal(false);
+      setPinInput("");
+      setPinConfirm("");
+      setPinError("");
+      
+      Alert.alert("Success", "Withdrawal PIN has been set successfully!");
+    } catch (err) {
+      console.log("Error setting PIN:", err.message);
+      setPinError("Failed to set PIN. Please try again.");
+    } finally {
+      setSettingPin(false);
+    }
+  };
+
+  const verifyPin = async (pin, withdrawalData) => {
+    setVerifyingPin(true);
+    
+    try {
+      const { data, error } = await supabase
+        .from("withdrawal_settings")
+        .select("withdrawal_pin")
+        .eq("user_id", driverId)
+        .maybeSingle();
+      
+      if (error) throw error;
+      
+      if (!data?.withdrawal_pin) {
+        // No PIN set, prompt to set up
+        setWithdrawalPending(withdrawalData);
+        setShowPinModal(false);
+        setShowPinSetupModal(true);
+        Alert.alert("Setup Required", "Please set up a withdrawal PIN first.");
+        return false;
+      }
+      
+      if (data.withdrawal_pin !== pin) {
+        Alert.alert("Invalid PIN", "The PIN you entered is incorrect. Please try again.");
+        return false;
+      }
+      
+      return true;
+    } catch (err) {
+      console.log("Error verifying PIN:", err.message);
+      Alert.alert("Error", "Failed to verify PIN. Please try again.");
+      return false;
+    } finally {
+      setVerifyingPin(false);
     }
   };
 
@@ -457,6 +594,8 @@ export default function DriverWalletScreen({ navigation }) {
       return;
     }
 
+    setAddingPayout(true);
+    
     try {
       // Check if method already exists
       const { data: existing } = await supabase
@@ -505,10 +644,14 @@ export default function DriverWalletScreen({ navigation }) {
     } catch (err) {
       console.log("Error adding payout method:", err.message);
       Alert.alert("Error", "Failed to add payout method");
+    } finally {
+      setAddingPayout(false);
     }
   };
 
   const handleSetDefaultPayoutMethod = async (methodId) => {
+    setSettingDefault(true);
+    
     try {
       // Update all methods to not default
       await supabase
@@ -531,6 +674,8 @@ export default function DriverWalletScreen({ navigation }) {
     } catch (err) {
       console.log("Error setting default:", err.message);
       Alert.alert("Error", "Failed to update default method");
+    } finally {
+      setSettingDefault(false);
     }
   };
 
@@ -544,6 +689,8 @@ export default function DriverWalletScreen({ navigation }) {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
+            setDeletingPayout(true);
+            
             try {
               const { error } = await supabase
                 .from("user_payment_methods")
@@ -557,6 +704,8 @@ export default function DriverWalletScreen({ navigation }) {
             } catch (err) {
               console.log("Error deleting method:", err.message);
               Alert.alert("Error", "Failed to remove payout method");
+            } finally {
+              setDeletingPayout(false);
             }
           }
         }
@@ -570,7 +719,7 @@ export default function DriverWalletScreen({ navigation }) {
     setPointsToCash(pointsNum * POINTS_CONVERSION_RATE);
   };
 
-  const handleWithdraw = async () => {
+  const initiateWithdrawal = () => {
     const points = parseFloat(withdrawPoints);
     const cashAmount = points * POINTS_CONVERSION_RATE;
     
@@ -590,225 +739,255 @@ export default function DriverWalletScreen({ navigation }) {
       return;
     }
 
-    Alert.alert(
-      "Confirm Withdrawal",
-      `Convert ${points.toFixed(0)} points to ₱${cashAmount.toFixed(2)}\n\nWithdraw to:\n${selectedPayoutMethod.payment_type.toUpperCase()}\n${selectedPayoutMethod.account_number}\n${selectedPayoutMethod.account_name}\n\nThis will be processed within 1-2 business days.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Confirm", onPress: () => processPointsWithdrawal(points, cashAmount) },
-      ]
-    );
+    const withdrawalData = { points, cashAmount };
+    
+    if (hasPin) {
+      // Show PIN modal
+      setWithdrawalPending(withdrawalData);
+      setShowPinModal(true);
+    } else {
+      // No PIN set, prompt to set up
+      Alert.alert(
+        "Setup Withdrawal PIN",
+        "For your security, please set up a 4-digit withdrawal PIN first.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Set Up PIN", onPress: () => {
+              setWithdrawalPending(withdrawalData);
+              setShowPinSetupModal(true);
+            }
+          }
+        ]
+      );
+    }
   };
 
-const processPointsWithdrawal = async (points, cashAmount) => {
-  try {
-    // First, check if enough points
-    const { data: wallet, error: walletError } = await supabase
-      .from("driver_wallets")
-      .select("points, points_converted")
-      .eq("driver_id", driverId)
-      .single();
-
-    if (walletError) throw walletError;
+  const handleWithdrawWithPin = async () => {
+    if (pinInput.length !== 4) {
+      Alert.alert("Error", "Please enter your 4-digit PIN");
+      return;
+    }
     
-    if (wallet.points < points) {
-      throw new Error("Insufficient points");
+    const isValid = await verifyPin(pinInput, withdrawalPending);
+    if (isValid && withdrawalPending) {
+      await processPointsWithdrawal(withdrawalPending.points, withdrawalPending.cashAmount);
+      setShowPinModal(false);
+      setPinInput("");
+      setWithdrawalPending(null);
     }
+  };
 
-    // Get driver details for notification
-    const { data: driver, error: driverError } = await supabase
-      .from("drivers")
-      .select("first_name, last_name")
-      .eq("id", driverId)
-      .single();
+  const processPointsWithdrawal = async (points, cashAmount) => {
+    setProcessingWithdrawal(true);
+    
+    try {
+      // First, check if enough points
+      const { data: wallet, error: walletError } = await supabase
+        .from("driver_wallets")
+        .select("points, points_converted")
+        .eq("driver_id", driverId)
+        .single();
 
-    if (driverError) {
-      console.log("Error fetching driver details:", driverError);
-    }
+      if (walletError) throw walletError;
+      
+      if (wallet.points < points) {
+        throw new Error("Insufficient points");
+      }
 
-    const driverName = driver ? `${driver.first_name} ${driver.last_name}` : "Driver";
+      // Get driver details for notification
+      const { data: driver, error: driverError } = await supabase
+        .from("drivers")
+        .select("first_name, last_name")
+        .eq("id", driverId)
+        .single();
 
-    // Create withdrawal request
-    const { data: withdrawal, error: withdrawalError } = await supabase
-      .from("withdrawals")
-      .insert({
-        user_id: driverId,
-        user_type: "driver",
-        amount: cashAmount,
-        payment_method: selectedPayoutMethod.payment_type,
-        account_details: {
-          account_name: selectedPayoutMethod.account_name,
-          account_number: selectedPayoutMethod.account_number,
-          account_phone: selectedPayoutMethod.account_phone,
-          points_converted: points,
-          conversion_rate: POINTS_CONVERSION_RATE,
-          payment_method_id: selectedPayoutMethod.id
-        },
-        notes: withdrawNotes || `Converting ${points} points to cash`,
-        payment_method_id: selectedPayoutMethod.id,
-        requested_at: new Date().toISOString(),
-        status: "pending",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .select()
-      .single();
+      if (driverError) {
+        console.log("Error fetching driver details:", driverError);
+      }
 
-    if (withdrawalError) {
-      console.log("Withdrawal insert error:", withdrawalError);
-      throw withdrawalError;
-    }
+      const driverName = driver ? `${driver.first_name} ${driver.last_name}` : "Driver";
 
-    console.log("✅ Withdrawal created:", withdrawal.id);
-
-    // Deduct points from wallet
-    const { error: updateError } = await supabase
-      .from("driver_wallets")
-      .update({
-        points: wallet.points - points,
-        points_converted: (wallet.points_converted || 0) + points,
-        last_points_conversion: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq("driver_id", driverId);
-
-    if (updateError) {
-      console.log("Wallet update error:", updateError);
-      throw updateError;
-    }
-
-    console.log("✅ Points deducted from wallet");
-
-    // Log points conversion in driver_points_history
-    const { error: historyError } = await supabase
-      .from("driver_points_history")
-      .insert({
-        driver_id: driverId,
-        points: points,
-        type: "converted",
-        source: "conversion",
-        source_id: withdrawal.id,
-        description: `Converted ${points} points to ₱${cashAmount.toFixed(2)}`,
-        conversion_rate: POINTS_CONVERSION_RATE,
-        converted_amount: cashAmount,
-        created_at: new Date().toISOString()
-      });
-
-    if (historyError) {
-      console.log("Points history error:", historyError);
-    } else {
-      console.log("✅ Points history recorded");
-    }
-
-    // ✅ Insert into withdrawal_logs
-    const { error: logError } = await supabase
-      .from("withdrawal_logs")
-      .insert({
-        withdrawal_id: withdrawal.id,
-        action: "requested",
-        user_id: driverId,
-        user_type: "driver",
-        notes: `Points withdrawal request: ${points} points = ₱${cashAmount.toFixed(2)}`,
-        created_at: new Date().toISOString()
-      });
-
-    if (logError) {
-      console.log("❌ Withdrawal log error:", logError);
-    } else {
-      console.log("✅ Withdrawal log created");
-    }
-
-    // ✅ CREATE NOTIFICATION FOR DRIVER (Confirmation)
-    const { error: driverNotifError } = await supabase
-      .from("notifications")
-      .insert({
-        user_id: driverId,
-        user_type: "driver",
-        type: "payment",
-        title: "Withdrawal Request Submitted",
-        message: `Your request to convert ${points} points to ₱${cashAmount.toFixed(2)} has been submitted. We will notify you once processed.`,
-        reference_id: withdrawal.id,
-        reference_type: "withdrawal",
-        data: {
-          points: points,
-          amount: cashAmount,
-          status: "pending"
-        },
-        priority: "normal",
-        created_at: new Date().toISOString()
-      });
-
-    if (driverNotifError) {
-      console.log("Driver notification error:", driverNotifError);
-    } else {
-      console.log("✅ Driver notification created");
-    }
-
-    // ✅ CREATE NOTIFICATION FOR ADMINS
-    // First, get all admin users
-    const { data: admins, error: adminsError } = await supabase
-      .from("admins")
-      .select("id")
-      .eq("is_active", true);
-
-    if (adminsError) {
-      console.log("Error fetching admins:", adminsError);
-    } else if (admins && admins.length > 0) {
-      // Create notification for each admin
-      const adminNotifications = admins.map(admin => ({
-        user_id: admin.id,
-        user_type: "admin",
-        type: "payment",
-        title: "New Withdrawal Request",
-        message: `${driverName} requested to convert ${points} points to ₱${cashAmount.toFixed(2)} via ${selectedPayoutMethod.payment_type.toUpperCase()}`,
-        reference_id: withdrawal.id,
-        reference_type: "withdrawal",
-        data: {
-          driver_id: driverId,
-          driver_name: driverName,
-          points: points,
+      // Create withdrawal request
+      const { data: withdrawal, error: withdrawalError } = await supabase
+        .from("withdrawals")
+        .insert({
+          user_id: driverId,
+          user_type: "driver",
           amount: cashAmount,
           payment_method: selectedPayoutMethod.payment_type,
-          account_number: selectedPayoutMethod.account_number
-        },
-        priority: "high",  // High priority for withdrawals
-        created_at: new Date().toISOString()
-      }));
+          account_details: {
+            account_name: selectedPayoutMethod.account_name,
+            account_number: selectedPayoutMethod.account_number,
+            account_phone: selectedPayoutMethod.account_phone,
+            points_converted: points,
+            conversion_rate: POINTS_CONVERSION_RATE,
+            payment_method_id: selectedPayoutMethod.id
+          },
+          notes: withdrawNotes || `Converting ${points} points to cash`,
+          payment_method_id: selectedPayoutMethod.id,
+          requested_at: new Date().toISOString(),
+          status: "pending",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
 
-      const { error: adminNotifError } = await supabase
-        .from("notifications")
-        .insert(adminNotifications);
-
-      if (adminNotifError) {
-        console.log("Admin notifications error:", adminNotifError);
-      } else {
-        console.log(`✅ ${adminNotifications.length} admin notifications created`);
+      if (withdrawalError) {
+        console.log("Withdrawal insert error:", withdrawalError);
+        throw withdrawalError;
       }
-    }
 
-    Alert.alert(
-      "✅ Withdrawal Request Submitted",
-      `${points.toFixed(0)} points converted to ₱${cashAmount.toFixed(2)}\n\n` +
-      `Request ID: ${withdrawal.id.substring(0, 8)}...\n\n` +
-      `We have notified our admin team. You will receive a notification once processed.`
-    );
-    
-    setShowWithdrawModal(false);
-    setWithdrawPoints("");
-    setWithdrawNotes("");
-    setPointsToCash(0);
-    
-    // Refresh all data
-    await Promise.all([
-      loadPointsData(),
-      loadWithdrawalHistory(driverId)
-    ]);
-    
-  } catch (err) {
-    console.log("Withdrawal error:", err);
-    Alert.alert("Error", err.message || "Failed to process withdrawal. Please try again.");
-  }
-};
+      console.log("✅ Withdrawal created:", withdrawal.id);
+
+      // Deduct points from wallet
+      const { error: updateError } = await supabase
+        .from("driver_wallets")
+        .update({
+          points: wallet.points - points,
+          points_converted: (wallet.points_converted || 0) + points,
+          last_points_conversion: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq("driver_id", driverId);
+
+      if (updateError) {
+        console.log("Wallet update error:", updateError);
+        throw updateError;
+      }
+
+      console.log("✅ Points deducted from wallet");
+
+      // Log points conversion in driver_points_history
+      const { error: historyError } = await supabase
+        .from("driver_points_history")
+        .insert({
+          driver_id: driverId,
+          points: points,
+          type: "converted",
+          source: "conversion",
+          source_id: withdrawal.id,
+          description: `Converted ${points} points to ₱${cashAmount.toFixed(2)}`,
+          conversion_rate: POINTS_CONVERSION_RATE,
+          converted_amount: cashAmount,
+          created_at: new Date().toISOString()
+        });
+
+      if (historyError) {
+        console.log("Points history error:", historyError);
+      } else {
+        console.log("✅ Points history recorded");
+      }
+
+      // Insert into withdrawal_logs
+      const { error: logError } = await supabase
+        .from("withdrawal_logs")
+        .insert({
+          withdrawal_id: withdrawal.id,
+          action: "requested",
+          user_id: driverId,
+          user_type: "driver",
+          notes: `Points withdrawal request: ${points} points = ₱${cashAmount.toFixed(2)}`,
+          created_at: new Date().toISOString()
+        });
+
+      if (logError) {
+        console.log("❌ Withdrawal log error:", logError);
+      } else {
+        console.log("✅ Withdrawal log created");
+      }
+
+      // CREATE NOTIFICATION FOR DRIVER (Confirmation)
+      const { error: driverNotifError } = await supabase
+        .from("notifications")
+        .insert({
+          user_id: driverId,
+          user_type: "driver",
+          type: "payment",
+          title: "Withdrawal Request Submitted",
+          message: `Your request to convert ${points} points to ₱${cashAmount.toFixed(2)} has been submitted. We will notify you once processed.`,
+          reference_id: withdrawal.id,
+          reference_type: "withdrawal",
+          data: {
+            points: points,
+            amount: cashAmount,
+            status: "pending"
+          },
+          priority: "normal",
+          created_at: new Date().toISOString()
+        });
+
+      if (driverNotifError) {
+        console.log("Driver notification error:", driverNotifError);
+      } else {
+        console.log("✅ Driver notification created");
+      }
+
+      // CREATE NOTIFICATION FOR ADMINS
+      const { data: admins, error: adminsError } = await supabase
+        .from("admins")
+        .select("id")
+        .eq("is_active", true);
+
+      if (adminsError) {
+        console.log("Error fetching admins:", adminsError);
+      } else if (admins && admins.length > 0) {
+        const adminNotifications = admins.map(admin => ({
+          user_id: admin.id,
+          user_type: "admin",
+          type: "payment",
+          title: "New Withdrawal Request",
+          message: `${driverName} requested to convert ${points} points to ₱${cashAmount.toFixed(2)} via ${selectedPayoutMethod.payment_type.toUpperCase()}`,
+          reference_id: withdrawal.id,
+          reference_type: "withdrawal",
+          data: {
+            driver_id: driverId,
+            driver_name: driverName,
+            points: points,
+            amount: cashAmount,
+            payment_method: selectedPayoutMethod.payment_type,
+            account_number: selectedPayoutMethod.account_number
+          },
+          priority: "high",
+          created_at: new Date().toISOString()
+        }));
+
+        const { error: adminNotifError } = await supabase
+          .from("notifications")
+          .insert(adminNotifications);
+
+        if (adminNotifError) {
+          console.log("Admin notifications error:", adminNotifError);
+        } else {
+          console.log(`✅ ${adminNotifications.length} admin notifications created`);
+        }
+      }
+
+      Alert.alert(
+        "✅ Withdrawal Request Submitted",
+        `${points.toFixed(0)} points converted to ₱${cashAmount.toFixed(2)}\n\n` +
+        `Request ID: ${withdrawal.id.substring(0, 8)}...\n\n` +
+        `We have notified our admin team. You will receive a notification once processed.`
+      );
+      
+      setShowWithdrawModal(false);
+      setWithdrawPoints("");
+      setWithdrawNotes("");
+      setPointsToCash(0);
+      
+      // Refresh all data
+      await Promise.all([
+        loadPointsData(),
+        loadWithdrawalHistory(driverId)
+      ]);
+      
+    } catch (err) {
+      console.log("Withdrawal error:", err);
+      Alert.alert("Error", err.message || "Failed to process withdrawal. Please try again.");
+    } finally {
+      setProcessingWithdrawal(false);
+    }
+  };
 
   const formatDate = (dateString) => {
     if (!dateString) return "";
@@ -878,7 +1057,7 @@ const processPointsWithdrawal = async (points, cashAmount) => {
       <View style={{
         backgroundColor: "#183B5C",
         paddingTop: insets.top + 20,
-        paddingBottom: 30,
+        paddingBottom: 5,
         paddingHorizontal: 20,
         borderBottomLeftRadius: 30,
         borderBottomRightRadius: 30,
@@ -896,6 +1075,7 @@ const processPointsWithdrawal = async (points, cashAmount) => {
         backgroundColor: "#FFF",
         borderRadius: 24,
         padding: 20,
+        marginTop: 20,
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.1,
@@ -954,6 +1134,19 @@ const processPointsWithdrawal = async (points, cashAmount) => {
             <Text style={{ color: "#FFF", fontWeight: "600", marginLeft: 5 }}>Payout Methods</Text>
           </Pressable>
         </View>
+
+        {/* PIN Status Indicator */}
+        {!hasPin && (
+          <View style={{ marginTop: 12, padding: 10, backgroundColor: "#FEF3C7", borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Ionicons name="shield-outline" size={16} color="#F59E0B" />
+              <Text style={{ fontSize: 12, color: "#F59E0B", marginLeft: 5 }}>Withdrawal PIN not set</Text>
+            </View>
+            <Pressable onPress={() => setShowPinSetupModal(true)}>
+              <Text style={{ fontSize: 12, color: "#183B5C", fontWeight: "600" }}>Set up now →</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
 
       {/* Payout Methods Quick View */}
@@ -1110,10 +1303,192 @@ const processPointsWithdrawal = async (points, cashAmount) => {
           • ⭐ Points are earned from wallet payments (passengers paying with points){'\n'}
           • 💰 1 point = ₱0.10 when converted to cash{'\n'}
           • 📱 Converted points are sent to your GCash/PayMaya within 1-2 business days{'\n'}
-          • 🎯 Minimum conversion: {MIN_POINTS_WITHDRAWAL} points
+          • 🎯 Minimum conversion: {MIN_POINTS_WITHDRAWAL} points{'\n'}
+          • 🔒 Withdrawal PIN required for security
         </Text>
       </View>
       <View style={{ height: 30 }} />
+
+      {/* PIN Setup Modal */}
+      <Modal visible={showPinSetupModal} transparent animationType="slide">
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: "#FFF", borderRadius: 24, padding: 20, width: "90%", maxWidth: 350 }}>
+            <View style={{ alignItems: "center", marginBottom: 20 }}>
+              <Ionicons name="shield-checkmark" size={48} color="#183B5C" />
+              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333", marginTop: 10 }}>
+                {hasPin ? "Change Withdrawal PIN" : "Set Withdrawal PIN"}
+              </Text>
+              <Text style={{ fontSize: 14, color: "#666", textAlign: "center", marginTop: 5 }}>
+                {hasPin ? "Enter your new 4-digit PIN" : "Create a 4-digit PIN for withdrawals"}
+              </Text>
+            </View>
+
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderColor: pinError ? "#EF4444" : "#E5E7EB",
+                borderRadius: 12,
+                padding: 12,
+                fontSize: 24,
+                textAlign: "center",
+                letterSpacing: 8,
+                marginBottom: 16,
+              }}
+              placeholder="****"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              value={pinInput}
+              onChangeText={(text) => {
+                setPinInput(text);
+                setPinError("");
+              }}
+            />
+
+            {!hasPin && (
+              <>
+                <TextInput
+                  style={{
+                    borderWidth: 1,
+                    borderColor: pinError ? "#EF4444" : "#E5E7EB",
+                    borderRadius: 12,
+                    padding: 12,
+                    fontSize: 24,
+                    textAlign: "center",
+                    letterSpacing: 8,
+                    marginBottom: 16,
+                  }}
+                  placeholder="Confirm PIN"
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  secureTextEntry
+                  value={pinConfirm}
+                  onChangeText={(text) => {
+                    setPinConfirm(text);
+                    setPinError("");
+                  }}
+                />
+              </>
+            )}
+
+            {pinError ? (
+              <Text style={{ color: "#EF4444", fontSize: 12, marginBottom: 16, textAlign: "center" }}>
+                {pinError}
+              </Text>
+            ) : null}
+
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <Pressable
+                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: "#F3F4F6" }}
+                onPress={() => {
+                  setShowPinSetupModal(false);
+                  setPinInput("");
+                  setPinConfirm("");
+                  setPinError("");
+                }}
+              >
+                <Text style={{ textAlign: "center", color: "#666" }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: "#183B5C" }}
+                onPress={setupPin}
+                disabled={settingPin}
+              >
+                {settingPin ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={{ textAlign: "center", color: "#FFF", fontWeight: "600" }}>
+                    {hasPin ? "Update PIN" : "Set PIN"}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+
+            {hasPin && (
+              <Pressable
+                style={{ marginTop: 12, padding: 8 }}
+                onPress={() => {
+                  setShowPinSetupModal(false);
+                  setPinInput("");
+                  setPinError("");
+                }}
+              >
+                <Text style={{ textAlign: "center", color: "#9CA3AF", fontSize: 12 }}>Cancel</Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* PIN Verification Modal */}
+      <Modal visible={showPinModal} transparent animationType="slide">
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center", alignItems: "center" }}>
+          <View style={{ backgroundColor: "#FFF", borderRadius: 24, padding: 20, width: "90%", maxWidth: 350 }}>
+            <View style={{ alignItems: "center", marginBottom: 20 }}>
+              <Ionicons name="lock-closed" size={48} color="#183B5C" />
+              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333", marginTop: 10 }}>Verify PIN</Text>
+              <Text style={{ fontSize: 14, color: "#666", textAlign: "center", marginTop: 5 }}>
+                Enter your 4-digit withdrawal PIN to continue
+              </Text>
+            </View>
+
+            <TextInput
+              style={{
+                borderWidth: 1,
+                borderColor: "#E5E7EB",
+                borderRadius: 12,
+                padding: 12,
+                fontSize: 24,
+                textAlign: "center",
+                letterSpacing: 8,
+                marginBottom: 20,
+              }}
+              placeholder="****"
+              keyboardType="number-pad"
+              maxLength={4}
+              secureTextEntry
+              value={pinInput}
+              onChangeText={setPinInput}
+              autoFocus
+            />
+
+            <View style={{ flexDirection: "row", gap: 12 }}>
+              <Pressable
+                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: "#F3F4F6" }}
+                onPress={() => {
+                  setShowPinModal(false);
+                  setPinInput("");
+                  setWithdrawalPending(null);
+                }}
+              >
+                <Text style={{ textAlign: "center", color: "#666" }}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={{ flex: 1, padding: 12, borderRadius: 12, backgroundColor: "#F59E0B" }}
+                onPress={handleWithdrawWithPin}
+                disabled={verifyingPin}
+              >
+                {verifyingPin ? (
+                  <ActivityIndicator size="small" color="#FFF" />
+                ) : (
+                  <Text style={{ textAlign: "center", color: "#FFF", fontWeight: "600" }}>Confirm</Text>
+                )}
+              </Pressable>
+            </View>
+
+            <Pressable
+              style={{ marginTop: 12, padding: 8 }}
+              onPress={() => {
+                setShowPinModal(false);
+                setShowPinSetupModal(true);
+                setPinInput("");
+              }}
+            >
+              <Text style={{ textAlign: "center", color: "#183B5C", fontSize: 12 }}>Forgot PIN? Reset it here</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
 
       {/* Payout Methods Modal */}
       <Modal visible={showPayoutMethodsModal} transparent animationType="slide">
@@ -1175,15 +1550,25 @@ const processPointsWithdrawal = async (points, cashAmount) => {
                             <Pressable 
                               style={{ flex: 1, padding: 8, backgroundColor: "#F3F4F6", borderRadius: 8, alignItems: "center" }}
                               onPress={() => handleSetDefaultPayoutMethod(method.id)}
+                              disabled={settingDefault}
                             >
-                              <Text style={{ fontSize: 12, color: "#183B5C" }}>Set Default</Text>
+                              {settingDefault ? (
+                                <ActivityIndicator size="small" color="#183B5C" />
+                              ) : (
+                                <Text style={{ fontSize: 12, color: "#183B5C" }}>Set Default</Text>
+                              )}
                             </Pressable>
                           )}
                           <Pressable 
                             style={{ flex: 1, padding: 8, backgroundColor: "#FEE2E2", borderRadius: 8, alignItems: "center" }}
                             onPress={() => handleDeletePayoutMethod(method.id)}
+                            disabled={deletingPayout}
                           >
-                            <Text style={{ fontSize: 12, color: "#EF4444" }}>Remove</Text>
+                            {deletingPayout ? (
+                              <ActivityIndicator size="small" color="#EF4444" />
+                            ) : (
+                              <Text style={{ fontSize: 12, color: "#EF4444" }}>Remove</Text>
+                            )}
                           </Pressable>
                         </View>
                       </View>
@@ -1275,10 +1660,15 @@ const processPointsWithdrawal = async (points, cashAmount) => {
                     marginTop: 10,
                   }}
                   onPress={handleAddPayoutMethod}
+                  disabled={addingPayout}
                 >
-                  <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
-                    Add Payout Method
-                  </Text>
+                  {addingPayout ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
+                      Add Payout Method
+                    </Text>
+                  )}
                 </Pressable>
               </ScrollView>
             </View>
@@ -1401,17 +1791,21 @@ const processPointsWithdrawal = async (points, cashAmount) => {
                 {/* Withdraw Button */}
                 <Pressable
                   style={{
-                    backgroundColor: (!selectedPayoutMethod || !withdrawPoints || parseFloat(withdrawPoints) < MIN_POINTS_WITHDRAWAL || parseFloat(withdrawPoints) > pointsData.total_points) ? "#9CA3AF" : "#F59E0B",
+                    backgroundColor: (!selectedPayoutMethod || !withdrawPoints || parseFloat(withdrawPoints) < MIN_POINTS_WITHDRAWAL || parseFloat(withdrawPoints) > pointsData.total_points || processingWithdrawal) ? "#9CA3AF" : "#F59E0B",
                     padding: 16,
                     borderRadius: 12,
                     alignItems: "center",
                   }}
-                  onPress={handleWithdraw}
-                  disabled={!selectedPayoutMethod || !withdrawPoints || parseFloat(withdrawPoints) < MIN_POINTS_WITHDRAWAL || parseFloat(withdrawPoints) > pointsData.total_points}
+                  onPress={initiateWithdrawal}
+                  disabled={!selectedPayoutMethod || !withdrawPoints || parseFloat(withdrawPoints) < MIN_POINTS_WITHDRAWAL || parseFloat(withdrawPoints) > pointsData.total_points || processingWithdrawal}
                 >
-                  <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
-                    Convert {withdrawPoints || 0} points to ₱{pointsToCash.toFixed(2)}
-                  </Text>
+                  {processingWithdrawal ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
+                      Convert {withdrawPoints || 0} points to ₱{pointsToCash.toFixed(2)}
+                    </Text>
+                  )}
                 </Pressable>
 
                 <Text style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center", marginTop: 12 }}>
