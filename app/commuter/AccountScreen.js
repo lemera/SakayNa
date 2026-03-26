@@ -641,11 +641,11 @@ export default function AccountScreen({ navigation }) {
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
 
-        <Pressable style={styles.menuItem} onPress={() => navigation.navigate("RideHistory")}>
+        {/* <Pressable style={styles.menuItem} onPress={() => navigation.navigate("RideHistory")}>
           <Ionicons name="time-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Ride History</Text>
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+        </Pressable> */}
 
         <Pressable style={[styles.menuItem, styles.lastMenuItem]} onPress={() => Linking.openURL("https://sakay.ph/help")}>
           <Ionicons name="help-circle-outline" size={22} color="#183B5C" style={styles.menuIcon} />

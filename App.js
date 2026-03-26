@@ -30,7 +30,10 @@ import HelpCenter from './app/commuter/HelpCenter.js';
 import RateDriver from './app/commuter/RateDriver.js';
 import RateRide from './app/commuter/RateRide';
 import RideHistoryScreen from './app/commuter/RideHistoryScreen.js';
-import ReferralsScreen from './app/commuter/ReferralsScreen.js';
+import ReferralScreen from './app/commuter/ReferralScreen.js';
+import FloatingMenu from './app/components/FloatingMenu.js';
+import MenuButton from './app/components/MenuButton.js';
+import FoodStoreScreen from './app/commuter/FoodStoreScreen';
 
 // Driver Flow
 import DriverLoginScreen from './app/Driver/DriverLogin.js';
@@ -96,7 +99,10 @@ export default function App() {
           <Stack.Screen name="RateDriver" component={RateDriver} />
           <Stack.Screen name="RateRide" component={RateRide} />
           <Stack.Screen name="RideHistoryScreen" component={RideHistoryScreen} />
-          <Stack.Screen name="ReferralsScreen" component={ReferralsScreen} />
+          <Stack.Screen name="ReferralScreen" component={ReferralScreen} />
+          <Stack.Screen name="FloatingMenu" component={FloatingMenu} />
+          <Stack.Screen name="MenuButton" component={MenuButton} />
+          <Stack.Screen name="FoodStoreScreen" component={FoodStoreScreen} />
 
           {/* Driver Flow */}
           <Stack.Screen name="DriverLoginScreen" component={DriverLoginScreen} />

@@ -14,6 +14,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-clipboard/clipboard": "^1.16.3",
     "@react-native-community/datetimepicker": "8.4.4",
+    "@react-native-community/slider": "5.0.1",
     "@react-native-picker/picker": "2.11.1",
     "@react-navigation/bottom-tabs": "^6.5.12",
     "@react-navigation/native": "^6.1.6",
@@ -27,6 +28,7 @@
     "expo-barcode-scanner": "^13.0.1",
     "expo-blur": "^15.0.8",
     "expo-camera": "~17.0.10",
+    "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.13",
     "expo-haptics": "~15.0.8",
     "expo-image-picker": "~17.0.10",
@@ -54,8 +56,7 @@
     "react-native-url-polyfill": "^3.0.0",
     "react-native-vector-icons": "^10.3.0",
     "react-native-webview": "13.15.0",
-    "twilio": "^5.12.2",
-    "@react-native-community/slider": "5.0.1"
+    "twilio": "^5.12.2"
   },
   "private": true,
   "devDependencies": {

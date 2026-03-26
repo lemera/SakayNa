@@ -1050,6 +1050,20 @@ export default function CommuterWalletScreen() {
               <Text style={styles.headerTitle}>My Points</Text>
             </View>
             <View style={styles.headerActions}>
+              {/* NEW: Points Rewards Button */}
+              <Pressable 
+                style={styles.headerButton}
+                onPress={() => navigation.navigate("PointsRewards")}
+              >
+                <LinearGradient
+                  colors={['#F59E0B', '#FBBF24']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.headerButtonGradient}
+                >
+                  <Ionicons name="gift" size={20} color="#FFF" />
+                </LinearGradient>
+              </Pressable>
               <Pressable 
                 style={styles.headerButton}
                 onPress={() => navigation.navigate("ReferralsScreen")}
@@ -1982,6 +1996,7 @@ export default function CommuterWalletScreen() {
     </>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {

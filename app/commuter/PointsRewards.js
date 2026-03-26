@@ -23,19 +23,19 @@ import { BlurView } from "expo-blur";
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = (width - 48) / 2;
 
-// Map of setting keys to their actual keys in your database
+// System setting keys based on your database schema
 const SETTING_KEYS = {
-  POINTS_PER_RIDE: 'points_per_peso', // Based on your data: 10 points per ₱1
-  POINTS_PER_REFERRAL: 'referral_points', // 100 points per referral
-  POINTS_VALUE_RATIO: 'points_to_peso_conversion', // 0.1 = 10 points = ₱1
-  POINTS_EXPIRY_DAYS: 'points_expiry_days', // 365 days
-  MIN_POINTS_REDEEM: 'min_points_redeem', // 100 minimum
-  WELCOME_POINTS: 'welcome_points', // 50 points for new users
-  POINTS_EARNING_RATE_CASH: 'points_earning_rate_cash', // 0.05 (5 points per ₱100)
-  POINTS_EARNING_RATE_WALLET: 'points_earning_rate_wallet', // 0.5 (10 points per ₱100)
-  MIN_FARE_FOR_POINTS: 'min_fare_for_points', // ₱15 minimum fare
-  POINTS_ROUNDING: 'points_rounding', // 'floor', 'ceil', 'round'
-  POINTS_EARNING_ENABLED: 'points_earning_enabled', // true/false
+  POINTS_PER_RIDE: 'points_per_peso',
+  POINTS_PER_REFERRAL: 'referral_points',
+  POINTS_VALUE_RATIO: 'points_to_peso_conversion',
+  POINTS_EXPIRY_DAYS: 'points_expiry_days',
+  MIN_POINTS_REDEEM: 'min_points_redeem',
+  WELCOME_POINTS: 'welcome_points',
+  POINTS_EARNING_RATE_CASH: 'points_earning_rate_cash',
+  POINTS_EARNING_RATE_WALLET: 'points_earning_rate_wallet',
+  MIN_FARE_FOR_POINTS: 'min_fare_for_points',
+  POINTS_ROUNDING: 'points_rounding',
+  POINTS_EARNING_ENABLED: 'points_earning_enabled',
 };
 
 export default function PointsRewardsScreen() {
@@ -50,8 +50,6 @@ export default function PointsRewardsScreen() {
   const [pointsHistory, setPointsHistory] = useState([]);
   const [promos, setPromos] = useState([]);
   const [activeTab, setActiveTab] = useState("rewards");
-  
-  // System settings state
   const [settings, setSettings] = useState({});
   const [earningMethods, setEarningMethods] = useState([]);
 
@@ -167,7 +165,6 @@ export default function PointsRewardsScreen() {
 
   const fetchSystemSettings = useCallback(async () => {
     try {
-      // Fetch all points-related settings
       const pointsKeys = Object.values(SETTING_KEYS);
       
       const { data, error } = await supabase
@@ -178,7 +175,6 @@ export default function PointsRewardsScreen() {
 
       if (error) throw error;
 
-      // Parse settings into key-value object
       const settingsMap = {};
       data?.forEach(item => {
         settingsMap[item.key] = parseSettingValue(item);
@@ -189,9 +185,7 @@ export default function PointsRewardsScreen() {
       // Build earning methods from settings
       const methods = [];
 
-      // Check if points earning is enabled
       if (settingsMap[SETTING_KEYS.POINTS_EARNING_ENABLED] !== false) {
-        // Points per ride (from points_per_peso)
         const pointsPerPeso = settingsMap[SETTING_KEYS.POINTS_PER_RIDE] || 10;
         const minFare = settingsMap[SETTING_KEYS.MIN_FARE_FOR_POINTS] || 15;
         
@@ -201,7 +195,6 @@ export default function PointsRewardsScreen() {
           color: "#3B82F6" 
         });
 
-        // Referral points
         const referralPoints = settingsMap[SETTING_KEYS.POINTS_PER_REFERRAL] || 100;
         methods.push({ 
           icon: "people", 
@@ -209,7 +202,6 @@ export default function PointsRewardsScreen() {
           color: "#8B5CF6" 
         });
 
-        // Welcome points for new users
         const welcomePoints = settingsMap[SETTING_KEYS.WELCOME_POINTS] || 50;
         methods.push({ 
           icon: "gift", 
@@ -217,7 +209,6 @@ export default function PointsRewardsScreen() {
           color: "#10B981" 
         });
 
-        // Different rates for payment methods
         const cashRate = settingsMap[SETTING_KEYS.POINTS_EARNING_RATE_CASH] || 0.05;
         const walletRate = settingsMap[SETTING_KEYS.POINTS_EARNING_RATE_WALLET] || 0.5;
         
@@ -238,7 +229,6 @@ export default function PointsRewardsScreen() {
 
     } catch (error) {
       console.error("Error fetching system settings:", error);
-      // Set default earning methods if fetch fails
       setEarningMethods([
         { icon: "car", text: "Earn 10 points per ₱1 spent on rides", color: "#3B82F6" },
         { icon: "people", text: "100 points per referral", color: "#8B5CF6" },
@@ -252,7 +242,7 @@ export default function PointsRewardsScreen() {
     try {
       const { data, error } = await supabase
         .from("commuter_wallets")
-        .select("points, balance, updated_at")
+        .select("points, created_at, updated_at")
         .eq("commuter_id", id)
         .maybeSingle();
 
@@ -261,7 +251,7 @@ export default function PointsRewardsScreen() {
       if (!data) {
         const { data: newWallet, error: createError } = await supabase
           .from("commuter_wallets")
-          .insert([{ commuter_id: id, points: 0, balance: 0 }])
+          .insert([{ commuter_id: id, points: 0 }])
           .select()
           .single();
 
@@ -294,7 +284,6 @@ export default function PointsRewardsScreen() {
 
       if (error) throw error;
 
-      // Enhance with booking details if available
       const enhancedData = await Promise.all(
         (data || []).map(async (item) => {
           if (item.source === "trip" && item.source_id) {
@@ -368,6 +357,7 @@ export default function PointsRewardsScreen() {
       setPointsHistory(historyData);
       setPromos(promosData);
     } catch (err) {
+      console.error("Error loading points data:", err);
       Alert.alert(
         "Oops!",
         "We couldn't load your points data. Please try again.",
@@ -405,7 +395,7 @@ export default function PointsRewardsScreen() {
       const date = new Date(item.created_at).toDateString();
       if (!groups[date]) {
         groups[date] = {
-          title: formatDateGroup(date),
+          title: formatDateGroup(item.created_at),
           data: []
         };
       }
@@ -468,7 +458,7 @@ export default function PointsRewardsScreen() {
             try {
               setLoading(true);
               
-              // Update wallet
+              // Update wallet points
               const { error: walletError } = await supabase
                 .from("commuter_wallets")
                 .update({ 
@@ -479,7 +469,7 @@ export default function PointsRewardsScreen() {
 
               if (walletError) throw walletError;
 
-              // Add to history
+              // Add to points history
               const { error: historyError } = await supabase
                 .from("commuter_points_history")
                 .insert([{
@@ -494,12 +484,13 @@ export default function PointsRewardsScreen() {
 
               if (historyError) throw historyError;
 
-              // Record promo usage
+              // Record promo usage in commuter_promos table
               const { error: promoError } = await supabase
                 .from("commuter_promos")
                 .insert([{
                   commuter_id: commuterId,
                   promo_id: promo.id,
+                  used_at: new Date().toISOString(),
                   discount_amount: promo.discount_value
                 }]);
 
@@ -513,6 +504,7 @@ export default function PointsRewardsScreen() {
                 [{ text: "Awesome!" }]
               );
             } catch (error) {
+              console.error("Redemption error:", error);
               Alert.alert(
                 "Redemption Failed",
                 "We couldn't process your redemption. Please try again.",
@@ -566,7 +558,7 @@ export default function PointsRewardsScreen() {
             <Text style={styles.pointsSubtext}>{pointsValue}</Text>
             <View style={styles.pointsTrend}>
               <Ionicons name="trending-up" size={16} color="#4ADE80" />
-              <Text style={styles.trendText}>+{stats.earned} this month</Text>
+              <Text style={styles.trendText}>+{stats.earned} total earned</Text>
             </View>
           </View>
         </BlurView>
@@ -610,7 +602,6 @@ export default function PointsRewardsScreen() {
     const minPointsRedeem = settings[SETTING_KEYS.MIN_POINTS_REDEEM] || 100;
     const meetsMinRequirement = (promo.points_required || 0) >= minPointsRedeem;
     
-    // Generate gradient based on discount type
     const gradientColors = promo.discount_type === 'percentage' 
       ? ["#8B5CF6", "#7C3AED"] 
       : promo.discount_type === 'fixed'
@@ -649,7 +640,7 @@ export default function PointsRewardsScreen() {
             <Text style={styles.pointsRequiredText}>{promo.points_required || 0}</Text>
           </View>
           
-          {hasEnoughPoints ? (
+          {hasEnoughPoints && meetsMinRequirement ? (
             <View style={styles.redeemBadge}>
               <Text style={styles.redeemBadgeText}>Redeem</Text>
             </View>
@@ -709,7 +700,7 @@ export default function PointsRewardsScreen() {
       </Text>
       <Pressable 
         style={styles.emptyStateButton}
-        onPress={() => navigation.navigate("BookRide")}
+        onPress={() => navigation.navigate("Home")}
       >
         <Text style={styles.emptyStateButtonText}>Book a Ride</Text>
       </Pressable>
@@ -765,36 +756,34 @@ export default function PointsRewardsScreen() {
 
   const renderHistoryTab = () => (
     pointsHistory.length === 0 ? renderEmptyHistory() : (
-      <>
-        <SectionList
-          sections={groupedHistory}
-          keyExtractor={(item) => item.id}
-          renderItem={renderHistoryItem}
-          renderSectionHeader={renderSectionHeader}
-          stickySectionHeadersEnabled={false}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.historyList}
-          ListFooterComponent={
-            <View style={styles.historySummary}>
-              <Text style={styles.summaryTitle}>Summary</Text>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total Earned</Text>
-                <Text style={styles.summaryEarned}>+{stats.earned} pts</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Total Redeemed</Text>
-                <Text style={styles.summaryRedeemed}>-{stats.redeemed} pts</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Current Balance</Text>
-                <Text style={styles.summaryBalance}>{wallet?.points || 0} pts</Text>
-              </View>
+      <SectionList
+        sections={groupedHistory}
+        keyExtractor={(item) => item.id}
+        renderItem={renderHistoryItem}
+        renderSectionHeader={renderSectionHeader}
+        stickySectionHeadersEnabled={false}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.historyList}
+        ListFooterComponent={
+          <View style={styles.historySummary}>
+            <Text style={styles.summaryTitle}>Summary</Text>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Total Earned</Text>
+              <Text style={styles.summaryEarned}>+{stats.earned} pts</Text>
             </View>
-          }
-          scrollEnabled={false}
-        />
-      </>
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Total Redeemed</Text>
+              <Text style={styles.summaryRedeemed}>-{stats.redeemed} pts</Text>
+            </View>
+            <View style={styles.summaryDivider} />
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Current Balance</Text>
+              <Text style={styles.summaryBalance}>{wallet?.points || 0} pts</Text>
+            </View>
+          </View>
+        }
+        scrollEnabled={false}
+      />
     )
   );
 

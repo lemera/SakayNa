@@ -1,9 +1,9 @@
-// HomePage.js - Main navigation for commuter with custom TrackRide button
+// HomePage.js - Main navigation for commuter with custom TrackRide button and Floating Menu
 import React, { useState, useEffect } from "react";
 import { View, Image, Pressable, StyleSheet, Text } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -11,8 +11,13 @@ import HomeScreen from "./HomeScreen";
 import WalletScreen from "./WalletScreen";
 import AccountScreen from "./AccountScreen";
 import TrackRideScreen from "./TrackRideScreen";
-import BookingDetails from "./BookingDetails";
 import InboxScreen from "./InboxScreen";
+import BookingDetails from "./BookingDetails";
+import PointsRewardsScreen from "./PointsRewards";
+import ReferralScreen from "./ReferralScreen";
+import RideHistoryScreen from "./RideHistoryScreen";
+import FloatingMenu from "../components/FloatingMenu";
+import MenuButton from "../components/MenuButton";
 import navStyles from "../styles/NavStyles";
 
 const Tab = createBottomTabNavigator();
@@ -43,8 +48,11 @@ const TrackRideButton = ({ accessibilityState }) => {
 
 export default function HomePage() {
   const navigation = useNavigation();
+  const route = useRoute();
   const [unreadCount, setUnreadCount] = useState(0);
   const [userId, setUserId] = useState(null);
+  const [menuVisible, setMenuVisible] = useState(false);
+  const [currentScreen, setCurrentScreen] = useState("Home");
 
   // Fetch user ID
   useEffect(() => {
@@ -54,6 +62,18 @@ export default function HomePage() {
     };
     getUserId();
   }, []);
+
+  // Track current screen
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('state', () => {
+      const routes = navigation.getState()?.routes;
+      if (routes && routes.length > 0) {
+        const currentRoute = routes[routes.length - 1];
+        setCurrentScreen(currentRoute?.name || "Home");
+      }
+    });
+    return unsubscribe;
+  }, [navigation]);
 
   // Fetch unread notifications count
   const fetchUnreadCount = async () => {
@@ -129,81 +149,94 @@ export default function HomePage() {
   }, [userId]);
 
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerStyle: { backgroundColor: "#fff", elevation: 0, shadowOpacity: 0.1 },
-        headerTitleStyle: { fontWeight: "bold", fontSize: 20, color: "#183B5C" },
-        headerTitleAlign: "center",
-        headerLeft: () => (
-          <View style={navStyles.headerContainer}>
-            <Image source={require("../../assets/logo-sakayna.png")} style={navStyles.logo} />
-          </View>
-        ),
-        headerRight: () => (
-          <Pressable onPress={() => navigation.navigate("Support")} style={{ marginRight: 15 }}>
-            <Ionicons name="help-circle-outline" size={28} color="#183B5C" />
-          </Pressable>
-        ),
-        tabBarActiveTintColor: "#E97A3E",
-        tabBarInactiveTintColor: "#183B5C",
-        tabBarStyle: navStyles.tabBar,
-        sceneContainerStyle: { backgroundColor: "transparent" },
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-          switch (route.name) {
-            case "Home":
-              iconName = focused ? "home" : "home-outline";
-              break;
-            case "Wallet":
-              iconName = focused ? "wallet" : "wallet-outline";
-              break;
-            case "Inbox":
-              iconName = focused ? "chatbubbles" : "chatbubbles-outline";
-              break;
-            case "Account":
-              iconName = focused ? "person" : "person-outline";
-              break;
-          }
-          
-          // Handle Inbox with notification badge
-          if (route.name === "Inbox") {
-            return (
-              <View style={{ position: 'relative', width: size, height: size }}>
-                <Ionicons name={iconName} size={size} color={color} />
-                {unreadCount > 0 && (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>
-                      {unreadCount > 9 ? '9+' : unreadCount}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            );
-          }
-          
-          // For all other tabs, just return the icon
-          return route.name !== "TrackRide" ? <Ionicons name={iconName} size={size} color={color} /> : null;
-        },
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Wallet" component={WalletScreen} />
-
-      {/* TrackRide button in center */}
-      <Tab.Screen
-        name="TrackRide"
-        component={TrackRideScreen}
-        options={{
-          tabBarLabel: "",
-          tabBarButton: (props) => <TrackRideButton {...props} />,
-          // Always show bottom tab bar
+    <>
+      <Tab.Navigator
+        screenOptions={({ route }) => ({
+          headerStyle: { backgroundColor: "#fff", elevation: 0, shadowOpacity: 0.1},
+          headerTitleStyle: { fontWeight: "bold", fontSize: 20, color: "#183B5C",  },
+          headerTitleAlign: "center",
+          headerLeft: () => (
+            <View style={navStyles.headerContainer}>
+              <Image source={require("../../assets/logo-sakayna.png")} style={navStyles.logo} />
+            </View>
+          ),
+          headerRight: () => (
+            <Pressable onPress={() => navigation.navigate("Support")} style={{ marginRight: 15 }}>
+              <Ionicons name="help-circle-outline" size={28} color="#183B5C" />
+            </Pressable>
+          ),
+          tabBarActiveTintColor: "#E97A3E",
+          tabBarInactiveTintColor: "#183B5C",
           tabBarStyle: navStyles.tabBar,
-        }}
-      />
+          sceneContainerStyle: { backgroundColor: "transparent" },
+          tabBarIcon: ({ focused, color, size }) => {
+            let iconName;
+            switch (route.name) {
+              case "Home":
+                iconName = focused ? "home" : "home-outline";
+                break;
+              case "Wallet":
+                iconName = focused ? "wallet" : "wallet-outline";
+                break;
+              case "Inbox":
+                iconName = focused ? "chatbubbles" : "chatbubbles-outline";
+                break;
+              case "Account":
+                iconName = focused ? "person" : "person-outline";
+                break;
+            }
+            
+            // Handle Inbox with notification badge
+            if (route.name === "Inbox") {
+              return (
+                <View style={{ position: 'relative', width: size, height: size }}>
+                  <Ionicons name={iconName} size={size} color={color} />
+                  {unreadCount > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              );
+            }
+            
+            // For all other tabs, just return the icon
+            return route.name !== "TrackRide" ? <Ionicons name={iconName} size={size} color={color} /> : null;
+          },
+        })}
+      >
+        <Tab.Screen name="Home" component={HomeScreen} />
+        <Tab.Screen name="Wallet" component={WalletScreen} />
 
-      <Tab.Screen name="Inbox" component={InboxScreen} />
-      <Tab.Screen name="Account" component={AccountScreen} />
-    </Tab.Navigator>
+        {/* TrackRide button in center */}
+        <Tab.Screen
+          name="TrackRide"
+          component={TrackRideScreen}
+          options={{
+            tabBarLabel: "",
+            tabBarButton: (props) => <TrackRideButton {...props} />,
+            tabBarStyle: navStyles.tabBar,
+          }}
+        />
+
+        <Tab.Screen name="Inbox" component={InboxScreen} />
+        <Tab.Screen name="Account" component={AccountScreen} />
+      </Tab.Navigator>
+
+      {/* Floating Menu Button - visible only on main screens */}
+      {!menuVisible && (
+        <MenuButton onPress={() => setMenuVisible(true)} />
+      )}
+
+      {/* Floating Menu */}
+      <FloatingMenu
+        visible={menuVisible}
+        onClose={() => setMenuVisible(false)}
+        currentScreen={currentScreen}
+      />
+    </>
   );
 }
 

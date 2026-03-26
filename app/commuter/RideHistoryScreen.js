@@ -9,7 +9,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
-  Image, // Add this missing import
+  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,7 +26,6 @@ export default function RideHistoryScreen() {
   const [rides, setRides] = useState([]);
   const [stats, setStats] = useState({
     totalRides: 0,
-    totalSpent: 0,
     totalPoints: 0,
   });
 
@@ -41,7 +40,6 @@ export default function RideHistoryScreen() {
       const userId = await AsyncStorage.getItem("user_id");
       if (!userId) return;
 
-      // Fetch all completed rides
       const { data: ridesData, error: ridesError } = await supabase
         .from("bookings")
         .select(`
@@ -72,9 +70,7 @@ export default function RideHistoryScreen() {
 
       if (ridesError) throw ridesError;
 
-      // Get points earned for each ride
       const enhancedRides = await Promise.all((ridesData || []).map(async (ride) => {
-        // Get points earned for this ride
         const { data: pointsData } = await supabase
           .from("commuter_points_history")
           .select("points")
@@ -82,7 +78,6 @@ export default function RideHistoryScreen() {
           .eq("type", "earned")
           .maybeSingle();
 
-        // Get rating if exists 
         const { data: ratingData } = await supabase
           .from("driver_reviews")
           .select("rating, comment")
@@ -96,14 +91,11 @@ export default function RideHistoryScreen() {
         };
       }));
 
-      // Calculate stats
       const completedRides = enhancedRides.filter(r => r.status === "completed");
-      const totalSpent = completedRides.reduce((sum, ride) => sum + (ride.fare || 0), 0);
       const totalPoints = completedRides.reduce((sum, ride) => sum + (ride.points_earned || 0), 0);
 
       setStats({
         totalRides: completedRides.length,
-        totalSpent,
         totalPoints,
       });
 
@@ -160,7 +152,6 @@ export default function RideHistoryScreen() {
       style={styles.rideCard}
       onPress={() => navigation.navigate("BookingDetails", { id: item.id })}
     >
-      {/* Header with Date and Status */}
       <View style={styles.rideHeader}>
         <View style={styles.dateContainer}>
           <Ionicons name="calendar-outline" size={14} color="#666" />
@@ -174,14 +165,13 @@ export default function RideHistoryScreen() {
         </View>
       </View>
 
-      {/* Locations */}
       <View style={styles.locationsContainer}>
         <View style={styles.locationRow}>
           <View style={styles.locationDot}>
             <View style={[styles.dot, { backgroundColor: "#10B981" }]} />
           </View>
           <Text style={styles.locationText} numberOfLines={1}>
-            {item.pickup_location}
+            {item.pickup_location || ""}
           </Text>
         </View>
         
@@ -192,12 +182,11 @@ export default function RideHistoryScreen() {
             <View style={[styles.dot, { backgroundColor: "#EF4444" }]} />
           </View>
           <Text style={styles.locationText} numberOfLines={1}>
-            {item.dropoff_location}
+            {item.dropoff_location || ""}
           </Text>
         </View>
       </View>
 
-      {/* Driver Info (if available) */}
       {item.driver && (
         <View style={styles.driverContainer}>
           <View style={styles.driverAvatar}>
@@ -209,7 +198,7 @@ export default function RideHistoryScreen() {
           </View>
           <View style={styles.driverInfo}>
             <Text style={styles.driverName}>
-              {item.driver.first_name} {item.driver.last_name}
+              {`${item.driver.first_name || ""} ${item.driver.last_name || ""}`}
             </Text>
             {item.driver_rating > 0 && (
               <View style={styles.ratingContainer}>
@@ -221,39 +210,35 @@ export default function RideHistoryScreen() {
         </View>
       )}
 
-      {/* Ride Details Footer */}
       <View style={styles.rideFooter}>
         <View style={styles.rideStats}>
-          {item.distance_km && (
+          {item.distance_km ? (
             <View style={styles.statItem}>
               <Ionicons name="map-outline" size={14} color="#666" />
-              <Text style={styles.statText}>{item.distance_km} km</Text>
+              <Text style={styles.statText}>{`${item.distance_km} km`}</Text>
             </View>
-          )}
-          {item.duration_minutes && (
+          ) : null}
+          {item.duration_minutes ? (
             <View style={styles.statItem}>
               <Ionicons name="time-outline" size={14} color="#666" />
-              <Text style={styles.statText}>{item.duration_minutes} min</Text>
+              <Text style={styles.statText}>{`${item.duration_minutes} min`}</Text>
             </View>
-          )}
+          ) : null}
         </View>
 
         <View style={styles.amountContainer}>
-          {/* Fare */}
           <View style={styles.fareContainer}>
             <Text style={styles.fareLabel}>Fare</Text>
             <Text style={styles.fareAmount}>{formatCurrency(item.fare)}</Text>
           </View>
 
-          {/* Points Earned (if completed) */}
           {item.status === "completed" && item.points_earned > 0 && (
             <View style={styles.pointsContainer}>
               <Ionicons name="star" size={14} color="#F59E0B" />
-              <Text style={styles.pointsText}>+{item.points_earned} pts</Text>
+              <Text style={styles.pointsText}>{`+${item.points_earned} pts`}</Text>
             </View>
           )}
 
-          {/* Payment Method */}
           <View style={[
             styles.paymentBadge,
             item.payment_type === 'wallet' ? styles.walletBadge : styles.cashBadge
@@ -272,7 +257,6 @@ export default function RideHistoryScreen() {
           </View>
         </View>
 
-        {/* Rating Reminder (if not rated) */}
         {item.status === "completed" && !item.commuter_rating && (
           <View style={styles.rateReminder}>
             <Ionicons name="star-outline" size={16} color="#FFB37A" />
@@ -309,7 +293,6 @@ export default function RideHistoryScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#183B5C" />
@@ -318,25 +301,19 @@ export default function RideHistoryScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Stats Cards */}
       {stats.totalRides > 0 && (
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
-            <Text style={styles.statCardValue}>{stats.totalRides}</Text>
+            <Text style={styles.statCardValue}>{String(stats.totalRides)}</Text>
             <Text style={styles.statCardLabel}>Total Rides</Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statCardValue}>{formatCurrency(stats.totalSpent)}</Text>
-            <Text style={styles.statCardLabel}>Total Spent</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statCardValue}>{stats.totalPoints}</Text>
+            <Text style={styles.statCardValue}>{String(stats.totalPoints)}</Text>
             <Text style={styles.statCardLabel}>Points Earned</Text>
           </View>
         </View>
       )}
 
-      {/* Rides List */}
       <FlatList
         data={rides}
         renderItem={renderRideItem}
