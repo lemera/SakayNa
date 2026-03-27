@@ -12,6 +12,7 @@ import {
   StatusBar,
   Alert,
   ScrollView,
+  SafeAreaView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
@@ -19,10 +20,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { BlurView } from "expo-blur";
 import FoodStoreScreen from "../commuter/FoodStoreScreen";
+import TopRatedDriversScreen from "../commuter/TopRatedDrivers";
 
 const { width, height } = Dimensions.get("window");
 
-// Menu categories with items - Merged Communication and Account categories
+// Menu categories with items - Updated with Top Rated Drivers
 const MENU_CATEGORIES = [
   {
     id: "main",
@@ -89,6 +91,33 @@ const MENU_CATEGORIES = [
         screen: "RideHistoryScreen",
         color: "#3B82F6",
         gradient: ["#3B82F6", "#60A5FA"],
+      },
+    ],
+  },
+  {
+    id: "premium",
+    title: "PREMIUM DRIVERS",
+    icon: "ribbon-outline",
+    items: [
+      {
+        id: "topRated",
+        name: "Top Rated Drivers",
+        icon: "star-outline",
+        activeIcon: "star",
+        screen: "TopRatedDrivers",
+        color: "#F59E0B",
+        gradient: ["#F59E0B", "#FBBF24"],
+        description: "Best rated drivers 4+ stars",
+      },
+      {
+        id: "nearbyPremium",
+        name: "Nearby Premium",
+        icon: "location-outline",
+        activeIcon: "location",
+        screen: "NearbyPremiumDrivers",
+        color: "#10B981",
+        gradient: ["#10B981", "#34D399"],
+        comingSoon: true,
       },
     ],
   },
@@ -160,6 +189,7 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
   const navigation = useNavigation();
   const [selectedItem, setSelectedItem] = useState(null);
   const [isClosing, setIsClosing] = useState(false);
+  const scrollViewRef = useRef(null);
   
   // Animation values
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -169,6 +199,11 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
   useEffect(() => {
     if (visible && !isClosing) {
+      // Reset scroll position when menu opens
+      if (scrollViewRef.current) {
+        scrollViewRef.current.scrollTo({ y: 0, animated: false });
+      }
+      
       // Animate in
       setIsClosing(false);
       Animated.parallel([
@@ -266,20 +301,41 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
   const activeItemId = getCurrentActiveItem();
 
   const renderCategory = (category, categoryIndex) => {
+    const isPremium = category.id === "premium";
+    
     return (
       <View key={category.id} style={styles.categoryContainer}>
         {/* Category Header */}
         <View style={styles.categoryHeader}>
-          <View style={styles.categoryIconContainer}>
-            <Ionicons name={category.icon} size={18} color="#FF6B4A" />
-          </View>
-          <Text style={styles.categoryTitle}>{category.title}</Text>
+          <LinearGradient
+            colors={isPremium ? ["#FEF3C7", "#FDE68A"] : ["#FFF3F0", "#FFE5E0"]}
+            style={styles.categoryIconContainer}
+          >
+            <Ionicons 
+              name={category.icon} 
+              size={18} 
+              color={isPremium ? "#F59E0B" : "#FF6B4A"} 
+            />
+          </LinearGradient>
+          <Text style={[
+            styles.categoryTitle,
+            isPremium && styles.categoryTitlePremium
+          ]}>
+            {category.title}
+          </Text>
+          {isPremium && (
+            <View style={styles.premiumBadge}>
+              <Ionicons name="diamond" size={12} color="#F59E0B" />
+              <Text style={styles.premiumBadgeText}>Premium</Text>
+            </View>
+          )}
         </View>
 
         {/* Category Items */}
         <View style={styles.categoryItems}>
           {category.items.map((item) => {
             const isActive = activeItemId === item.id || selectedItem === item.id;
+            const isPremiumItem = item.id === "topRated";
             
             return (
               <Pressable
@@ -288,33 +344,44 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
                   styles.menuItem,
                   pressed && styles.menuItemPressed,
                   isActive && styles.menuItemActive,
+                  isPremiumItem && styles.premiumMenuItem,
                 ]}
                 onPress={() => handleNavigate(item)}
               >
                 <LinearGradient
-                  colors={isActive ? item.gradient : ["#F9FAFB", "#F3F4F6"]}
+                  colors={isActive ? item.gradient : (isPremiumItem ? ["#FEF3C7", "#FDE68A"] : ["#F9FAFB", "#F3F4F6"])}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
-                  style={styles.menuIconContainer}
+                  style={[
+                    styles.menuIconContainer,
+                    isPremiumItem && styles.premiumIconContainer
+                  ]}
                 >
                   <Ionicons
                     name={isActive ? item.activeIcon || item.icon : item.icon}
-                    size={24}
-                    color={isActive ? "#FFF" : item.color}
+                    size={isPremiumItem ? 26 : 24}
+                    color={isActive ? "#FFF" : (isPremiumItem ? "#F59E0B" : item.color)}
                   />
                   {item.comingSoon && (
                     <View style={styles.comingSoonDot} />
+                  )}
+                  {isPremiumItem && !isActive && (
+                    <View style={styles.premiumGlow} />
                   )}
                 </LinearGradient>
                 <Text
                   style={[
                     styles.menuItemText,
                     isActive && styles.menuItemTextActive,
+                    isPremiumItem && styles.premiumItemText,
                     item.comingSoon && styles.menuItemTextDisabled,
                   ]}
                 >
                   {item.name}
                 </Text>
+                {item.description && (
+                  <Text style={styles.menuItemDescription}>{item.description}</Text>
+                )}
                 {item.comingSoon && (
                   <View style={styles.comingSoonBadge}>
                     <Text style={styles.comingSoonBadgeText}>Soon</Text>
@@ -392,18 +459,26 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
               </View>
             </View>
 
-            {/* Categories ScrollView - SCROLLABLE */}
+            {/* Categories ScrollView - Enhanced scrolling with extra bottom padding */}
             <ScrollView
-              showsVerticalScrollIndicator={false}
+              ref={scrollViewRef}
+              showsVerticalScrollIndicator={Platform.OS === 'ios' ? true : false}
+              indicatorStyle="black"
               contentContainerStyle={styles.scrollContent}
               style={styles.scrollView}
               bounces={true}
               overScrollMode="always"
+              scrollEventThrottle={16}
+              decelerationRate="fast"
+              persistentScrollbar={true}
             >
               {MENU_CATEGORIES.map((category, index) => renderCategory(category, index))}
+              {/* Extra bottom padding for better scrolling experience */}
+              <View style={styles.bottomSpacer} />
+              <View style={styles.extraBottomPadding} />
             </ScrollView>
 
-            {/* Footer with user info */}
+            {/* Footer with user info - Fixed at bottom with improved spacing */}
             <View style={styles.menuFooter}>
               <LinearGradient
                 colors={["#F9FAFB", "#F3F4F6"]}
@@ -463,6 +538,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 32,
     overflow: "hidden",
     flex: 1,
+    display: "flex",
+    flexDirection: "column",
   },
   menuHeader: {
     paddingTop: 12,
@@ -470,6 +547,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F0F0F0",
     backgroundColor: "#FFF",
+    flexShrink: 0,
   },
   dragHandle: {
     alignItems: "center",
@@ -515,6 +593,12 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 20,
   },
+  bottomSpacer: {
+    height: Platform.OS === 'ios' ? 30 : 20,
+  },
+  extraBottomPadding: {
+    height: Platform.OS === 'ios' ? 40 : 30,
+  },
   categoryContainer: {
     marginTop: 20,
     paddingHorizontal: 20,
@@ -529,7 +613,6 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: "#FFF3F0",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 8,
@@ -540,12 +623,30 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     letterSpacing: 0.5,
   },
+  categoryTitlePremium: {
+    color: "#F59E0B",
+  },
+  premiumBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    marginLeft: 8,
+    gap: 4,
+  },
+  premiumBadgeText: {
+    fontSize: 9,
+    fontWeight: "600",
+    color: "#F59E0B",
+  },
   categoryItems: {
     flexDirection: "row",
     flexWrap: "wrap",
   },
   menuItem: {
-    width: "33.33%", // Changed to 33.33% for better layout with 2-3 items per row
+    width: "33.33%",
     alignItems: "center",
     paddingVertical: 6,
     borderRadius: 16,
@@ -564,6 +665,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
+  premiumMenuItem: {
+    transform: [{ scale: 1 }],
+  },
   menuIconContainer: {
     width: 56,
     height: 56,
@@ -578,6 +682,23 @@ const styles = StyleSheet.create({
     elevation: 2,
     position: "relative",
   },
+  premiumIconContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 2,
+    borderColor: "#F59E0B20",
+  },
+  premiumGlow: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#F59E0B",
+    opacity: 0.6,
+  },
   menuItemText: {
     fontSize: 11,
     color: "#6B7280",
@@ -587,6 +708,16 @@ const styles = StyleSheet.create({
   menuItemTextActive: {
     color: "#FF6B4A",
     fontWeight: "600",
+  },
+  premiumItemText: {
+    color: "#F59E0B",
+    fontWeight: "600",
+  },
+  menuItemDescription: {
+    fontSize: 9,
+    color: "#9CA3AF",
+    textAlign: "center",
+    marginTop: 2,
   },
   menuItemTextDisabled: {
     color: "#D1D5DB",
@@ -618,15 +749,16 @@ const styles = StyleSheet.create({
   },
   menuFooter: {
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 20,
-    paddingTop: 12,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+    paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: "#F0F0F0",
     backgroundColor: "#FFF",
+    flexShrink: 0,
   },
   footerGradient: {
     borderRadius: 20,
-    padding: 12,
+    padding: 14,
   },
   footerContent: {
     flexDirection: "row",

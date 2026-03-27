@@ -23,6 +23,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import Slider from '@react-native-community/slider';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import FindingDriverScreen from "./FindingDriver";
 
 // Custom Alert Component
 const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText = "Yes", cancelText = "No", type = "warning" }) => {
@@ -104,6 +105,7 @@ export default function CommuterHomeScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [findingDriver, setFindingDriver] = useState(false);
+  const [currentBookingId, setCurrentBookingId] = useState(null);
   const [initialLoad, setInitialLoad] = useState(true);
 
   // Driver info
@@ -125,12 +127,12 @@ export default function CommuterHomeScreen() {
 
   // Proximity Filter States
   const [showProximityFilter, setShowProximityFilter] = useState(false);
-  const [proximityRadius, setProximityRadius] = useState(3);
-  const [tempProximityRadius, setTempProximityRadius] = useState(3);
+  const [proximityRadius, setProximityRadius] = useState(2.0);
+  const [tempProximityRadius, setTempProximityRadius] = useState(2.0);
   const [proximityConfig, setProximityConfig] = useState({
-    defaultRadius: 3,
-    maxRadius: 10,
-    minRadius: 0.1,
+    defaultRadius: 2.0,
+    maxRadius: 5.0,
+    minRadius: 0.5,
     showOnMap: true
   });
   const [filteredDrivers, setFilteredDrivers] = useState([]);
@@ -152,65 +154,29 @@ export default function CommuterHomeScreen() {
   const [scannedDriverData, setScannedDriverData] = useState(null);
 
   // Custom Alert States
-  const [showCancelAlert, setShowCancelAlert] = useState(false);
   const [showSuccessAlert, setShowSuccessAlert] = useState(false);
   const [showErrorAlert, setShowErrorAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
   const [alertTitle, setAlertTitle] = useState("");
   const [alertType, setAlertType] = useState("warning");
 
-  // Refs
-  const bookingSubscription = useRef(null);
-  const pollingInterval = useRef(null);
-  const currentBookingId = useRef(null);
-  const isMounted = useRef(true);
-
-  const commonDetails = [
-    "near the corner",
-    "in front of",
-    "behind",
-    "beside",
-    "under the bridge",
-    "near waiting shed",
-    "near basketball court",
-    "near barangay hall",
-    "near alley",
-    "near overpass",
-  ];
-
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
   // Cleanup
   useEffect(() => {
-    isMounted.current = true;
     return () => {
-      isMounted.current = false;
-      cleanupBookingTracking();
       if (scanTimeoutRef.current) {
         clearTimeout(scanTimeoutRef.current);
       }
     };
   }, []);
 
-  const cleanupBookingTracking = () => {
-    console.log("🧹 Cleaning up booking tracking");
-    if (bookingSubscription.current) {
-      bookingSubscription.current.unsubscribe();
-      bookingSubscription.current = null;
-    }
-    if (pollingInterval.current) {
-      clearInterval(pollingInterval.current);
-      pollingInterval.current = null;
-    }
-    currentBookingId.current = null;
-  };
-
   // Focus effect
   useFocusEffect(
     useCallback(() => {
       let isActive = true;
       const loadInitialData = async () => {
-        if (isActive && isMounted.current) {
+        if (isActive) {
           setLoading(true);
           await Promise.all([
             checkActiveBooking(),
@@ -220,7 +186,6 @@ export default function CommuterHomeScreen() {
             fetchFareSettings(),
             fetchProximityConfig(),
             loadProximityRadius(),
-            checkAndCancelStaleBookings(),
           ]);
           setLoading(false);
           setInitialLoad(false);
@@ -279,14 +244,13 @@ export default function CommuterHomeScreen() {
             break;
         }
       });
+      
       setProximityConfig(config);
-      console.log("✅ Proximity config loaded:", config);
     } catch (err) {
-      console.log("❌ Error fetching proximity config:", err);
+      console.log("Error fetching proximity config:", err);
     }
   };
 
-  // Load saved radius
   const loadProximityRadius = async () => {
     try {
       const saved = await AsyncStorage.getItem('proximity_radius_home');
@@ -296,11 +260,10 @@ export default function CommuterHomeScreen() {
         setTempProximityRadius(radius);
       }
     } catch (err) {
-      console.log("❌ Error loading proximity radius:", err);
+      console.log("Error loading proximity radius:", err);
     }
   };
 
-  // Save radius
   const saveProximityRadius = async (radius) => {
     try {
       setProximityRadius(radius);
@@ -308,12 +271,11 @@ export default function CommuterHomeScreen() {
       
       showCustomAlert("success", "✅ Proximity Filter Updated", `Showing drivers within ${parseFloat(radius).toFixed(1)} km of your pickup location.`);
     } catch (err) {
-      console.log("❌ Error saving proximity radius:", err);
+      console.log("Error saving proximity radius:", err);
     }
   };
 
-  // Custom Alert Helper
-  const showCustomAlert = (type, title, message, onConfirm = null) => {
+  const showCustomAlert = (type, title, message) => {
     setAlertType(type);
     setAlertTitle(title);
     setAlertMessage(message);
@@ -322,16 +284,12 @@ export default function CommuterHomeScreen() {
       setShowSuccessAlert(true);
       setTimeout(() => {
         setShowSuccessAlert(false);
-        if (onConfirm) onConfirm();
       }, 2000);
     } else if (type === 'error') {
       setShowErrorAlert(true);
-    } else {
-      setShowCancelAlert(true);
     }
   };
 
-  // Filter drivers
   const filterDriversByProximity = () => {
     if (!pickup || allDrivers.length === 0) {
       setFilteredDrivers([]);
@@ -351,16 +309,13 @@ export default function CommuterHomeScreen() {
 
     setFilteredDrivers(filtered);
     setDriversWithinRadius(filtered.length);
-    console.log(`🎯 Found ${filtered.length} drivers within ${proximityRadius}km`);
   };
 
-  // Open proximity filter modal
   const openProximityFilter = () => {
     setTempProximityRadius(proximityRadius);
     setShowProximityFilter(true);
   };
 
-  // Refresh function
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([
@@ -443,10 +398,7 @@ export default function CommuterHomeScreen() {
       const existing = await AsyncStorage.getItem("recent_locations");
       let recents = existing ? JSON.parse(existing) : [];
 
-      recents = [recent, ...recents.filter((r) => r.address !== address)].slice(
-        0,
-        10,
-      );
+      recents = [recent, ...recents.filter((r) => r.address !== address)].slice(0, 10);
 
       await AsyncStorage.setItem("recent_locations", JSON.stringify(recents));
       setRecentLocations(recents);
@@ -480,8 +432,7 @@ export default function CommuterHomeScreen() {
         }
         else if (data.status === "pending") {
           setFindingDriver(true);
-          currentBookingId.current = data.id;
-          setupBookingTracking(data.id);
+          setCurrentBookingId(data.id);
         }
       } else {
         setActiveBooking(null);
@@ -538,8 +489,6 @@ export default function CommuterHomeScreen() {
 
   const getNearbyDrivers = async (coords) => {
     try {
-      console.log("🔍 Searching for drivers near:", coords);
-
       const { data: drivers, error } = await supabase
         .from("driver_locations")
         .select(
@@ -566,10 +515,7 @@ export default function CommuterHomeScreen() {
         .eq("drivers.status", "approved")
         .eq("drivers.is_active", true);
 
-      if (error) {
-        console.log("❌ Query error:", error);
-        throw error;
-      }
+      if (error) throw error;
 
       if (drivers && drivers.length > 0) {
         const driversWithDistance = drivers.map((driver) => {
@@ -602,21 +548,19 @@ export default function CommuterHomeScreen() {
           .filter((d) => d.distance_km <= 5)
           .sort((a, b) => a.distance_km - b.distance_km);
 
-        console.log(`🎯 Found ${nearbyDrivers.length} drivers within 5km`);
         setNearbyDrivers(nearbyDrivers.length);
 
         if (pickup) {
           filterDriversByProximity();
         }
       } else {
-        console.log("❌ No online drivers found");
         setAllDrivers([]);
         setNearbyDrivers(0);
         setFilteredDrivers([]);
         setDriversWithinRadius(0);
       }
     } catch (err) {
-      console.log("❌ Error getting nearby drivers:", err);
+      console.log("Error getting nearby drivers:", err);
       setAllDrivers([]);
       setNearbyDrivers(0);
       setFilteredDrivers([]);
@@ -689,23 +633,6 @@ export default function CommuterHomeScreen() {
     }
   };
 
-  const handleSelectSavedPlace = (place) => {
-    Alert.alert("Use as pickup?", place.address, [
-      { text: "No", style: "cancel" },
-      {
-        text: "Yes",
-        onPress: () => {
-          setPickup({
-            latitude: place.latitude,
-            longitude: place.longitude,
-          });
-          setPickupText(place.address);
-          setPickupDetails(place.details || "");
-        },
-      },
-    ]);
-  };
-
   const calculateRoute = async (startCoords, endCoords) => {
     if (!startCoords || !endCoords || !googleApiKey) return;
 
@@ -774,48 +701,26 @@ export default function CommuterHomeScreen() {
     return points;
   };
 
-const calculateFareWithPassengers = (distanceKm) => {
-  if (!distanceKm) return;
+  const calculateFareWithPassengers = (distanceKm) => {
+    if (!distanceKm) return;
 
-  const exactDistance = parseFloat(distanceKm);
-  setEstimatedDistance(exactDistance.toFixed(2));
-  
-  let farePerPassenger;
-  
-  if (exactDistance <= 1.0) {
-    // 0-1km: ₱20
-    farePerPassenger = 20;
+    const exactDistance = parseFloat(distanceKm);
+    setEstimatedDistance(exactDistance.toFixed(2));
     
-  } else if (exactDistance < 2.0) {
-    // 1.1km to 1.9km: ₱30 fixed
-    farePerPassenger = 30;
+    let farePerPassenger;
     
-  } else {
-    // 2km and above: Round up to next half kilometer (0.5km)
-    // Examples:
-    // 2.0km → 2.0 × 20 = ₱40
-    // 2.27km → 2.5 × 20 = ₱50
-    // 2.5km → 2.5 × 20 = ₱50
-    // 2.6km → 3.0 × 20 = ₱60
-    // 2.9km → 3.0 × 20 = ₱60
+    if (exactDistance <= 1.0) {
+      farePerPassenger = 20;
+    } else if (exactDistance < 2.0) {
+      farePerPassenger = 30;
+    } else {
+      const roundedToHalf = Math.ceil(exactDistance * 2) / 2;
+      farePerPassenger = roundedToHalf * 20;
+    }
     
-    const roundedToHalf = Math.ceil(exactDistance * 2) / 2;
-    farePerPassenger = roundedToHalf * 20;
-  }
-  
-  const totalFare = farePerPassenger * passengerCount;
-  setEstimatedFare(totalFare);
-  
-  console.log(`💰 FARE CALCULATION:
-    Distance: ${exactDistance.toFixed(2)}km
-    ${exactDistance <= 1 ? 'Minimum Fare (₱20)' : 
-      exactDistance < 2 ? 'Special Rate (1-2km = ₱30)' : 
-      `Rounded to: ${Math.ceil(exactDistance * 2) / 2}km × ₱20 = ₱${farePerPassenger}`}
-    Per passenger: ₱${farePerPassenger}
-    Passengers: ${passengerCount}
-    TOTAL FARE: ₱${totalFare}
-  `);
-};
+    const totalFare = farePerPassenger * passengerCount;
+    setEstimatedFare(totalFare);
+  };
 
   useEffect(() => {
     if (pickup && dropoff && estimatedDistance) {
@@ -836,35 +741,86 @@ const calculateFareWithPassengers = (distanceKm) => {
     }
   };
 
-  const handleBookRide = () => {
-    if (!pickup) {
-      Alert.alert("Missing Info", "Please select a pickup location");
-      return;
-    }
-    if (!dropoff) {
-      Alert.alert("Missing Info", "Please select a dropoff location");
+  const createBooking = async () => {
+    if (!commuterId) {
+      Alert.alert("Error", "Please login first");
       return;
     }
 
-    const pickupDisplay = pickupDetails
-      ? `${pickupText} - ${pickupDetails}`
-      : pickupText;
-    const dropoffDisplay = dropoffDetails
-      ? `${dropoffText} - ${dropoffDetails}`
-      : dropoffText;
+    setFindingDriver(true);
 
-    Alert.alert(
-      "Confirm Booking",
-      `📍 PICKUP:\n${pickupDisplay}\n\n🏁 DROPOFF:\n${dropoffDisplay}\n\n👥 Passengers: ${passengerCount}\n📏 Distance: ${estimatedDistance} km\n⏱️ Est. Time: ${estimatedTime} mins\n💰 Total Fare: ₱${estimatedFare}`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Book Now", onPress: createBooking },
-      ],
-    );
+    try {
+      const pickupDisplay = pickupDetails
+        ? `${pickupText} - ${pickupDetails}`
+        : pickupText;
+      const dropoffDisplay = dropoffDetails
+        ? `${dropoffText} - ${dropoffDetails}`
+        : dropoffText;
+
+      const { data: booking, error: bookingError } = await supabase
+        .from("bookings")
+        .insert([
+          {
+            commuter_id: commuterId,
+            pickup_location: pickupDisplay,
+            pickup_latitude: pickup.latitude,
+            pickup_longitude: pickup.longitude,
+            pickup_details: pickupDetails,
+            dropoff_location: dropoffDisplay,
+            dropoff_latitude: dropoff.latitude,
+            dropoff_longitude: dropoff.longitude,
+            dropoff_details: dropoffDetails,
+            passenger_count: passengerCount,
+            fare: estimatedFare,
+            base_fare: fareSettings.baseFare,
+            per_km_rate: fareSettings.perKmRate,
+            distance_km: estimatedDistance,
+            duration_minutes: estimatedTime,
+            status: "pending",
+            created_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (bookingError) throw bookingError;
+
+      console.log(`✅ Booking created: ${booking.id}`);
+      setCurrentBookingId(booking.id);
+
+      if (pickup && pickupText) {
+        saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
+      }
+      if (dropoff && dropoffText) {
+        saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
+      }
+      
+    } catch (err) {
+      console.log("Error creating booking:", err);
+      Alert.alert("Error", "Failed to create booking");
+      setFindingDriver(false);
+    }
   };
 
-  // ==================== SCAN TO RIDE FUNCTIONS ====================
+  const handleDriverFound = (driverId) => {
+    setFindingDriver(false);
+    navigation.navigate("TrackRide", {
+      bookingId: currentBookingId,
+      driverId: driverId,
+    });
+  };
 
+  const handleCancelFinding = () => {
+    setFindingDriver(false);
+    setCurrentBookingId(null);
+  };
+
+  const handleNoDriversFound = () => {
+    setFindingDriver(false);
+    setCurrentBookingId(null);
+  };
+
+  // QR Code Scanning Functions
   const openScanner = async () => {
     try {
       if (!permission?.granted) {
@@ -883,7 +839,7 @@ const calculateFareWithPassengers = (distanceKm) => {
       setScanningForDriver(true);
       setShowScanner(true);
     } catch (err) {
-      console.log("❌ Error opening scanner:", err);
+      console.log("Error opening scanner:", err);
     }
   };
 
@@ -898,13 +854,12 @@ const calculateFareWithPassengers = (distanceKm) => {
     
     try {
       const qrData = JSON.parse(data);
-      console.log("📱 QR Code scanned:", qrData);
+      console.log("QR Code scanned:", qrData);
       
-      // Check if it's a driver QR code
       if (qrData.type !== 'driver_qr' && !qrData.driver_id) {
         Alert.alert(
           "Invalid QR Code",
-          "This is not a valid driver QR code. Please scan the QR code on the driver's vehicle.",
+          "This is not a valid driver QR code.",
           [{ text: "OK", onPress: () => {
             setShowScanner(false);
             setScanningForDriver(false);
@@ -915,7 +870,6 @@ const calculateFareWithPassengers = (distanceKm) => {
       
       const driverId = qrData.driver_id || qrData.id;
       
-      // Fetch driver details
       const { data: driverData, error: driverError } = await supabase
         .from("drivers")
         .select(`
@@ -936,7 +890,7 @@ const calculateFareWithPassengers = (distanceKm) => {
       if (driverError || !driverData) {
         Alert.alert(
           "Driver Not Found",
-          "Could not find driver information. Please try again.",
+          "Could not find driver information.",
           [{ text: "OK", onPress: () => {
             setShowScanner(false);
             setScanningForDriver(false);
@@ -948,7 +902,6 @@ const calculateFareWithPassengers = (distanceKm) => {
       setScannedDriverData(driverData);
       setShowScanner(false);
       
-      // Check if pickup and dropoff are set
       if (!pickup) {
         Alert.alert(
           "Missing Pickup Location",
@@ -967,11 +920,10 @@ const calculateFareWithPassengers = (distanceKm) => {
         return;
       }
       
-      // Show driver info and confirm booking
       showDriverBookingConfirmation(driverData);
       
     } catch (err) {
-      console.log("❌ Error processing QR code:", err);
+      console.log("Error processing QR code:", err);
       Alert.alert(
         "Invalid QR Code",
         "Could not read the QR code. Please try again.",
@@ -1016,13 +968,12 @@ const calculateFareWithPassengers = (distanceKm) => {
         ? `${dropoffText} - ${dropoffDetails}`
         : dropoffText;
 
-      // Create booking with driver_id directly (bypassing queue)
       const { data: booking, error: bookingError } = await supabase
         .from("bookings")
         .insert([
           {
             commuter_id: commuterId,
-            driver_id: driverId, // Direct assignment - overrides queue!
+            driver_id: driverId,
             pickup_location: pickupDisplay,
             pickup_latitude: pickup.latitude,
             pickup_longitude: pickup.longitude,
@@ -1037,7 +988,7 @@ const calculateFareWithPassengers = (distanceKm) => {
             per_km_rate: fareSettings.perKmRate,
             distance_km: estimatedDistance,
             duration_minutes: estimatedTime,
-            status: "accepted", // Direct acceptance since driver is scanned
+            status: "accepted",
             accepted_at: new Date(),
             created_at: new Date(),
           },
@@ -1049,32 +1000,6 @@ const calculateFareWithPassengers = (distanceKm) => {
 
       console.log(`✅ Direct booking created: ${booking.id}`);
 
-      // Cancel any pending booking requests for this driver (cleanup)
-      await supabase
-        .from("booking_requests")
-        .update({
-          status: "cancelled",
-          responded_at: new Date(),
-        })
-        .eq("booking_id", booking.id)
-        .eq("status", "pending");
-
-      // Send notification to driver
-      const { data: driverToken } = await supabase
-        .from("drivers")
-        .select("expo_push_token")
-        .eq("id", driverId)
-        .single();
-
-      if (driverToken?.expo_push_token) {
-        sendPushNotification(
-          driverToken.expo_push_token,
-          "🎯 Direct Booking!",
-          `A passenger has booked you directly via QR scan to ${dropoffDisplay}`
-        );
-      }
-
-      // Save recent locations
       if (pickup && pickupText) {
         saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
       }
@@ -1085,7 +1010,6 @@ const calculateFareWithPassengers = (distanceKm) => {
       setScanningForDriver(false);
       setFindingDriver(false);
       
-      // Navigate to TrackRide
       navigation.navigate("TrackRide", {
         bookingId: booking.id,
         driverId: driverId,
@@ -1110,644 +1034,31 @@ const calculateFareWithPassengers = (distanceKm) => {
     }
   };
 
-  const setupBookingTracking = (bookingId) => {
-    console.log(`🔴 Setting up tracking for booking: ${bookingId}`);
-
-    cleanupBookingTracking();
-
-    currentBookingId.current = bookingId;
-
-    bookingSubscription.current = supabase
-      .channel(`booking-${bookingId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "bookings",
-          filter: `id=eq.${bookingId}`,
-        },
-        (payload) => {
-          console.log("🔄 REAL-TIME UPDATE:", payload.new);
-
-          if (!isMounted.current) return;
-
-          if (payload.new.status === "accepted") {
-            console.log(
-              `✅ Driver ACCEPTED! Driver ID: ${payload.new.driver_id}`,
-            );
-            handleDriverAccepted(bookingId, payload.new.driver_id);
-          } else if (payload.new.status === "cancelled") {
-            console.log("❌ Booking cancelled");
-            const cancelledBy = payload.new.cancelled_by || "unknown";
-            const reason =
-              payload.new.cancellation_reason || "No reason provided";
-            handleBookingCancelled(cancelledBy, reason);
-          } else if (payload.new.status === "started") {
-            console.log("🚗 Trip started");
-          }
-        },
-      )
-      .subscribe((status) => {
-        console.log(`📡 Subscription status: ${status}`);
-      });
-
-    let attempts = 0;
-    const maxAttempts = 30;
-
-    pollingInterval.current = setInterval(async () => {
-      if (!isMounted.current || !currentBookingId.current) {
-        clearInterval(pollingInterval.current);
-        pollingInterval.current = null;
-        return;
-      }
-
-      attempts++;
-      console.log(`⏱️ Polling attempt ${attempts}/${maxAttempts}`);
-
-      const { data: booking, error } = await supabase
-        .from("bookings")
-        .select("status, driver_id, cancelled_by, cancellation_reason")
-        .eq("id", bookingId)
-        .maybeSingle();
-
-      if (error) {
-        console.log("❌ Polling error:", error);
-        return;
-      }
-
-      if (booking?.status === "accepted") {
-        console.log(
-          `✅ Polling found ACCEPTED booking! Driver: ${booking.driver_id}`,
-        );
-        cleanupBookingTracking();
-        if (isMounted.current) {
-          setFindingDriver(false);
-          navigation.navigate("TrackRide", {
-            bookingId,
-            driverId: booking.driver_id,
-          });
-        }
-      } else if (booking?.status === "cancelled") {
-        console.log("❌ Polling found CANCELLED booking");
-        cleanupBookingTracking();
-        if (isMounted.current) {
-          const cancelledBy = booking.cancelled_by || "unknown";
-          const reason = booking.cancellation_reason || "No reason provided";
-          showCustomAlert("error", "❌ Booking Cancelled", `This booking was cancelled by the ${cancelledBy}.\n\nReason: ${reason}`);
-          setFindingDriver(false);
-        }
-      } else if (attempts >= maxAttempts) {
-        console.log("⏰ Polling timeout - no driver found");
-        cleanupBookingTracking();
-        if (isMounted.current) {
-          Alert.alert(
-            "No Driver Found",
-            "We couldn't find a driver at this time. Would you like to try again?",
-            [
-              {
-                text: "Cancel",
-                onPress: () => {
-                  setFindingDriver(false);
-                  cancelBooking(bookingId);
-                },
-              },
-              {
-                text: "Try Again",
-                onPress: () => findAndNotifyDrivers(bookingId),
-              },
-            ],
-          );
-        }
-      }
-    }, 3000);
-  };
-
-  const handleDriverAccepted = (bookingId, driverId) => {
-    cleanupBookingTracking();
-    setFindingDriver(false);
-    navigation.navigate("TrackRide", {
-      bookingId,
-      driverId,
-    });
-  };
-
-  const handleBookingCancelled = (cancelledBy, reason) => {
-    cleanupBookingTracking();
-    if (isMounted.current) {
-      setFindingDriver(false);
-      if (cancelledBy === "commuter") {
-        showCustomAlert("success", "✅ Booking Cancelled", "Your booking has been successfully cancelled.");
-      } else if (cancelledBy === "driver") {
-        showCustomAlert("error", "❌ Booking Cancelled by Driver", `The driver cancelled your booking.\n\nReason: ${reason}`);
-      } else if (cancelledBy === "system") {
-        showCustomAlert("warning", "⚠️ Booking Expired", `Your booking has expired.\n\nReason: ${reason}`);
-      } else {
-        showCustomAlert("error", "❌ Booking Cancelled", `Your booking was cancelled.\n\nReason: ${reason}`);
-      }
+  const handleBookRide = () => {
+    if (!pickup) {
+      Alert.alert("Missing Info", "Please select a pickup location");
+      return;
     }
-  };
-
-  // ==================== UPDATED CANCEL BOOKING FUNCTIONS ====================
-
-  const cancelBooking = async (bookingId, reason = "Cancelled by commuter") => {
-    try {
-      console.log(`🛑 Attempting to cancel booking: ${bookingId}`);
-
-      if (!bookingId) {
-        console.log("❌ No booking ID provided");
-        showCustomAlert("error", "Error", "No booking to cancel");
-        return;
-      }
-
-      // First, verify the booking exists and get its current status
-      const { data: bookingCheck, error: checkError } = await supabase
-        .from("bookings")
-        .select("id, status")
-        .eq("id", bookingId)
-        .single();
-
-      if (checkError) {
-        console.log("❌ Error checking booking:", checkError);
-        showCustomAlert("error", "Error", "Could not find the booking");
-        return;
-      }
-
-      console.log(`📊 Current booking status: ${bookingCheck?.status}`);
-
-      if (bookingCheck?.status === "cancelled") {
-        console.log("ℹ️ Booking already cancelled");
-        cleanupBookingTracking();
-        setFindingDriver(false);
-        showCustomAlert("success", "✅ Already Cancelled", "This booking was already cancelled.");
-        return;
-      }
-
-      // Update the booking status
-      console.log("📝 Updating booking status to cancelled...");
-      const { error: bookingError, data: updatedBooking } = await supabase
-        .from("bookings")
-        .update({
-          status: "cancelled",
-          cancelled_at: new Date().toISOString(),
-          cancellation_reason: reason,
-          cancelled_by: "commuter",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", bookingId)
-        .select();
-
-      if (bookingError) {
-        console.log("❌ Error updating booking:", bookingError);
-        showCustomAlert("error", "Error", "Failed to cancel booking: " + bookingError.message);
-        return;
-      }
-
-      console.log("✅ Booking updated successfully:", updatedBooking);
-
-      // Now update all booking requests for this booking
-      console.log("📝 Updating booking requests to cancelled...");
-      const { data: requests, error: requestsFetchError } = await supabase
-        .from("booking_requests")
-        .select("id, status")
-        .eq("booking_id", bookingId);
-
-      if (requestsFetchError) {
-        console.log("❌ Error fetching booking requests:", requestsFetchError);
-      } else {
-        console.log(`📊 Found ${requests?.length || 0} booking requests:`, requests);
-
-        if (requests && requests.length > 0) {
-          const { error: requestsError, data: updatedRequests } = await supabase
-            .from("booking_requests")
-            .update({
-              status: "cancelled",
-              responded_at: new Date().toISOString(),
-            })
-            .eq("booking_id", bookingId)
-            .in("status", ["pending", "accepted"]) // Update both pending and accepted requests
-            .select();
-
-          if (requestsError) {
-            console.log("❌ Error updating booking requests:", requestsError);
-          } else {
-            console.log("✅ Booking requests updated successfully:", updatedRequests);
-          }
-        } else {
-          console.log("ℹ️ No booking requests found for this booking");
-        }
-      }
-
-      // Clean up tracking
-      cleanupBookingTracking();
-      setFindingDriver(false);
-
-      // Show success message
-      showCustomAlert("success", "✅ Booking Cancelled", "Your booking has been successfully cancelled.");
-
-    } catch (err) {
-      console.log("❌ Unexpected error in cancelBooking:", err);
-      showCustomAlert("error", "Error", "An unexpected error occurred");
-    }
-  };
-
-  const handleManualCancel = () => {
-    console.log("🔘 Manual cancel clicked");
-    console.log("Current booking ID:", currentBookingId.current);
-    
-    if (!currentBookingId.current) {
-      console.log("❌ No current booking ID found");
-      showCustomAlert("error", "No Active Booking", "There is no active booking to cancel.");
+    if (!dropoff) {
+      Alert.alert("Missing Info", "Please select a dropoff location");
       return;
     }
 
-    // Show custom cancel confirmation
-    setAlertType("warning");
-    setAlertTitle("Cancel Booking");
-    setAlertMessage("Are you sure you want to cancel this booking?\n\nThis will remove your request from all drivers.");
-    setShowCancelAlert(true);
-  };
+    const pickupDisplay = pickupDetails
+      ? `${pickupText} - ${pickupDetails}`
+      : pickupText;
+    const dropoffDisplay = dropoffDetails
+      ? `${dropoffText} - ${dropoffDetails}`
+      : dropoffText;
 
-  const confirmCancellation = async () => {
-    setShowCancelAlert(false);
-    await cancelBooking(
-      currentBookingId.current,
-      "Cancelled by commuter",
-    );
-  };
-
-  const cancelFinding = () => {
-    console.log("🔘 Cancel finding clicked");
-    console.log("Current booking ID:", currentBookingId.current);
-    
-    setAlertType("warning");
-    setAlertTitle("Cancel Finding");
-    setAlertMessage("Are you sure you want to cancel finding a driver?\n\nThis will cancel your booking request.");
-    setShowCancelAlert(true);
-  };
-
-  const checkAndCancelStaleBookings = async () => {
-    try {
-      const id = await AsyncStorage.getItem("user_id");
-      if (!id) return;
-
-      // Find any pending bookings older than 5 minutes
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-
-      const { data: staleBookings, error } = await supabase
-        .from("bookings")
-        .select("id")
-        .eq("commuter_id", id)
-        .eq("status", "pending")
-        .lt("created_at", fiveMinutesAgo);
-
-      if (error) throw error;
-
-      if (staleBookings && staleBookings.length > 0) {
-        console.log(`Found ${staleBookings.length} stale bookings to cancel`);
-
-        for (const booking of staleBookings) {
-          await cancelBooking(booking.id, "Automatically cancelled - stale booking");
-        }
-      }
-    } catch (err) {
-      console.log("Error checking stale bookings:", err);
-    }
-  };
-
-  const debugBookingStatus = async () => {
-    if (!currentBookingId.current) {
-      console.log("❌ No booking ID to debug");
-      showCustomAlert("error", "Debug", "No active booking to debug");
-      return;
-    }
-
-    try {
-      console.log("🔍 Debugging booking:", currentBookingId.current);
-      
-      // Check bookings table
-      const { data: booking, error: bookingError } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("id", currentBookingId.current)
-        .single();
-
-      if (bookingError) {
-        console.log("❌ Error fetching booking:", bookingError);
-        showCustomAlert("error", "Debug Error", "Could not fetch booking");
-      } else {
-        console.log("📊 Booking data:", booking);
-        showCustomAlert("success", "Debug Info", `Booking Status: ${booking.status}\nBooking ID: ${booking.id}`);
-      }
-
-      // Check booking requests
-      const { data: requests, error: requestsError } = await supabase
-        .from("booking_requests")
-        .select("*")
-        .eq("booking_id", currentBookingId.current);
-
-      if (requestsError) {
-        console.log("❌ Error fetching requests:", requestsError);
-      } else {
-        console.log("📊 Booking requests:", requests);
-      }
-
-    } catch (err) {
-      console.log("❌ Debug error:", err);
-    }
-  };
-
-  const findAndNotifyDrivers = async (bookingId) => {
-    try {
-      console.log(`🚀 Finding drivers for booking: ${bookingId}`);
-
-      const { data: drivers, error } = await supabase
-        .from("driver_locations")
-        .select(
-          `
-          driver_id,
-          latitude,
-          longitude,
-          drivers!inner (
-            id,
-            expo_push_token
-          )
-        `,
-        )
-        .eq("is_online", true)
-        .eq("drivers.status", "approved")
-        .eq("drivers.is_active", true);
-
-      if (error) throw error;
-
-      if (!drivers || drivers.length === 0) {
-        handleNoDriversAvailable(bookingId);
-        return;
-      }
-
-      const driversWithDistance = drivers.map((driver) => {
-        const distance = calculateDistance(
-          pickup.latitude,
-          pickup.longitude,
-          driver.latitude,
-          driver.longitude,
-        );
-        return {
-          driver_id: driver.driver_id,
-          distance: distance,
-          expo_push_token: driver.drivers.expo_push_token,
-        };
-      });
-
-      const nearbyDrivers = driversWithDistance
-        .filter((d) => d.distance <= proximityRadius)
-        .sort((a, b) => a.distance - b.distance);
-
-      if (nearbyDrivers.length === 0) {
-        handleNoDriversNearby(bookingId);
-        return;
-      }
-
-      const bookingRequests = nearbyDrivers.slice(0, 5).map((driver) => ({
-        booking_id: bookingId,
-        driver_id: driver.driver_id,
-        status: "pending",
-        distance_km: driver.distance,
-        created_at: new Date(),
-      }));
-
-      const { error: requestError } = await supabase
-        .from("booking_requests")
-        .insert(bookingRequests);
-
-      if (requestError) throw requestError;
-
-      nearbyDrivers.slice(0, 5).forEach((driver) => {
-        if (driver.expo_push_token) {
-          sendPushNotification(
-            driver.expo_push_token,
-            "New Booking Request",
-            `New booking from ${pickupDetails || "your area"} to ${dropoffDetails || "destination"}`,
-          );
-        }
-      });
-
-      console.log(`📨 Notified ${nearbyDrivers.length} drivers`);
-    } catch (err) {
-      console.log("❌ Error finding drivers:", err);
-    }
-  };
-
-  const handleNoDriversAvailable = async (bookingId) => {
     Alert.alert(
-      "No Drivers Available",
-      "No drivers are currently online. Would you like to try again?",
+      "Confirm Booking",
+      `📍 PICKUP:\n${pickupDisplay}\n\n🏁 DROPOFF:\n${dropoffDisplay}\n\n👥 Passengers: ${passengerCount}\n📏 Distance: ${estimatedDistance} km\n⏱️ Est. Time: ${estimatedTime} mins\n💰 Total Fare: ₱${estimatedFare}`,
       [
-        {
-          text: "Cancel",
-          onPress: async () => {
-            await cancelBooking(bookingId, "No drivers available");
-          },
-        },
-        {
-          text: "Try Again",
-          onPress: () => findAndNotifyDrivers(bookingId),
-        },
+        { text: "Cancel", style: "cancel" },
+        { text: "Book Now", onPress: createBooking },
       ],
     );
-  };
-
-  const handleNoDriversNearby = async (bookingId) => {
-    Alert.alert(
-      "No Drivers Nearby",
-      `No drivers found within ${proximityRadius}km. Would you like to expand search radius?`,
-      [
-        {
-          text: "Cancel",
-          onPress: async () => {
-            await cancelBooking(bookingId, "No drivers nearby");
-          },
-        },
-        {
-          text: "Expand to 5km",
-          onPress: () => expandDriverSearch(bookingId, 5),
-        },
-      ],
-    );
-  };
-
-  const expandDriverSearch = async (bookingId, radius) => {
-    try {
-      const { data: drivers, error } = await supabase
-        .from("driver_locations")
-        .select(
-          `
-          driver_id,
-          latitude,
-          longitude,
-          drivers!inner (
-            id,
-            expo_push_token
-          )
-        `,
-        )
-        .eq("is_online", true)
-        .eq("drivers.status", "approved")
-        .eq("drivers.is_active", true);
-
-      if (error) throw error;
-
-      const driversWithDistance = drivers.map((driver) => {
-        const distance = calculateDistance(
-          pickup.latitude,
-          pickup.longitude,
-          driver.latitude,
-          driver.longitude,
-        );
-        return {
-          driver_id: driver.driver_id,
-          distance: distance,
-          expo_push_token: driver.drivers.expo_push_token,
-        };
-      });
-
-      const nearbyDrivers = driversWithDistance
-        .filter((d) => d.distance <= radius)
-        .sort((a, b) => a.distance - b.distance);
-
-      if (nearbyDrivers.length === 0) {
-        Alert.alert(
-          "Still No Drivers",
-          `No drivers found within ${radius}km. Try again later?`,
-          [
-            {
-              text: "Cancel",
-              onPress: async () => {
-                await cancelBooking(bookingId, `No drivers within ${radius}km`);
-              },
-            },
-            {
-              text: "Try Again",
-              onPress: () => expandDriverSearch(bookingId, radius),
-            },
-          ],
-        );
-        return;
-      }
-
-      const bookingRequests = nearbyDrivers.slice(0, 5).map((driver) => ({
-        booking_id: bookingId,
-        driver_id: driver.driver_id,
-        status: "pending",
-        distance_km: driver.distance,
-        created_at: new Date(),
-      }));
-
-      const { error: requestError } = await supabase
-        .from("booking_requests")
-        .insert(bookingRequests);
-
-      if (requestError) throw requestError;
-
-      nearbyDrivers.slice(0, 5).forEach((driver) => {
-        if (driver.expo_push_token) {
-          sendPushNotification(
-            driver.expo_push_token,
-            "New Booking Request",
-            `New booking from ${pickupDetails || "your area"}`,
-          );
-        }
-      });
-    } catch (err) {
-      console.log("Error expanding search:", err);
-    }
-  };
-
-  const sendPushNotification = async (expoPushToken, title, body) => {
-    if (!expoPushToken) return;
-
-    const message = {
-      to: expoPushToken,
-      sound: "default",
-      title: title,
-      body: body,
-      data: { type: "booking_request" },
-    };
-
-    try {
-      await fetch("https://exp.host/--/api/v2/push/send", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(message),
-      });
-    } catch (err) {
-      console.log("Error sending push notification:", err);
-    }
-  };
-
-  const createBooking = async () => {
-    if (!commuterId) {
-      Alert.alert("Error", "Please login first");
-      return;
-    }
-
-    setFindingDriver(true);
-
-    try {
-      const pickupDisplay = pickupDetails
-        ? `${pickupText} - ${pickupDetails}`
-        : pickupText;
-      const dropoffDisplay = dropoffDetails
-        ? `${dropoffText} - ${dropoffDetails}`
-        : dropoffText;
-
-      const { data: booking, error: bookingError } = await supabase
-        .from("bookings")
-        .insert([
-          {
-            commuter_id: commuterId,
-            pickup_location: pickupDisplay,
-            pickup_latitude: pickup.latitude,
-            pickup_longitude: pickup.longitude,
-            pickup_details: pickupDetails,
-            dropoff_location: dropoffDisplay,
-            dropoff_latitude: dropoff.latitude,
-            dropoff_longitude: dropoff.longitude,
-            dropoff_details: dropoffDetails,
-            passenger_count: passengerCount,
-            fare: estimatedFare,
-            base_fare: fareSettings.baseFare,
-            per_km_rate: fareSettings.perKmRate,
-            distance_km: estimatedDistance,
-            duration_minutes: estimatedTime,
-            status: "pending",
-            created_at: new Date(),
-          },
-        ])
-        .select()
-        .single();
-
-      if (bookingError) throw bookingError;
-
-      console.log(`✅ Booking created: ${booking.id}`);
-
-      if (pickup && pickupText) {
-        saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
-      }
-      if (dropoff && dropoffText) {
-        saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
-      }
-
-      setupBookingTracking(booking.id);
-      findAndNotifyDrivers(booking.id);
-    } catch (err) {
-      console.log("Error creating booking:", err);
-      Alert.alert("Error", "Failed to create booking");
-      setFindingDriver(false);
-    }
   };
 
   // Proximity Filter Modal
@@ -1768,8 +1079,15 @@ const calculateFareWithPassengers = (distanceKm) => {
           </View>
 
           <Text style={styles.modalDescription}>
-            Set the search radius for finding nearby drivers. Only drivers within this radius will be notified of your booking.
+            Set the search radius for finding nearby drivers.
           </Text>
+
+          <View style={styles.recommendationContainer}>
+            <Ionicons name="bulb-outline" size={16} color="#F59E0B" />
+            <Text style={styles.recommendationText}>
+              Recommended: 1-3km for faster pickup
+            </Text>
+          </View>
 
           <View style={styles.radiusDisplay}>
             <Text style={styles.radiusValue}>
@@ -1789,9 +1107,19 @@ const calculateFareWithPassengers = (distanceKm) => {
             thumbTintColor="#183B5C"
           />
 
-          <View style={styles.radiusLabels}>
-            <Text style={styles.radiusLabel}>{proximityConfig.minRadius.toFixed(1)} km</Text>
-            <Text style={styles.radiusLabel}>{proximityConfig.maxRadius.toFixed(1)} km</Text>
+          <View style={styles.distanceRecommendation}>
+            <View style={styles.distanceLevel}>
+              <View style={[styles.distanceDot, { backgroundColor: '#10B981' }]} />
+              <Text style={styles.distanceText}>0.5-2km: Fastest pickup (5-10 min)</Text>
+            </View>
+            <View style={styles.distanceLevel}>
+              <View style={[styles.distanceDot, { backgroundColor: '#F59E0B' }]} />
+              <Text style={styles.distanceText}>2-3km: Good balance (10-15 min)</Text>
+            </View>
+            <View style={styles.distanceLevel}>
+              <View style={[styles.distanceDot, { backgroundColor: '#EF4444' }]} />
+              <Text style={styles.distanceText}>3-5km: Longer wait (15-25 min)</Text>
+            </View>
           </View>
 
           {pickup && (
@@ -1803,13 +1131,38 @@ const calculateFareWithPassengers = (distanceKm) => {
               ]}>
                 {driversWithinRadius} {driversWithinRadius === 1 ? 'driver' : 'drivers'}
               </Text>
-              {driversWithinRadius === 0 && (
-                <Text style={styles.noDriversHint}>
-                  Try increasing the radius to find more drivers
-                </Text>
-              )}
             </View>
           )}
+
+          <View style={styles.quickSelectContainer}>
+            <Text style={styles.quickSelectLabel}>Quick select:</Text>
+            <View style={styles.quickSelectButtons}>
+              <Pressable 
+                style={[styles.quickSelectButton, tempProximityRadius === 1 && styles.quickSelectActive]}
+                onPress={() => setTempProximityRadius(1)}
+              >
+                <Text style={styles.quickSelectText}>1 km</Text>
+              </Pressable>
+              <Pressable 
+                style={[styles.quickSelectButton, tempProximityRadius === 2 && styles.quickSelectActive]}
+                onPress={() => setTempProximityRadius(2)}
+              >
+                <Text style={styles.quickSelectText}>2 km</Text>
+              </Pressable>
+              <Pressable 
+                style={[styles.quickSelectButton, tempProximityRadius === 3 && styles.quickSelectActive]}
+                onPress={() => setTempProximityRadius(3)}
+              >
+                <Text style={styles.quickSelectText}>3 km</Text>
+              </Pressable>
+              <Pressable 
+                style={[styles.quickSelectButton, tempProximityRadius === 5 && styles.quickSelectActive]}
+                onPress={() => setTempProximityRadius(5)}
+              >
+                <Text style={styles.quickSelectText}>5 km</Text>
+              </Pressable>
+            </View>
+          </View>
 
           <View style={styles.modalButtons}>
             <Pressable 
@@ -1833,7 +1186,6 @@ const calculateFareWithPassengers = (distanceKm) => {
     </Modal>
   ), [showProximityFilter, tempProximityRadius, proximityConfig, pickup, driversWithinRadius]);
 
-  // Show loading indicator
   if (initialLoad && loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -1843,83 +1195,22 @@ const calculateFareWithPassengers = (distanceKm) => {
     );
   }
 
-  if (findingDriver) {
+  if (findingDriver && currentBookingId) {
     return (
-      <View style={styles.findingDriverContainer}>
-        <ActivityIndicator size="large" color="#183B5C" />
-        <Text style={styles.findingDriverTitle}>Finding your driver...</Text>
-        <Text style={styles.findingDriverSubtitle}>
-          Looking for drivers within {proximityRadius}km{"\n"}
-          You'll be notified as soon as a driver accepts
-        </Text>
-
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Ionicons name="people" size={24} color="#FFB37A" />
-            <Text style={styles.statValue}>{driversWithinRadius}</Text>
-            <Text style={styles.statLabel}>Drivers in Range</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Ionicons name="radio" size={24} color="#FFB37A" />
-            <Text style={styles.statValue}>{proximityRadius}km</Text>
-            <Text style={styles.statLabel}>Search Radius</Text>
-          </View>
-        </View>
-
-        {/* Debug button - remove after testing */}
-        <Pressable 
-          style={{ backgroundColor: '#FFB37A', padding: 10, borderRadius: 8, marginBottom: 10 }}
-          onPress={debugBookingStatus}
-        >
-          
-        </Pressable>
-
-        <Pressable style={styles.adjustRadiusButton} onPress={() => {
-          setFindingDriver(false);
-          openProximityFilter();
-        }}>
-          <Ionicons name="options-outline" size={20} color="#183B5C" />
-          <Text style={styles.adjustRadiusText}>Adjust Search Radius</Text>
-        </Pressable>
-
-        <Pressable style={styles.cancelFindingButton} onPress={cancelFinding}>
-          <Text style={styles.cancelFindingText}>Cancel Booking</Text>
-        </Pressable>
-
-        {/* Custom Alerts */}
-        <CustomAlert
-          visible={showCancelAlert}
-          title={alertTitle}
-          message={alertMessage}
-          onConfirm={confirmCancellation}
-          onCancel={() => setShowCancelAlert(false)}
-          confirmText="Yes, Cancel"
-          cancelText="No"
-          type="warning"
-        />
-
-        <CustomAlert
-          visible={showSuccessAlert}
-          title={alertTitle}
-          message={alertMessage}
-          onConfirm={() => setShowSuccessAlert(false)}
-          confirmText="OK"
-          type="success"
-        />
-
-        <CustomAlert
-          visible={showErrorAlert}
-          title={alertTitle}
-          message={alertMessage}
-          onConfirm={() => setShowErrorAlert(false)}
-          confirmText="OK"
-          type="error"
-        />
-      </View>
+      <FindingDriverScreen
+        visible={findingDriver}
+        bookingId={currentBookingId}
+        driversWithinRadius={driversWithinRadius}
+        proximityRadius={proximityRadius}
+        onCancel={handleCancelFinding}
+        onDriverFound={handleDriverFound}
+        onNoDrivers={handleNoDriversFound}
+        pickupText={pickupText}
+        dropoffText={dropoffText}
+      />
     );
   }
 
-  // QR Code Scanner Screen
   if (showScanner) {
     return (
       <View style={styles.container}>
@@ -1951,10 +1242,6 @@ const calculateFareWithPassengers = (distanceKm) => {
               <Text style={styles.scannerInstruction}>
                 Position the driver's QR code within the frame
               </Text>
-              
-              <Text style={styles.scannerSubInstruction}>
-                Look for the SakayNa sticker on the vehicle
-              </Text>
             </View>
           </CameraView>
         </View>
@@ -1970,10 +1257,8 @@ const calculateFareWithPassengers = (distanceKm) => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Proximity Filter Modal */}
       {ProximityFilterModal}
 
-      {/* Custom Alerts for main screen */}
       <CustomAlert
         visible={showSuccessAlert}
         title={alertTitle}
@@ -2238,145 +1523,135 @@ const calculateFareWithPassengers = (distanceKm) => {
             </View>
           )}
 
-{pickup && dropoff && estimatedDistance && (
-  <View style={styles.tripSummary}>
-    <View style={styles.summaryRow}>
-      <View style={styles.summaryItem}>
-        <Ionicons name="map-outline" size={16} color="#666" />
-        <Text style={styles.summaryLabel}>Distance</Text>
-        <Text style={styles.summaryValue}>{estimatedDistance} km</Text>
-      </View>
-      <View style={styles.summaryItem}>
-        <Ionicons name="time-outline" size={16} color="#666" />
-        <Text style={styles.summaryLabel}>Est. Time</Text>
-        <Text style={styles.summaryValue}>{estimatedTime} min</Text>
-      </View>
-      <View style={styles.summaryItem}>
-        <Ionicons name="people-outline" size={16} color="#666" />
-        <Text style={styles.summaryLabel}>Passengers</Text>
-        <Text style={styles.summaryValue}>{passengerCount}</Text>
-      </View>
-    </View>
+          {pickup && dropoff && estimatedDistance && (
+            <View style={styles.tripSummary}>
+              <View style={styles.summaryRow}>
+                <View style={styles.summaryItem}>
+                  <Ionicons name="map-outline" size={16} color="#666" />
+                  <Text style={styles.summaryLabel}>Distance</Text>
+                  <Text style={styles.summaryValue}>{estimatedDistance} km</Text>
+                </View>
+                <View style={styles.summaryItem}>
+                  <Ionicons name="time-outline" size={16} color="#666" />
+                  <Text style={styles.summaryLabel}>Est. Time</Text>
+                  <Text style={styles.summaryValue}>{estimatedTime} min</Text>
+                </View>
+                <View style={styles.summaryItem}>
+                  <Ionicons name="people-outline" size={16} color="#666" />
+                  <Text style={styles.summaryLabel}>Passengers</Text>
+                  <Text style={styles.summaryValue}>{passengerCount}</Text>
+                </View>
+              </View>
 
-    <View style={styles.fareCard}>
-      <View style={styles.fareHeader}>
-        <Text style={styles.fareHeaderTitle}>FARE DETAILS</Text>
-      </View>
-      
-      {parseFloat(estimatedDistance) <= 1 ? (
-        <View style={styles.fareRow}>
-          <Text style={styles.fareLabel}>Minimum Fare (0-1km)</Text>
-          <Text style={styles.fareValue}>₱20</Text>
-        </View>
-      ) : parseFloat(estimatedDistance) < 2 ? (
-        <View style={styles.fareRow}>
-          <Text style={styles.fareLabel}>Special Rate (1-2km)</Text>
-          <Text style={styles.fareValue}>₱30</Text>
-        </View>
-      ) : (
-        <>
-          <View style={styles.fareRow}>
-            <Text style={styles.fareLabel}>
-              Distance: {Math.ceil(parseFloat(estimatedDistance) * 2) / 2} km
-            </Text>
-            <Text style={styles.fareValue}>
-              × ₱20/km
-            </Text>
-          </View>
-          <View style={styles.fareRow}>
-            <Text style={styles.fareLabel}>Subtotal (per passenger)</Text>
-            <Text style={styles.fareValue}>
-              ₱{Math.ceil(parseFloat(estimatedDistance) * 2) / 2 * 20}
-            </Text>
-          </View>
-        </>
-      )}
-      
-      <View style={styles.fareRow}>
-        <Text style={styles.fareLabel}>
-          × {passengerCount} passenger{passengerCount > 1 ? 's' : ''}
-        </Text>
-        <Text style={styles.fareValue}>
-          × {passengerCount}
-        </Text>
-      </View>
-      
-      <View style={styles.fareDivider} />
-      
-      <View style={styles.fareTotal}>
-        <Text style={styles.fareTotalLabel}>TOTAL FARE</Text>
-        <Text style={styles.fareTotalValue}>₱{estimatedFare}</Text>
-      </View>
-      
-      {parseFloat(estimatedDistance) > 1 && parseFloat(estimatedDistance) < 2 && (
-        <Text style={styles.fareNote}>
-          * Fixed rate of ₱30 for distances between 1-2km
-        </Text>
-      )}
-      {parseFloat(estimatedDistance) >= 2 && (
-        <Text style={styles.fareNote}>
-          * Rounded to nearest half kilometer (0.5km) then ₱20 per km
-        </Text>
-      )}
-    </View>
-  </View>
-)}
+              <View style={styles.fareCard}>
+                <View style={styles.fareHeader}>
+                  <Text style={styles.fareHeaderTitle}>FARE DETAILS</Text>
+                </View>
+                
+                {parseFloat(estimatedDistance) <= 1 ? (
+                  <View style={styles.fareRow}>
+                    <Text style={styles.fareLabel}>Minimum Fare (0-1km)</Text>
+                    <Text style={styles.fareValue}>₱20</Text>
+                  </View>
+                ) : parseFloat(estimatedDistance) < 2 ? (
+                  <View style={styles.fareRow}>
+                    <Text style={styles.fareLabel}>Special Rate (1-2km)</Text>
+                    <Text style={styles.fareValue}>₱30</Text>
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.fareRow}>
+                      <Text style={styles.fareLabel}>
+                        Distance: {Math.ceil(parseFloat(estimatedDistance) * 2) / 2} km
+                      </Text>
+                      <Text style={styles.fareValue}>
+                        × ₱20/km
+                      </Text>
+                    </View>
+                    <View style={styles.fareRow}>
+                      <Text style={styles.fareLabel}>Subtotal (per passenger)</Text>
+                      <Text style={styles.fareValue}>
+                        ₱{Math.ceil(parseFloat(estimatedDistance) * 2) / 2 * 20}
+                      </Text>
+                    </View>
+                  </>
+                )}
+                
+                <View style={styles.fareRow}>
+                  <Text style={styles.fareLabel}>
+                    × {passengerCount} passenger{passengerCount > 1 ? 's' : ''}
+                  </Text>
+                  <Text style={styles.fareValue}>
+                    × {passengerCount}
+                  </Text>
+                </View>
+                
+                <View style={styles.fareDivider} />
+                
+                <View style={styles.fareTotal}>
+                  <Text style={styles.fareTotalLabel}>TOTAL FARE</Text>
+                  <Text style={styles.fareTotalValue}>₱{estimatedFare}</Text>
+                </View>
+              </View>
+            </View>
+          )}
 
           <View style={styles.driversInfo}>
             <Ionicons name="people-circle" size={20} color="#183B5C" />
             <Text style={styles.driversText}>
-              {driversWithinRadius} drivers within {parseFloat(proximityRadius).toFixed(1)}km • Real-time updates when driver accepts
+              {driversWithinRadius} drivers within {parseFloat(proximityRadius).toFixed(1)}km
             </Text>
           </View>
 
-          {/* SCAN TO RIDE BUTTON - Large and Prominent */}
-<View style={styles.buttonRow}>
-  
-  <Pressable
-    style={[
-      styles.optionCard,
-      (!pickup || !dropoff) && styles.disabledCard
-    ]}
-    onPress={openScanner}
-    disabled={!pickup || !dropoff}
-  >
-    <Ionicons name="qr-code-outline" size={26} color="#16a34a" />
-    <Text style={styles.optionTitle}>Scan Driver QR</Text>
-    <Text style={styles.optionSubtitle}>
-      Scan the driver to ride instantly
-    </Text>
-  </Pressable>
+          <View style={styles.buttonRow}>
+            <Pressable
+              style={[
+                styles.optionCard,
+                (!pickup || !dropoff) && styles.disabledCard
+              ]}
+              onPress={openScanner}
+              disabled={!pickup || !dropoff}
+            >
+              <Ionicons name="qr-code-outline" size={26} color="#16a34a" />
+              <Text style={styles.optionTitle}>Scan Driver QR</Text>
+              <Text style={styles.optionSubtitle}>
+                Scan the driver to ride instantly
+              </Text>
+            </Pressable>
 
-  <Pressable
-    style={[
-      styles.optionCard,
-      (!pickup || !dropoff) && styles.disabledCard
-    ]}
-    onPress={handleBookRide}
-    disabled={!pickup || !dropoff}
-  >
-    <Ionicons name="car-outline" size={26} color="#2563eb" />
-    <Text style={styles.optionTitle}>Find Driver</Text>
-    <Text style={styles.optionSubtitle}>
-      Search for nearby drivers
-    </Text>
-  </Pressable>
-
-</View>
-
-          <View style={styles.queueInfo}>
-            <Ionicons name="information-circle" size={16} color="#666" />
-            <Text style={styles.queueInfoText}>
-              {scanningForDriver 
-                ? "Scanning for driver..." 
-                : "Scan to Ride bypasses the queue - book directly with a driver you see"}
-            </Text>
+            <Pressable
+              style={[
+                styles.optionCard,
+                (!pickup || !dropoff) && styles.disabledCard
+              ]}
+              onPress={handleBookRide}
+              disabled={!pickup || !dropoff}
+            >
+              <Ionicons name="car-outline" size={26} color="#2563eb" />
+              <Text style={styles.optionTitle}>Find Driver</Text>
+              <Text style={styles.optionSubtitle}>
+                Search for nearby drivers
+              </Text>
+            </Pressable>
           </View>
         </ScrollView>
       </View>
     </View>
   );
 }
+
+const commonDetails = [
+  "near the corner",
+  "in front of",
+  "behind",
+  "beside",
+  "under the bridge",
+  "near waiting shed",
+  "near basketball court",
+  "near barangay hall",
+  "near alley",
+  "near overpass",
+];
 
 const styles = StyleSheet.create({
   container: {
@@ -2613,44 +1888,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#183B5C",
   },
-  fareBreakdown: {
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    paddingTop: 15,
-  },
-  fareRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  fareBreakdownLabel: {
-    fontSize: 12,
-    color: "#666",
-    flex: 1,
-  },
-  fareBreakdownValue: {
-    fontSize: 12,
-    color: "#333",
-    fontWeight: "500",
-  },
-  fareTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-  },
-  fareTotalLabel: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#333",
-  },
-  fareTotalValue: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#183B5C",
-  },
   driversInfo: {
     flexDirection: "row",
     alignItems: "center",
@@ -2665,143 +1902,34 @@ const styles = StyleSheet.create({
     color: "#183B5C",
     flex: 1,
   },
-  scanButton: {
-    backgroundColor: "#10B981",
+  buttonRow: {
     flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 15,
     gap: 12,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  scanButtonDisabled: {
-    backgroundColor: "#9CA3AF",
-    opacity: 0.7,
-  },
-  scanButtonTextContainer: {
-    flex: 1,
-  },
-  scanButtonTitle: {
-    color: "#FFF",
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  scanButtonSubtitle: {
-    color: "#FFF",
-    fontSize: 12,
-    opacity: 0.9,
-  },
-  dividerContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 10,
-  },
-  divider: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#E5E7EB",
-  },
-  dividerText: {
-    marginHorizontal: 10,
-    color: "#666",
-    fontSize: 12,
-  },
-  bookButton: {
-    backgroundColor: "#183B5C",
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
     marginBottom: 15,
   },
-  bookButtonDisabled: {
-    backgroundColor: "#9CA3AF",
-  },
-  bookButtonText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  queueInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 10,
-  },
-  queueInfoText: {
-    fontSize: 11,
-    color: "#666",
-    marginLeft: 6,
-    textAlign: "center",
-    flex: 1,
-  },
-  findingDriverContainer: {
+  optionCard: {
     flex: 1,
     backgroundColor: "#FFF",
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    alignItems: "center",
     justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
   },
-  findingDriverTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#183B5C",
-    marginTop: 20,
+  optionTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    marginTop: 6,
   },
-  findingDriverSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginTop: 10,
-    marginBottom: 30,
-  },
-  statsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    width: "100%",
-    marginBottom: 20,
-  },
-  statItem: {
-    alignItems: "center",
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#183B5C",
-    marginTop: 5,
-  },
-  statLabel: {
+  optionSubtitle: {
     fontSize: 12,
-    color: "#666",
+    color: "#6B7280",
+    textAlign: "center",
     marginTop: 2,
   },
-  adjustRadiusButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F0F7FF",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 25,
-    marginBottom: 20,
-    gap: 8,
-  },
-  adjustRadiusText: {
-    color: "#183B5C",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  cancelFindingButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 30,
-  },
-  cancelFindingText: {
-    color: "#EF4444",
-    fontSize: 16,
-    fontWeight: "600",
+  disabledCard: {
+    opacity: 0.5,
   },
   // Modal Styles
   modalOverlay: {
@@ -2834,6 +1962,20 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     lineHeight: 20,
   },
+  recommendationContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 15,
+    gap: 8,
+  },
+  recommendationText: {
+    fontSize: 12,
+    color: "#92400E",
+    flex: 1,
+  },
   radiusDisplay: {
     alignItems: "center",
     marginBottom: 20,
@@ -2847,12 +1989,25 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 40,
   },
-  radiusLabels: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 20,
+  distanceRecommendation: {
+    backgroundColor: "#F9FAFB",
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 15,
+    marginBottom: 15,
   },
-  radiusLabel: {
+  distanceLevel: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  distanceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  distanceText: {
     fontSize: 12,
     color: "#666",
   },
@@ -2877,11 +2032,33 @@ const styles = StyleSheet.create({
   driversUnavailable: {
     color: "#F59E0B",
   },
-  noDriversHint: {
+  quickSelectContainer: {
+    marginBottom: 20,
+  },
+  quickSelectLabel: {
     fontSize: 12,
     color: "#666",
-    marginTop: 8,
-    fontStyle: "italic",
+    marginBottom: 8,
+  },
+  quickSelectButtons: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  quickSelectButton: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#F3F4F6",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  quickSelectActive: {
+    backgroundColor: "#183B5C",
+  },
+  quickSelectText: {
+    fontSize: 14,
+    color: "#333",
+    fontWeight: "500",
   },
   modalButtons: {
     flexDirection: "row",
@@ -2988,13 +2165,6 @@ const styles = StyleSheet.create({
     marginTop: 30,
     textAlign: "center",
   },
-  scannerSubInstruction: {
-    color: "#FFF",
-    fontSize: 14,
-    marginTop: 10,
-    textAlign: "center",
-    opacity: 0.8,
-  },
   scannerFooter: {
     backgroundColor: "#183B5C",
     padding: 20,
@@ -3005,7 +2175,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
   },
-  // Custom Alert Styles
   customAlertOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
@@ -3069,40 +2238,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  buttonRow: {
-  flexDirection: "row",
-  gap: 12,
-},
-
-optionCard: {
-  flex: 1,
-  backgroundColor: "#FFF",
-  padding: 16,
-  borderRadius: 14,
-  borderWidth: 1,
-  borderColor: "#E5E7EB",
-  alignItems: "center",
-  justifyContent: "center",
-},
-
-optionTitle: {
-  fontSize: 15,
-  fontWeight: "600",
-  marginTop: 6,
-},
-
-optionSubtitle: {
-  fontSize: 12,
-  color: "#6B7280",
-  textAlign: "center",
-  marginTop: 2,
-},
-
-disabledCard: {
-  opacity: 0.5
-},
-
-fareCard: {
+  fareCard: {
     backgroundColor: "#FFF",
     borderRadius: 12,
     padding: 16,
@@ -3155,12 +2291,5 @@ fareCard: {
     fontSize: 20,
     fontWeight: "bold",
     color: "#183B5C",
-  },
-  fareNote: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    marginTop: 8,
-    textAlign: "center",
-    fontStyle: "italic",
   },
 });

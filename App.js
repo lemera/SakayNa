@@ -34,7 +34,9 @@ import ReferralScreen from './app/commuter/ReferralScreen.js';
 import FloatingMenu from './app/components/FloatingMenu.js';
 import MenuButton from './app/components/MenuButton.js';
 import FoodStoreScreen from './app/commuter/FoodStoreScreen';
-
+import WithdrawalDetailsScreen from './app/commuter/WithdrawalDetailsScreen.js';
+import RateDriverScreen from './app/commuter/RateDriverScreen.js';
+import TopRatedDriversScreen from './app/commuter/TopRatedDrivers';
 // Driver Flow
 import DriverLoginScreen from './app/Driver/DriverLogin.js';
 import DriverOtpScreen from './app/Driver/DriverOtpScreen.js';
@@ -103,7 +105,9 @@ export default function App() {
           <Stack.Screen name="FloatingMenu" component={FloatingMenu} />
           <Stack.Screen name="MenuButton" component={MenuButton} />
           <Stack.Screen name="FoodStoreScreen" component={FoodStoreScreen} />
-
+          <Stack.Screen name="WithdrawalDetails" component={WithdrawalDetailsScreen}options={{ headerShown: false }}/>
+          <Stack.Screen name="RateDriverScreen" component={RateDriverScreen}options={{ headerShown: false }}/>
+          <Stack.Screen name="TopRatedDrivers" component={TopRatedDriversScreen}options={{ headerShown: false }}/>
           {/* Driver Flow */}
           <Stack.Screen name="DriverLoginScreen" component={DriverLoginScreen} />
           <Stack.Screen name="DriverOtpScreen" component={DriverOtpScreen} />

@@ -14,6 +14,8 @@ import {
   ScrollView,
   AppState,
   TouchableWithoutFeedback,
+  Animated,
+  Dimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,6 +23,8 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from 'expo-haptics';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function InboxScreen() {
   const insets = useSafeAreaInsets();
@@ -38,6 +42,7 @@ export default function InboxScreen() {
   const [subscription, setSubscription] = useState(null);
   const [updateSubscription, setUpdateSubscription] = useState(null);
   const [isMarkingRead, setIsMarkingRead] = useState(false);
+  const [modalAnimation] = useState(new Animated.Value(SCREEN_HEIGHT));
   
   const modalAnimationRef = useRef(null);
   const selectedNotificationRef = useRef(null);
@@ -98,8 +103,13 @@ export default function InboxScreen() {
             // Update unread count
             setUnreadCount(prev => prev + 1);
             
-            // Haptic feedback
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            // Haptic feedback for withdrawal success
+            if (payload.new.type === 'payment' && 
+                payload.new.title.toLowerCase().includes('withdrawal')) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } else {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
           }
         )
         .subscribe();
@@ -133,12 +143,8 @@ export default function InboxScreen() {
             );
             
             // Recalculate unread count
-            setUnreadCount(prev => {
-              const newUnreadCount = notifications
-                .map(n => n.id === payload.new.id ? payload.new : n)
-                .filter(n => !n.is_read).length;
-              return newUnreadCount;
-            });
+            const newUnreadCount = notifications.filter(n => !n.is_read).length;
+            setUnreadCount(newUnreadCount);
           }
         )
         .subscribe();
@@ -215,13 +221,7 @@ export default function InboxScreen() {
 
       if (error) throw error;
 
-      // Update local state without removing from filtered list if modal is open
-      if (selectedNotificationRef.current?.id === notificationId && showNotificationModal) {
-        // Update the selected notification
-        setSelectedNotification(prev => prev ? { ...prev, is_read: true } : null);
-      }
-      
-      // Update the notifications list
+      // Update local state
       setNotifications(prev => 
         prev.map(n => 
           n.id === notificationId ? { ...n, is_read: true } : n
@@ -280,7 +280,7 @@ export default function InboxScreen() {
     // Store reference to the notification being viewed
     selectedNotificationRef.current = notification;
     setSelectedNotification(notification);
-    setShowNotificationModal(true);
+    showModalWithAnimation();
     
     // Mark as read in the background without affecting the modal
     if (!notification.is_read) {
@@ -288,26 +288,100 @@ export default function InboxScreen() {
     }
   };
 
-  const handleNotificationAction = (notification) => {
-    setShowNotificationModal(false);
-    selectedNotificationRef.current = null;
-    
-    // Small delay to ensure modal closes before navigation
-    setTimeout(() => {
-      if (notification.action_url) {
-        // Navigate based on action URL
-        if (notification.reference_type === 'booking') {
-          navigation.navigate("BookingDetails", { id: notification.reference_id });
-        } else if (notification.reference_type === 'promo') {
-          navigation.navigate("Promos");
-        } else if (notification.type === 'payment') {
-          navigation.navigate("Wallet");
-        } else if (notification.reference_type === 'withdrawal') {
-          navigation.navigate("Wallet");
-        }
-      }
-    }, 100);
+  const showModalWithAnimation = () => {
+    setShowNotificationModal(true);
+    Animated.spring(modalAnimation, {
+      toValue: 0,
+      useNativeDriver: true,
+      tension: 65,
+      friction: 11,
+    }).start();
   };
+
+  const closeModal = () => {
+    Animated.timing(modalAnimation, {
+      toValue: SCREEN_HEIGHT,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      setShowNotificationModal(false);
+      setSelectedNotification(null);
+      selectedNotificationRef.current = null;
+    });
+  };
+
+
+const handleNotificationAction = (notification) => {
+  console.log("🎯 Handling notification action:", {
+    id: notification.id,
+    type: notification.type,
+    title: notification.title,
+    reference_type: notification.reference_type,
+    reference_id: notification.reference_id,
+    action_url: notification.action_url
+  });
+  
+  closeModal();
+  
+  // Small delay to ensure modal closes before navigation
+  setTimeout(() => {
+    // Check for withdrawal notification first
+    if (notification.title && notification.title.toLowerCase().includes('withdrawal')) {
+      console.log("💰 Withdrawal notification detected");
+      
+      // Try to get withdrawal ID from different possible fields
+      let withdrawalId = notification.reference_id;
+      
+      // If reference_id is not available, check data field
+      if (!withdrawalId && notification.data) {
+        withdrawalId = notification.data.withdrawal_id || notification.data.id;
+      }
+      
+      if (withdrawalId) {
+        console.log("🚀 Navigating to WithdrawalDetails with ID:", withdrawalId);
+        navigation.navigate("WithdrawalDetails", { withdrawalId: withdrawalId });
+        return;
+      } else {
+        console.log("⚠️ No withdrawal ID found, falling back to Wallet");
+        navigation.navigate("Wallet");
+        return;
+      }
+    }
+    
+    // Handle booking notifications
+    if (notification.reference_type === 'booking' && notification.reference_id) {
+      console.log("🚗 Navigating to BookingDetails with ID:", notification.reference_id);
+      navigation.navigate("BookingDetails", { id: notification.reference_id });
+      return;
+    }
+    
+    // Handle promo notifications
+    if (notification.reference_type === 'promo') {
+      console.log("🎁 Navigating to Promos");
+      navigation.navigate("Promos");
+      return;
+    }
+    
+    // Handle payment notifications (non-withdrawal)
+    if (notification.type === 'payment') {
+      console.log("💳 Navigating to Wallet");
+      navigation.navigate("Wallet");
+      return;
+    }
+    
+    // Handle any other notifications with action_url
+    if (notification.action_url) {
+      console.log("🔗 Navigating to action_url:", notification.action_url);
+      navigation.navigate(notification.action_url);
+      return;
+    }
+    
+    // Fallback: if no specific action, just close the modal
+    console.log("ℹ️ No specific action for this notification");
+    Alert.alert("Info", "No action available for this notification");
+    
+  }, 100);
+};
 
   const deleteNotification = async (notificationId) => {
     Alert.alert(
@@ -332,21 +406,20 @@ export default function InboxScreen() {
               if (error) throw error;
 
               // Update local state
+              const deletedNotification = notifications.find(n => n.id === notificationId);
               setNotifications(prev => prev.filter(n => n.id !== notificationId));
               
               // Update unread count if the deleted notification was unread
-              const deletedNotification = notifications.find(n => n.id === notificationId);
               if (deletedNotification && !deletedNotification.is_read) {
                 setUnreadCount(prev => Math.max(0, prev - 1));
               }
               
               if (selectedNotification?.id === notificationId) {
-                setShowNotificationModal(false);
-                setSelectedNotification(null);
-                selectedNotificationRef.current = null;
+                closeModal();
               }
               
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert("Success", "Notification deleted successfully.");
             } catch (err) {
               console.log("Error deleting notification:", err);
               Alert.alert("Error", "Failed to delete notification.");
@@ -357,18 +430,12 @@ export default function InboxScreen() {
     );
   };
 
-  const closeModal = () => {
-    setShowNotificationModal(false);
-    // Clear selected notification after animation
-    setTimeout(() => {
-      if (!showNotificationModal) {
-        setSelectedNotification(null);
-        selectedNotificationRef.current = null;
-      }
-    }, 300);
-  };
-
-  const getNotificationIcon = (type) => {
+  const getNotificationIcon = (type, title = '') => {
+    // Check for withdrawal success notification
+    if (title.toLowerCase().includes('withdrawal')) {
+      return { name: 'cash-outline', color: '#10B981', bg: '#E8F5E9' };
+    }
+    
     switch (type) {
       case 'booking':
         return { name: 'car', color: '#3B82F6', bg: '#EFF6FF' };
@@ -404,6 +471,15 @@ export default function InboxScreen() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   };
 
+  const formatWithdrawalAmount = (message) => {
+    // Extract amount from message if it contains withdrawal information
+    const amountMatch = message.match(/₱([\d,]+(?:\.\d{2})?)/);
+    if (amountMatch) {
+      return amountMatch[1];
+    }
+    return null;
+  };
+
   const filteredNotifications = notifications.filter(notification => {
     if (filterType === 'all') return true;
     if (filterType === 'unread') return !notification.is_read;
@@ -411,7 +487,9 @@ export default function InboxScreen() {
   });
 
   const renderNotificationItem = ({ item }) => {
-    const icon = getNotificationIcon(item.type);
+    const icon = getNotificationIcon(item.type, item.title);
+    const isWithdrawal = item.title.toLowerCase().includes('withdrawal');
+    const withdrawalAmount = isWithdrawal ? formatWithdrawalAmount(item.message) : null;
     
     return (
       <Pressable
@@ -433,6 +511,14 @@ export default function InboxScreen() {
           <Text style={styles.notificationMessage} numberOfLines={2}>
             {item.message}
           </Text>
+          
+          {isWithdrawal && withdrawalAmount && (
+            <View style={styles.withdrawalBadge}>
+              <Text style={styles.withdrawalBadgeText}>
+                +₱{withdrawalAmount}
+              </Text>
+            </View>
+          )}
           
           {!item.is_read && (
             <View style={styles.unreadDot} />
@@ -458,93 +544,117 @@ export default function InboxScreen() {
   const NotificationModal = () => (
     <Modal
       visible={showNotificationModal}
-      animationType="slide"
       transparent={true}
+      animationType="none"
       onRequestClose={closeModal}
       statusBarTranslucent={true}
     >
       <TouchableWithoutFeedback onPress={closeModal}>
         <View style={styles.modalOverlay}>
-          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-            <View style={styles.modalContent}>
-              {selectedNotification && (
-                <>
-                  <View style={styles.modalHeader}>
-                    <Pressable 
-                      style={styles.modalCloseButton}
-                      onPress={closeModal}
-                    >
-                      <Ionicons name="close" size={24} color="#666" />
-                    </Pressable>
-                    <Text style={styles.modalTitle}>Notification</Text>
-                    <Pressable 
-                      style={styles.modalDeleteButton}
-                      onPress={() => deleteNotification(selectedNotification.id)}
-                    >
-                      <Ionicons name="trash-outline" size={20} color="#EF4444" />
-                    </Pressable>
-                  </View>
-
-                  <ScrollView 
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={styles.modalScrollContent}
-                  >
-                    <View style={styles.notificationDetail}>
-                      <View style={[
-                        styles.detailIcon,
-                        { backgroundColor: getNotificationIcon(selectedNotification.type).bg }
-                      ]}>
-                        <Ionicons 
-                          name={getNotificationIcon(selectedNotification.type).name} 
-                          size={32} 
-                          color={getNotificationIcon(selectedNotification.type).color} 
-                        />
-                      </View>
-
-                      <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
-                      <Text style={styles.detailTime}>
-                        {new Date(selectedNotification.created_at).toLocaleString('en-US', {
-                          weekday: 'long',
-                          year: 'numeric',
-                          month: 'long',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </Text>
-
-                      <View style={styles.detailMessageContainer}>
-                        <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
-                      </View>
-
-                      {selectedNotification.data && Object.keys(selectedNotification.data).length > 0 && (
-                        <View style={styles.detailData}>
-                          {Object.entries(selectedNotification.data).map(([key, value]) => (
-                            <View key={key} style={styles.detailDataRow}>
-                              <Text style={styles.detailDataKey}>{key.replace(/_/g, ' ').toUpperCase()}:</Text>
-                              <Text style={styles.detailDataValue}>{String(value)}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-
-                      {(selectedNotification.reference_type === 'booking' || 
-                        selectedNotification.reference_type === 'withdrawal' ||
-                        selectedNotification.type === 'payment') && (
-                        <Pressable
-                          style={styles.detailActionButton}
-                          onPress={() => handleNotificationAction(selectedNotification)}
-                        >
-                          <Text style={styles.detailActionText}>View Details</Text>
-                          <Ionicons name="arrow-forward" size={20} color="#FFF" />
-                        </Pressable>
-                      )}
+          <Animated.View 
+            style={[
+              styles.modalContent,
+              {
+                transform: [{ translateY: modalAnimation }]
+              }
+            ]}
+          >
+            <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
+              <View>
+                {selectedNotification && (
+                  <>
+                    <View style={styles.modalHeader}>
+                      <Pressable 
+                        style={styles.modalCloseButton}
+                        onPress={closeModal}
+                      >
+                        <Ionicons name="close" size={24} color="#666" />
+                      </Pressable>
+                      <Text style={styles.modalTitle}>Notification</Text>
+                      <Pressable 
+                        style={styles.modalDeleteButton}
+                        onPress={() => deleteNotification(selectedNotification.id)}
+                      >
+                        <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                      </Pressable>
                     </View>
-                  </ScrollView>
-                </>
-              )}
-            </View>
-          </TouchableWithoutFeedback>
+
+                    <ScrollView 
+                      showsVerticalScrollIndicator={false}
+                      contentContainerStyle={styles.modalScrollContent}
+                    >
+                      <View style={styles.notificationDetail}>
+                        <View style={[
+                          styles.detailIcon,
+                          { backgroundColor: getNotificationIcon(selectedNotification.type, selectedNotification.title).bg }
+                        ]}>
+                          <Ionicons 
+                            name={getNotificationIcon(selectedNotification.type, selectedNotification.title).name} 
+                            size={32} 
+                            color={getNotificationIcon(selectedNotification.type, selectedNotification.title).color} 
+                          />
+                        </View>
+
+                        <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
+                        <Text style={styles.detailTime}>
+                          {new Date(selectedNotification.created_at).toLocaleString('en-US', {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </Text>
+
+                        <View style={styles.detailMessageContainer}>
+                          <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
+                        </View>
+
+                        {selectedNotification.data && Object.keys(selectedNotification.data).length > 0 && (
+                          <View style={styles.detailData}>
+                            {Object.entries(selectedNotification.data).map(([key, value]) => (
+                              <View key={key} style={styles.detailDataRow}>
+                                <Text style={styles.detailDataKey}>{key.replace(/_/g, ' ').toUpperCase()}:</Text>
+                                <Text style={styles.detailDataValue}>{String(value)}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+
+                        {/* Enhanced action button for withdrawal success */}
+                        {(selectedNotification.reference_type === 'booking' || 
+                          selectedNotification.reference_type === 'withdrawal' ||
+                          (selectedNotification.type === 'payment' && 
+                           selectedNotification.title.toLowerCase().includes('withdrawal'))) && (
+                          <Pressable
+                            style={styles.detailActionButton}
+                            onPress={() => handleNotificationAction(selectedNotification)}
+                          >
+                            <Text style={styles.detailActionText}>
+                              {selectedNotification.title.toLowerCase().includes('withdrawal') 
+                                ? 'View Withdrawal Details' 
+                                : 'View Details'}
+                            </Text>
+                            <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                          </Pressable>
+                        )}
+                        
+                        {/* Additional success badge for withdrawal */}
+                        {selectedNotification.title.toLowerCase().includes('withdrawal') && 
+                         selectedNotification.message.toLowerCase().includes('success') && (
+                          <View style={styles.successBadge}>
+                            <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+                            <Text style={styles.successBadgeText}>Withdrawal Successful</Text>
+                          </View>
+                        )}
+                      </View>
+                    </ScrollView>
+                  </>
+                )}
+              </View>
+            </TouchableWithoutFeedback>
+          </Animated.View>
         </View>
       </TouchableWithoutFeedback>
     </Modal>
@@ -774,6 +884,19 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: "#3B82F6",
   },
+  withdrawalBadge: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  withdrawalBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#10B981',
+  },
   emptyContainer: {
     flex: 1,
     justifyContent: "center",
@@ -920,5 +1043,20 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontSize: 16,
     fontWeight: "600",
+  },
+  successBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E8F5E9',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: 12,
+    gap: 8,
+  },
+  successBadgeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#10B981',
   },
 });
