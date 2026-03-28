@@ -247,104 +247,7 @@ const WarningBanner = ({ icon, title, body, buttonLabel, onPress, bgColor, borde
   </View>
 );
 
-// ================= FLOATING SHOP BUTTON (COMING SOON) =================
-const FloatingShopButton = ({ onPress }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  
-  useEffect(() => {
-    // Auto-hide tooltip after 3 seconds
-    if (showTooltip) {
-      const timer = setTimeout(() => setShowTooltip(false), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [showTooltip]);
 
-  return (
-    <>
-      <TouchableOpacity
-        onPress={() => {
-          setShowTooltip(true);
-          onPress();
-        }}
-        style={{
-          position: "absolute",
-          bottom: rs(20),
-          right: rs(20),
-          backgroundColor: "#FF6B35",
-          width: rs(56),
-          height: rs(56),
-          borderRadius: rs(28),
-          justifyContent: "center",
-          alignItems: "center",
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.3,
-          shadowRadius: 6,
-          elevation: 8,
-          zIndex: 999,
-        }}
-      >
-        <Ionicons name="restaurant-outline" size={rs(28)} color="#FFF" />
-        
-        {/* Badge for coming soon */}
-        <View style={{
-          position: "absolute",
-          top: -rs(5),
-          right: -rs(5),
-          backgroundColor: "#FF0000",
-          borderRadius: rs(12),
-          paddingHorizontal: rs(6),
-          paddingVertical: rs(2),
-          minWidth: rs(28),
-          alignItems: "center",
-        }}>
-          {/* <Text style={{ color: "#FFF", fontSize: normalize(9), fontWeight: "bold" }}>
-            Order Food
-          </Text> */}
-        </View>
-      </TouchableOpacity>
-      
-      {/* Tooltip */}
-      {showTooltip && (
-        <Animated.View
-          style={{
-            position: "absolute",
-            bottom: rs(80),
-            right: rs(20),
-            backgroundColor: "#1F2937",
-            borderRadius: rs(12),
-            paddingHorizontal: rs(12),
-            paddingVertical: rs(8),
-            maxWidth: rs(200),
-            zIndex: 1000,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.2,
-            shadowRadius: 4,
-            elevation: 5,
-          }}
-        >
-          <Text style={{ color: "#FFF", fontSize: normalize(12) }}>
-            🍔 Food ordering coming soon!
-          </Text>
-          <View style={{
-            position: "absolute",
-            bottom: -rs(6),
-            right: rs(20),
-            width: 0,
-            height: 0,
-            borderLeftWidth: rs(6),
-            borderRightWidth: rs(6),
-            borderTopWidth: rs(6),
-            borderLeftColor: "transparent",
-            borderRightColor: "transparent",
-            borderTopColor: "#1F2937",
-          }} />
-        </Animated.View>
-      )}
-    </>
-  );
-};
 
 // ================= MAIN COMPONENT =================
 export default function DriverHomeScreen() {
@@ -1325,9 +1228,6 @@ export default function DriverHomeScreen() {
           )}
         </View>
       </ScrollView>
-
-      {/* ==================== FLOATING SHOP BUTTON (COMING SOON) ==================== */}
-      <FloatingShopButton onPress={handleShopPress} />
 
       {/* ==================== ALERT MODAL ==================== */}
       <ModernAlert

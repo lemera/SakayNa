@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
+import { useFocusEffect } from "@react-navigation/native";
 
 import HomeScreen from "./DriverHomeScreen";
 import WalletScreen from "./DriverWalletScreen";
@@ -63,6 +64,46 @@ export default function HomePage() {
     };
     getDriverId();
   }, []);
+
+  // Enhanced fetch unread count with error handling
+  const fetchUnreadCount = async () => {
+    if (!driverId) {
+      console.log("⚠️ No driver ID yet, skipping fetch");
+      return;
+    }
+    
+    try {
+      console.log("🔍 Fetching unread notifications for driver:", driverId);
+      
+      const { data, error, count } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", driverId)
+        .eq("user_type", "driver")
+        .eq("is_read", false);
+
+      if (error) throw error;
+      
+      console.log("📊 Unread notifications count:", count);
+      setUnreadCount(count || 0);
+      
+      // Also fetch actual unread notifications for debugging
+      const { data: unreadData } = await supabase
+        .from("notifications")
+        .select("id, title, is_read")
+        .eq("user_id", driverId)
+        .eq("user_type", "driver")
+        .eq("is_read", false)
+        .limit(5);
+      
+      if (unreadData && unreadData.length > 0) {
+        console.log("📬 Unread notifications:", unreadData.map(n => n.title));
+      }
+      
+    } catch (err) {
+      console.log("❌ Error fetching unread count:", err.message);
+    }
+  };
 
   // Check for both active bookings AND pending requests
   useEffect(() => {
@@ -114,19 +155,81 @@ export default function HomePage() {
         }
       )
       .subscribe((status) => {
-        console.log("📡 Subscription status:", status);
+        console.log("📡 Booking subscription status:", status);
       });
 
     return () => {
-      console.log("🧹 Cleaning up subscriptions");
+      console.log("🧹 Cleaning up booking subscriptions");
       clearInterval(intervalId);
       subscription.unsubscribe();
-      if (sound) {
-        console.log("🧹 Unloading sound");
-        sound.unloadAsync();
-      }
     };
   }, [driverId]);
+
+  // Enhanced notification subscription with auto-refresh
+  useEffect(() => {
+    if (!driverId) return;
+
+    console.log("📡 Setting up notification subscription for driver:", driverId);
+    
+    // Initial fetch
+    fetchUnreadCount();
+
+    // Subscribe to real-time notification changes
+    const notifSubscription = supabase
+      .channel('inbox-notifications')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'notifications',
+          filter: `user_id=eq.${driverId}`,
+        },
+        (payload) => {
+          console.log("📦 Notification changed:", payload.eventType);
+          console.log("📊 Payload:", payload.new);
+          
+          // Immediately fetch updated count
+          fetchUnreadCount();
+          
+          // Trigger haptic for new notifications
+          if (payload.eventType === 'INSERT' && !payload.new?.is_read) {
+            // Vibrate for new notification
+            Vibration.vibrate(200);
+            if (Platform.OS === 'ios') {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } else {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log("📡 Notification subscription status:", status);
+      });
+
+    // Set up periodic check as backup (every 30 seconds)
+    const periodicCheck = setInterval(() => {
+      console.log("⏰ Periodic notification check");
+      fetchUnreadCount();
+    }, 30000);
+
+    return () => {
+      console.log("🧹 Cleaning up notification subscription");
+      notifSubscription.unsubscribe();
+      clearInterval(periodicCheck);
+    };
+  }, [driverId]);
+
+  // Refresh unread count when Inbox screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      console.log("📱 Screen focused - refreshing unread count");
+      if (driverId) {
+        fetchUnreadCount();
+      }
+    }, [driverId])
+  );
 
   // Animation effect - enhanced glow for pending requests
   useEffect(() => {
@@ -307,57 +410,6 @@ export default function HomePage() {
     }
   };
 
-  const fetchUnreadCount = async () => {
-    try {
-      console.log("🔍 Fetching unread notifications for driver:", driverId);
-      
-      const { count, error } = await supabase
-        .from("notifications")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", driverId)
-        .eq("user_type", "driver")
-        .eq("is_read", false);
-
-      if (error) throw error;
-      
-      console.log("📊 Unread notifications count:", count);
-      setUnreadCount(count || 0);
-    } catch (err) {
-      console.log("Error fetching unread count:", err.message);
-    }
-  };
-
-  // Fetch unread notifications
-  useEffect(() => {
-    if (!driverId) return;
-
-    fetchUnreadCount();
-
-    const notifSubscription = supabase
-      .channel('inbox-notifications')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${driverId}`,
-        },
-        (payload) => {
-          console.log("📦 Notification changed:", payload.eventType);
-          fetchUnreadCount();
-        }
-      )
-      .subscribe((status) => {
-        console.log("📡 Notification subscription status:", status);
-      });
-
-    return () => {
-      console.log("🧹 Cleaning up notification subscription");
-      notifSubscription.unsubscribe();
-    };
-  }, [driverId]);
-
   // Animation interpolations
   const glowOpacity = glowAnim.interpolate({
     inputRange: [0, 0.5, 1],
@@ -378,7 +430,7 @@ export default function HomePage() {
   const getGlowConfig = () => {
     if (hasActiveBooking) {
       return {
-        color: '#FF6B6B', // Red for active ride
+        color: '#FF6B6B',
         intensity: 0.9,
         size: 75,
         icon: 'bicycle',
@@ -387,7 +439,7 @@ export default function HomePage() {
     }
     if (hasPendingRequests) {
       return {
-        color: '#FFB37A', // Orange for pending requests
+        color: '#FFB37A',
         intensity: 1.0,
         size: 80,
         icon: 'navigate',
@@ -404,6 +456,9 @@ export default function HomePage() {
   };
 
   const glowConfig = getGlowConfig();
+
+  // Debug log for unread count
+  console.log("🔔 Current unread count:", unreadCount);
 
   return (
     <Tab.Navigator
@@ -442,7 +497,7 @@ export default function HomePage() {
                 {unreadCount > 0 && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>
-                      {unreadCount > 9 ? '9+' : unreadCount}
+                      {unreadCount > 99 ? '99+' : unreadCount > 9 ? '9+' : unreadCount}
                     </Text>
                   </View>
                 )}
@@ -454,12 +509,20 @@ export default function HomePage() {
         },
       })}
     >
-      <Tab.Screen name="Home" component={HomeScreen} />
+      <Tab.Screen 
+        name="Home" 
+        component={HomeScreen}
+        listeners={{
+          tabPress: () => {
+            console.log("🏠 Home tab pressed");
+          }
+        }}
+      />
       <Tab.Screen name="Wallet" component={WalletScreen} />
 
       {/* TRACK RIDE BUTTON WITH ENHANCED GLOW EFFECT */}
       <Tab.Screen
-        name="DriverTrackRideScreen"
+        name="Track Rides"
         component={DriverTrackRideScreen}
         options={{
           tabBarLabel: "",
@@ -536,14 +599,24 @@ export default function HomePage() {
                   </Text>
                 </View>
               )}
-
-              
             </View>
           ),
         }}
       />
 
-      <Tab.Screen name="Inbox" component={InboxScreen} />
+      <Tab.Screen 
+        name="Inbox" 
+        component={InboxScreen}
+        listeners={{
+          tabPress: () => {
+            console.log("📬 Inbox tab pressed");
+            // Refresh unread count when Inbox is opened
+            if (driverId) {
+              setTimeout(() => fetchUnreadCount(), 100);
+            }
+          }
+        }}
+      />
       <Tab.Screen name="Account" component={AccountScreen} />
     </Tab.Navigator>
   );
@@ -558,8 +631,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 15,
-    marginTop:20,
+    paddingHorizontal: 25,
+    paddingBottom: 5,
+    marginTop: 20,
     marginBottom: -40,
   },
   logo: {

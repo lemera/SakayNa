@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,9 @@ import {
   RefreshControl,
   Alert,
   Modal,
+  Animated,
+  Vibration,
+  Platform,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,6 +18,9 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { Swipeable } from "react-native-gesture-handler";
+import * as Haptics from "expo-haptics";
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function DriverInboxScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -27,6 +33,11 @@ export default function DriverInboxScreen({ navigation }) {
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [filter, setFilter] = useState("all"); // all, unread, read
+  
+  // Animation for new notification
+  const [newNotificationAnim] = useState(new Animated.Value(0));
+  const [latestNotification, setLatestNotification] = useState(null);
+  const notificationTimeout = useRef(null);
 
   // Fetch driver ID
   useFocusEffect(
@@ -50,6 +61,8 @@ export default function DriverInboxScreen({ navigation }) {
   useEffect(() => {
     if (!driverId) return;
 
+    console.log("📡 Setting up real-time notification subscription for driver:", driverId);
+
     const subscription = supabase
       .channel('driver-notifications')
       .on(
@@ -61,20 +74,85 @@ export default function DriverInboxScreen({ navigation }) {
           filter: `user_id=eq.${driverId}`,
         },
         (payload) => {
-          console.log("New notification received:", payload);
-          // Add new notification to the list
-          setNotifications(prev => [payload.new, ...prev]);
-          if (!payload.new.is_read) {
+          console.log("🔔 New notification received:", payload);
+          
+          // Add new notification to the list (at the top)
+          const newNotification = payload.new;
+          
+          setNotifications(prev => {
+            // Check if notification already exists (prevent duplicates)
+            const exists = prev.some(n => n.id === newNotification.id);
+            if (exists) return prev;
+            return [newNotification, ...prev];
+          });
+          
+          // Update unread count
+          if (!newNotification.is_read) {
             setUnreadCount(prev => prev + 1);
+            
+            // Trigger animation and haptic feedback for new notification
+            triggerNewNotificationAnimation(newNotification);
           }
+          
+          // Show in-app banner for new notification
+          showNewNotificationBanner(newNotification);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("📡 Notification subscription status:", status);
+      });
 
     return () => {
+      console.log("🧹 Cleaning up notification subscription");
       subscription.unsubscribe();
+      if (notificationTimeout.current) {
+        clearTimeout(notificationTimeout.current);
+      }
     };
   }, [driverId]);
+
+  const triggerNewNotificationAnimation = (notification) => {
+    // Set latest notification for banner
+    setLatestNotification(notification);
+    
+    // Reset animation
+    newNotificationAnim.setValue(0);
+    
+    // Animate in
+    Animated.sequence([
+      Animated.timing(newNotificationAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.delay(3000),
+      Animated.timing(newNotificationAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      if (notificationTimeout.current) {
+        clearTimeout(notificationTimeout.current);
+      }
+      setLatestNotification(null);
+    });
+    
+    // Haptic feedback
+    if (Platform.OS === 'ios') {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    
+    // Vibration
+    Vibration.vibrate(200);
+  };
+
+  const showNewNotificationBanner = (notification) => {
+    // Optional: Show alert or banner
+    console.log("📬 New notification:", notification.title);
+  };
 
   const fetchNotifications = async () => {
     try {
@@ -86,7 +164,7 @@ export default function DriverInboxScreen({ navigation }) {
         .eq("user_id", driverId)
         .eq("user_type", "driver")
         .order("created_at", { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (error) throw error;
 
@@ -132,6 +210,9 @@ export default function DriverInboxScreen({ navigation }) {
       
       // Update unread count
       setUnreadCount(prev => Math.max(0, prev - 1));
+      
+      // Haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (err) {
       console.log("Error marking as read:", err.message);
     }
@@ -179,6 +260,9 @@ export default function DriverInboxScreen({ navigation }) {
       if (deleted && !deleted.is_read) {
         setUnreadCount(prev => Math.max(0, prev - 1));
       }
+      
+      // Haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (err) {
       console.log("Error deleting notification:", err.message);
       Alert.alert("Error", "Failed to delete notification");
@@ -186,7 +270,7 @@ export default function DriverInboxScreen({ navigation }) {
   };
 
   const handleNotificationPress = (notification) => {
-    // Mark as read
+    // Mark as read if not read
     if (!notification.is_read) {
       markAsRead(notification.id);
     }
@@ -194,6 +278,9 @@ export default function DriverInboxScreen({ navigation }) {
     // Show details modal
     setSelectedNotification(notification);
     setModalVisible(true);
+    
+    // Haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleActionPress = (notification) => {
@@ -306,6 +393,84 @@ export default function DriverInboxScreen({ navigation }) {
     );
   };
 
+  // New Notification Banner Component
+  const NewNotificationBanner = () => {
+    if (!latestNotification) return null;
+    
+    const icon = getNotificationIcon(latestNotification.type);
+    const translateY = newNotificationAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-100, 0],
+    });
+    
+    return (
+      <Animated.View
+        style={{
+          position: 'absolute',
+          top: insets.top + 80,
+          left: 20,
+          right: 20,
+          transform: [{ translateY }],
+          zIndex: 1000,
+          elevation: 1000,
+        }}
+      >
+        <LinearGradient
+          colors={['#10B981', '#059669']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{
+            borderRadius: 12,
+            padding: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.2,
+            shadowRadius: 8,
+            elevation: 5,
+          }}
+        >
+          <View style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            backgroundColor: 'rgba(255,255,255,0.2)',
+            justifyContent: 'center',
+            alignItems: 'center',
+            marginRight: 12,
+          }}>
+            <Ionicons name={icon.name} size={24} color="#FFF" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: '#FFF', fontSize: 14, fontWeight: 'bold' }}>
+              New Notification
+            </Text>
+            <Text style={{ color: '#FFF', fontSize: 12, opacity: 0.9 }} numberOfLines={1}>
+              {latestNotification.title}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => {
+              // Jump to this notification
+              setFilter("all");
+              handleNotificationPress(latestNotification);
+              setLatestNotification(null);
+            }}
+            style={{
+              backgroundColor: 'rgba(255,255,255,0.3)',
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 16,
+            }}
+          >
+            <Text style={{ color: '#FFF', fontSize: 12, fontWeight: '600' }}>View</Text>
+          </Pressable>
+        </LinearGradient>
+      </Animated.View>
+    );
+  };
+
   if (loading && !refreshing) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F5F7FA" }}>
@@ -316,6 +481,9 @@ export default function DriverInboxScreen({ navigation }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: "#F5F7FA" }}>
+      {/* New Notification Banner */}
+      <NewNotificationBanner />
+      
       {/* Header */}
       <View
         style={{
@@ -522,7 +690,7 @@ export default function DriverInboxScreen({ navigation }) {
                         }}>
                           <Ionicons name="arrow-forward-circle" size={14} color="#183B5C" />
                           <Text style={{ fontSize: 11, color: "#183B5C", marginLeft: 4 }}>
-                            Tap to {notification.data.action}
+                            Tap to {notification.data.action.replace(/_/g, ' ')}
                           </Text>
                         </View>
                       )}
@@ -604,7 +772,7 @@ export default function DriverInboxScreen({ navigation }) {
                   </View>
 
                   {/* Additional Data */}
-                  {selectedNotification.data && (
+                  {selectedNotification.data && Object.keys(selectedNotification.data).length > 0 && (
                     <View style={{ marginBottom: 20 }}>
                       <Text style={{ fontSize: 14, fontWeight: "600", color: "#333", marginBottom: 8 }}>
                         Additional Information
@@ -647,6 +815,7 @@ export default function DriverInboxScreen({ navigation }) {
                         <Text style={{ color: "#FFF", fontWeight: "600" }}>
                           {selectedNotification.data.action === "view_trip" ? "View Trip" :
                            selectedNotification.data.action === "view_subscription" ? "View Subscription" :
+                           selectedNotification.data.action === "view_mission" ? "View Mission" :
                            selectedNotification.data.action === "view_payment" ? "View Payment" :
                            "Take Action"}
                         </Text>
