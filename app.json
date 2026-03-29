@@ -1,16 +1,14 @@
-// app.json
 {
   "expo": {
     "name": "SakayNa",
     "slug": "SakayNa",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/sakayna_icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
     "scheme": "sakayna",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/sakayna_icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -22,7 +20,9 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to location to track rides and show your position on map.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to location to track rides and show your position on map.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location"
+        ]
       }
     },
     "android": {
@@ -30,8 +30,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
-      "package": "com.anonymous.SakayNa",
+      "package": "com.lemera.SakayNa",
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
@@ -59,7 +58,9 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow SakayNa to use your location to track rides."
         }
-      ]
+      ],
+      "expo-font",
+      "expo-asset"
     ]
   }
 }
