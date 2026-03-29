@@ -23,6 +23,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
+import packageJson from '../../package.json';
 
 const base64ToArrayBuffer = (base64) => {
   const binaryString = atob(base64);
@@ -32,6 +33,8 @@ const base64ToArrayBuffer = (base64) => {
   }
   return bytes.buffer;
 };
+
+const appVersion = packageJson.version;
 
 export default function AccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -64,9 +67,8 @@ export default function AccountScreen({ navigation }) {
   // Payout methods for settings
   const [payoutMethods, setPayoutMethods] = useState([]);
   
-  // Modal states
+  // Modal states - REMOVED editName since name is not editable
   const [editProfileModal, setEditProfileModal] = useState(false);
-  const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
   
@@ -279,7 +281,7 @@ export default function AccountScreen({ navigation }) {
       }
 
       setProfile(data);
-      setEditName(`${data.first_name || ''} ${data.last_name || ''}`.trim());
+      // Only set phone and email for editing, not name
       setEditPhone(data.phone || "");
       setEditEmail(data.email || "");
     } catch (err) {
@@ -340,19 +342,15 @@ export default function AccountScreen({ navigation }) {
     }
   };
 
+  // Updated handleUpdateProfile - name is no longer updated
   const handleUpdateProfile = async () => {
     try {
-      const nameParts = editName.split(" ");
-      const firstName = nameParts[0] || "";
-      const lastName = nameParts.slice(1).join(" ") || "";
-
       const table = userType === 'commuter' ? 'commuters' : 'drivers';
       
+      // Only update phone and email, not name
       const { error } = await supabase
         .from(table)
         .update({
-          first_name: firstName,
-          last_name: lastName,
           phone: editPhone,
           email: editEmail,
           updated_at: new Date(),
@@ -484,13 +482,13 @@ export default function AccountScreen({ navigation }) {
       }
     >
       {/* Header with Cover */}
-      <View style={[styles.headerCover, { paddingTop: insets.top + 20 }]}>
+      <View style={[styles.headerCover]}> 
         <View style={styles.headerRow}>
           <Pressable onPress={() => navigation.goBack()} style={styles.headerButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
           </Pressable>
 
-          <Text style={styles.headerTitle}>My Account</Text>
+          {/* <Text style={styles.headerTitle}>My Account</Text> */}
 
           <View style={{ width: 40 }} />
         </View>
@@ -534,7 +532,7 @@ export default function AccountScreen({ navigation }) {
 
           <Pressable style={styles.editProfileButton} onPress={() => setEditProfileModal(true)}>
             <Ionicons name="create-outline" size={16} color="#183B5C" />
-            <Text style={styles.editProfileText}>Edit Profile</Text>
+            <Text style={styles.editProfileText}>Edit Contact Info</Text>
           </Pressable>
         </View>
 
@@ -641,12 +639,6 @@ export default function AccountScreen({ navigation }) {
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
 
-        {/* <Pressable style={styles.menuItem} onPress={() => navigation.navigate("RideHistory")}>
-          <Ionicons name="time-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Ride History</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable> */}
-
         <Pressable style={[styles.menuItem, styles.lastMenuItem]} onPress={() => Linking.openURL("https://sakay.ph/help")}>
           <Ionicons name="help-circle-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Help Center</Text>
@@ -677,13 +669,15 @@ export default function AccountScreen({ navigation }) {
 
       {/* App Info */}
       <View style={styles.appInfo}>
-        <Text style={styles.appVersion}>SakayNa Passenger v1.0.0</Text>
+        <Text style={styles.appVersion}>
+          SakayNa Passenger v{appVersion}
+        </Text>
         <Text style={styles.memberSince}>
-          Member since: {formatDate(profile?.created_at || stats.memberSince)}
+          © 2026 SakayNa. Developed by Ian Dave Lemera. All rights reserved.
         </Text>
       </View>
 
-      {/* Edit Profile Modal */}
+      {/* Edit Profile Modal - Name field is read-only */}
       <Modal
         visible={editProfileModal}
         transparent={true}
@@ -697,21 +691,22 @@ export default function AccountScreen({ navigation }) {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Edit Profile</Text>
+                <Text style={styles.modalTitle}>Edit Contact Information</Text>
                 <Pressable onPress={() => setEditProfileModal(false)}>
                   <Ionicons name="close" size={24} color="#666" />
                 </Pressable>
               </View>
 
               <ScrollView keyboardShouldPersistTaps="handled">
+                {/* Name Display (Read-only) */}
                 <Text style={styles.inputLabel}>Full Name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your full name"
-                  value={editName}
-                  onChangeText={setEditName}
-                />
+                <View style={styles.readOnlyField}>
+                  <Text style={styles.readOnlyText}>
+                    {profile ? `${profile.first_name} ${profile.last_name}` : "Loading..."}
+                  </Text>
+                </View>
 
+                {/* Phone Number */}
                 <Text style={styles.inputLabel}>Phone Number</Text>
                 <TextInput
                   style={styles.input}
@@ -721,6 +716,7 @@ export default function AccountScreen({ navigation }) {
                   onChangeText={setEditPhone}
                 />
 
+                {/* Email Address */}
                 <Text style={styles.inputLabel}>Email Address</Text>
                 <TextInput
                   style={styles.input}
@@ -1280,6 +1276,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: "#D1D5DB",
     marginTop: 2,
+    textAlign: "center",
   },
   modalContainer: {
     flex: 1,
@@ -1375,6 +1372,18 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     marginBottom: 15,
+  },
+  readOnlyField: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "#F9FAFB",
+    marginBottom: 15,
+  },
+  readOnlyText: {
+    fontSize: 16,
+    color: "#666",
   },
   pinInput: {
     borderWidth: 1,

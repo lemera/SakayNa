@@ -73,4 +73,8 @@ export const styles = StyleSheet.create({
   resizeMode: 'contain',
   marginBottom: 20,
 },
+resendDisabled: {
+  color: "#999",
+  fontWeight: "600",
+},
 });

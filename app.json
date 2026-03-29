@@ -20,14 +20,12 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs access to location to track rides and show your position on map.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to location to track rides and show your position on map.",
-        "UIBackgroundModes": [
-          "location"
-        ]
+        "UIBackgroundModes": ["location"]
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/sakayna_icon.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.lemera.SakayNa",
@@ -43,7 +41,7 @@
       ]
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/sakayna_icon.png"
     },
     "extra": {
       "eas": {
@@ -57,6 +55,12 @@
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Allow SakayNa to use your location to track rides."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "sounds": ["./assets/sounds/new_booking.wav"]
         }
       ],
       "expo-font",

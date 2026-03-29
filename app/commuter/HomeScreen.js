@@ -741,66 +741,89 @@ export default function CommuterHomeScreen() {
     }
   };
 
-  const createBooking = async () => {
-    if (!commuterId) {
-      Alert.alert("Error", "Please login first");
-      return;
+const createBooking = async () => {
+  if (!commuterId) {
+    Alert.alert("Error", "Please login first");
+    return;
+  }
+
+  // Check if there are drivers available within radius before creating booking
+  if (driversWithinRadius === 0) {
+    showCustomAlert(
+      "error", 
+      "No Drivers Available", 
+      `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location. Try increasing your search radius or try again later.`
+    );
+    return;
+  }
+
+  setFindingDriver(true);
+
+  try {
+    const pickupDisplay = pickupDetails
+      ? `${pickupText} - ${pickupDetails}`
+      : pickupText;
+    const dropoffDisplay = dropoffDetails
+      ? `${dropoffText} - ${dropoffDetails}`
+      : dropoffText;
+
+    const { data: booking, error: bookingError } = await supabase
+      .from("bookings")
+      .insert([
+        {
+          commuter_id: commuterId,
+          pickup_location: pickupDisplay,
+          pickup_latitude: pickup.latitude,
+          pickup_longitude: pickup.longitude,
+          pickup_details: pickupDetails,
+          dropoff_location: dropoffDisplay,
+          dropoff_latitude: dropoff.latitude,
+          dropoff_longitude: dropoff.longitude,
+          dropoff_details: dropoffDetails,
+          passenger_count: passengerCount,
+          fare: estimatedFare,
+          base_fare: fareSettings.baseFare,
+          per_km_rate: fareSettings.perKmRate,
+          distance_km: estimatedDistance,
+          duration_minutes: estimatedTime,
+          status: "pending",
+          created_at: new Date().toISOString(),
+        },
+      ])
+      .select()
+      .single();
+
+    if (bookingError) throw bookingError;
+
+    console.log(`✅ Booking created: ${booking.id}`);
+    setCurrentBookingId(booking.id);
+
+    if (pickup && pickupText) {
+      saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
     }
-
-    setFindingDriver(true);
-
-    try {
-      const pickupDisplay = pickupDetails
-        ? `${pickupText} - ${pickupDetails}`
-        : pickupText;
-      const dropoffDisplay = dropoffDetails
-        ? `${dropoffText} - ${dropoffDetails}`
-        : dropoffText;
-
-      const { data: booking, error: bookingError } = await supabase
-        .from("bookings")
-        .insert([
-          {
-            commuter_id: commuterId,
-            pickup_location: pickupDisplay,
-            pickup_latitude: pickup.latitude,
-            pickup_longitude: pickup.longitude,
-            pickup_details: pickupDetails,
-            dropoff_location: dropoffDisplay,
-            dropoff_latitude: dropoff.latitude,
-            dropoff_longitude: dropoff.longitude,
-            dropoff_details: dropoffDetails,
-            passenger_count: passengerCount,
-            fare: estimatedFare,
-            base_fare: fareSettings.baseFare,
-            per_km_rate: fareSettings.perKmRate,
-            distance_km: estimatedDistance,
-            duration_minutes: estimatedTime,
-            status: "pending",
-            created_at: new Date().toISOString(),
-          },
-        ])
-        .select()
-        .single();
-
-      if (bookingError) throw bookingError;
-
-      console.log(`✅ Booking created: ${booking.id}`);
-      setCurrentBookingId(booking.id);
-
-      if (pickup && pickupText) {
-        saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
-      }
-      if (dropoff && dropoffText) {
-        saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
-      }
-      
-    } catch (err) {
-      console.log("Error creating booking:", err);
-      Alert.alert("Error", "Failed to create booking");
-      setFindingDriver(false);
+    if (dropoff && dropoffText) {
+      saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
     }
-  };
+    
+  } catch (err) {
+    console.log("Error creating booking:", err);
+    Alert.alert("Error", "Failed to create booking");
+    setFindingDriver(false);
+  }
+};
+
+// Add this function to check drivers before booking
+const checkDriversAvailability = () => {
+  if (driversWithinRadius === 0) {
+    showCustomAlert(
+      "error", 
+      "No Drivers Available", 
+      `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location.\n\nSuggestions:\n• Increase your search radius\n• Try a different pickup location\n• Wait a few minutes and try again`
+    );
+    return false;
+  }
+  return true;
+};
 
   const handleDriverFound = (driverId) => {
     setFindingDriver(false);
@@ -1034,32 +1057,45 @@ export default function CommuterHomeScreen() {
     }
   };
 
-  const handleBookRide = () => {
-    if (!pickup) {
-      Alert.alert("Missing Info", "Please select a pickup location");
-      return;
-    }
-    if (!dropoff) {
-      Alert.alert("Missing Info", "Please select a dropoff location");
-      return;
-    }
+const handleBookRide = () => {
+  if (!pickup) {
+    Alert.alert("Missing Info", "Please select a pickup location");
+    return;
+  }
+  if (!dropoff) {
+    Alert.alert("Missing Info", "Please select a dropoff location");
+    return;
+  }
 
-    const pickupDisplay = pickupDetails
-      ? `${pickupText} - ${pickupDetails}`
-      : pickupText;
-    const dropoffDisplay = dropoffDetails
-      ? `${dropoffText} - ${dropoffDetails}`
-      : dropoffText;
-
+  // Check if drivers are available before showing confirmation
+  if (driversWithinRadius === 0) {
     Alert.alert(
-      "Confirm Booking",
-      `📍 PICKUP:\n${pickupDisplay}\n\n🏁 DROPOFF:\n${dropoffDisplay}\n\n👥 Passengers: ${passengerCount}\n📏 Distance: ${estimatedDistance} km\n⏱️ Est. Time: ${estimatedTime} mins\n💰 Total Fare: ₱${estimatedFare}`,
+      "No Drivers Available",
+      `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location.\n\nWould you like to increase your search radius?`,
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Book Now", onPress: createBooking },
-      ],
+        { text: "Increase Radius", onPress: openProximityFilter }
+      ]
     );
-  };
+    return;
+  }
+
+  const pickupDisplay = pickupDetails
+    ? `${pickupText} - ${pickupDetails}`
+    : pickupText;
+  const dropoffDisplay = dropoffDetails
+    ? `${dropoffText} - ${dropoffDetails}`
+    : dropoffText;
+
+  Alert.alert(
+    "Confirm Booking",
+    `📍 PICKUP:\n${pickupDisplay}\n\n🏁 DROPOFF:\n${dropoffDisplay}\n\n👥 Passengers: ${passengerCount}\n📏 Distance: ${estimatedDistance} km\n⏱️ Est. Time: ${estimatedTime} mins\n💰 Total Fare: ₱${estimatedFare}\n\n🚗 Available Drivers: ${driversWithinRadius}`,
+    [
+      { text: "Cancel", style: "cancel" },
+      { text: "Book Now", onPress: createBooking },
+    ],
+  );
+};
 
   // Proximity Filter Modal
   const ProximityFilterModal = useMemo(() => (
@@ -1395,6 +1431,7 @@ export default function CommuterHomeScreen() {
                 <TextInput
                   style={styles.detailsInput}
                   placeholder="Where exactly? (e.g., near the corner)"
+                  placeholderTextColor="#E97A3E"
                   value={pickupDetails}
                   onChangeText={setPickupDetails}
                   multiline
@@ -1426,6 +1463,7 @@ export default function CommuterHomeScreen() {
                 <TextInput
                   style={styles.detailsInput}
                   placeholder="Where exactly? (e.g., in front of Jollibee)"
+                  placeholderTextColor="#E97A3E"
                   value={dropoffDetails}
                   onChangeText={setDropoffDetails}
                   multiline
@@ -1768,12 +1806,13 @@ const styles = StyleSheet.create({
   detailsContainer: {
     marginTop: 8,
     borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
+    borderTopColor: "#1F1D1D",
     paddingTop: 8,
+    color: "#000000",
   },
   detailsInput: {
     fontSize: 13,
-    color: "#666",
+    color: "#000000",
     padding: 0,
     minHeight: 40,
     textAlignVertical: "top",

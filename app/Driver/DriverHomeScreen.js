@@ -460,19 +460,50 @@ export default function DriverHomeScreen() {
   };
 
   // * ========= DATA FETCHING =========
-  const fetchTodayEarnings = useCallback(async (driverId, useCache = true) => {
-    if (!driverId) return null;
-    if (useCache && dataCache.current.today && dataCache.current.timestamp && (Date.now() - dataCache.current.timestamp) < 30000) return dataCache.current.today;
-    try {
-      const today = new Date(); today.setHours(0,0,0,0);
-      const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-      const { data, error } = await supabase.from("bookings").select("actual_fare, payment_method, payment_type").eq("driver_id", driverId).eq("status","completed").gte("ride_completed_at", today.toISOString()).lt("ride_completed_at", tomorrow.toISOString());
-      if (error) { console.log("Today earnings error:", error.message); return null; }
-      const result = { total: data?.reduce((s, b) => s + (b.actual_fare || 0), 0) || 0, tripsCount: data?.length || 0 };
-      dataCache.current.today = result;
-      return result;
-    } catch (err) { console.log("Fetch today earnings error:", err.message); return null; }
-  }, []);
+const fetchTodayEarnings = useCallback(async (driverId, useCache = true) => {
+  if (!driverId) return null;
+  
+  try {
+    const today = new Date(); 
+    today.setHours(0,0,0,0);
+    const tomorrow = new Date(today); 
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const { data, error } = await supabase
+      .from("bookings")
+      .select("fare, actual_fare, payment_method, payment_type")
+      .eq("driver_id", driverId)
+      .eq("status","completed")
+      .gte("ride_completed_at", today.toISOString())
+      .lt("ride_completed_at", tomorrow.toISOString());
+      
+    if (error) throw error;
+    
+    // Calculate total - FIXED: use fare when actual_fare is null
+    let total = 0;
+    if (data && data.length > 0) {
+      for (const booking of data) {
+        const earnings = (booking.actual_fare !== null && booking.actual_fare !== undefined) 
+          ? booking.actual_fare 
+          : (booking.fare || 0);
+        total += earnings;
+        console.log(`Booking - fare: ${booking.fare}, actual_fare: ${booking.actual_fare}, using: ${earnings}`);
+      }
+    }
+    
+    const result = { 
+      total: total, 
+      tripsCount: data?.length || 0 
+    };
+    
+    console.log('Final result:', result);
+    dataCache.current.today = result;
+    return result;
+  } catch (err) { 
+    console.log("Fetch today earnings error:", err.message); 
+    return null; 
+  }
+}, []);
 
   const fetchRecentTrips = useCallback(async (driverId, useCache = true) => {
     if (!driverId) return [];
@@ -592,6 +623,7 @@ export default function DriverHomeScreen() {
         fetchActiveSubscription(driver.id, false), fetchMissionProgress(driver.id, false),
         fetchUnreadNotifications(driver.id, false), fetchDriverRank(driver.id, false),
       ]);
+      console.log('Today Result:', todayResult);
       if (todayResult)  { setTodayEarnings(todayResult.total); setTodayTrips(todayResult.tripsCount); }
       if (recentResult) setRecentTrips(recentResult);
       if (weeklyResult) setWeeklyData(weeklyResult);

@@ -463,10 +463,7 @@ export default function HomePage() {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        header: ({ navigation }) =>
-          route.name === "Home" ? null : (
-            <TopBar title={route.name} />
-          ),
+        headerShown: false, // This removes all headers globally
         tabBarActiveTintColor: "#E97A3E",
         tabBarInactiveTintColor: "#183B5C",
         tabBarStyle: navStyles.tabBar,

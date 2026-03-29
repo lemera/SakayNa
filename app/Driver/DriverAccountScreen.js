@@ -66,9 +66,8 @@ export default function DriverAccountScreen({ navigation }) {
   const [qrSize, setQrSize] = useState(250);
   const [qrLogo, setQrLogo] = useState(null);
 
-  // Modal states
+  // Modal states - REMOVED editName since name is not editable
   const [editProfileModal, setEditProfileModal] = useState(false);
-  const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
 
@@ -390,9 +389,7 @@ export default function DriverAccountScreen({ navigation }) {
 
       setDriver(data);
 
-      setEditName(
-        `${data.first_name} ${data.middle_name || ""} ${data.last_name}`,
-      );
+      // Only set phone and email for editing, not name
       setEditPhone(data.phone || "");
       setEditEmail(data.email || "");
     } catch (err) {
@@ -499,17 +496,13 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
+  // Updated handleUpdateProfile - name is no longer updated
   const handleUpdateProfile = async () => {
     try {
-      const nameParts = editName.split(" ");
-      const firstName = nameParts[0] || "";
-      const lastName = nameParts.slice(1).join(" ") || "";
-
+      // Name is no longer editable - only update phone and email
       const { error } = await supabase
         .from("drivers")
         .update({
-          first_name: firstName,
-          last_name: lastName,
           phone: editPhone,
           email: editEmail,
           updated_at: new Date(),
@@ -917,6 +910,22 @@ export default function DriverAccountScreen({ navigation }) {
             </Text>
           </View>
         </View>
+
+        {/* Edit Profile Button - Added to allow editing phone/email */}
+        <Pressable
+          style={{
+            backgroundColor: "#F3F4F6",
+            padding: 12,
+            borderRadius: 12,
+            alignItems: "center",
+            marginTop: 15,
+          }}
+          onPress={() => setEditProfileModal(true)}
+        >
+          <Text style={{ color: "#183B5C", fontWeight: "600" }}>
+            Edit Contact Information
+          </Text>
+        </Pressable>
       </View>
 
       {/* QR Code Section */}
@@ -2198,152 +2207,165 @@ export default function DriverAccountScreen({ navigation }) {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Edit Profile Modal */}
+      {/* Edit Profile Modal - Name field removed */}
       <Modal
         visible={editProfileModal}
         transparent={true}
         animationType="slide"
         onRequestClose={() => setEditProfileModal(false)}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "flex-end",
-          }}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
         >
-          <View
-            style={{
-              backgroundColor: "#FFF",
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: 20,
-            }}
-          >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View
               style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 20,
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.5)",
+                justifyContent: "flex-end",
               }}
             >
-              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
-                Edit Profile
-              </Text>
-              <Pressable onPress={() => setEditProfileModal(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </Pressable>
-            </View>
-
-            <ScrollView>
-              <Text
+              <View
                 style={{
-                  fontSize: 14,
-                  fontWeight: "600",
-                  color: "#333",
-                  marginBottom: 8,
+                  backgroundColor: "#FFF",
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  padding: 20,
+                  maxHeight: "90%",
                 }}
               >
-                Full Name
-              </Text>
-              <TextInput
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E5E7EB",
-                  borderRadius: 12,
-                  padding: 12,
-                  fontSize: 16,
-                  marginBottom: 15,
-                }}
-                placeholder="Enter your full name"
-                value={editName}
-                onChangeText={setEditName}
-              />
-
-              <Text
-                style={{
-                  fontSize: 14,
-                  fontWeight: "600",
-                  color: "#333",
-                  marginBottom: 8,
-                }}
-              >
-                Phone Number
-              </Text>
-              <TextInput
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E5E7EB",
-                  borderRadius: 12,
-                  padding: 12,
-                  fontSize: 16,
-                  marginBottom: 15,
-                }}
-                placeholder="Enter phone number"
-                keyboardType="phone-pad"
-                value={editPhone}
-                onChangeText={setEditPhone}
-              />
-
-              <Text
-                style={{
-                  fontSize: 14,
-                  fontWeight: "600",
-                  color: "#333",
-                  marginBottom: 8,
-                }}
-              >
-                Email Address
-              </Text>
-              <TextInput
-                style={{
-                  borderWidth: 1,
-                  borderColor: "#E5E7EB",
-                  borderRadius: 12,
-                  padding: 12,
-                  fontSize: 16,
-                  marginBottom: 20,
-                }}
-                placeholder="Enter email address"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                value={editEmail}
-                onChangeText={setEditEmail}
-              />
-
-              <View style={{ flexDirection: "row", gap: 10 }}>
-                <Pressable
+                <View
                   style={{
-                    flex: 1,
-                    backgroundColor: "#F3F4F6",
-                    padding: 14,
-                    borderRadius: 12,
+                    flexDirection: "row",
+                    justifyContent: "space-between",
                     alignItems: "center",
+                    marginBottom: 20,
                   }}
-                  onPress={() => setEditProfileModal(false)}
                 >
-                  <Text style={{ color: "#333", fontWeight: "600" }}>
-                    Cancel
+                  <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
+                    Edit Contact Information
                   </Text>
-                </Pressable>
+                  <Pressable onPress={() => setEditProfileModal(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
+                  </Pressable>
+                </View>
 
-                <Pressable
-                  style={{
-                    flex: 1,
-                    backgroundColor: "#183B5C",
-                    padding: 14,
-                    borderRadius: 12,
-                    alignItems: "center",
-                  }}
-                  onPress={handleUpdateProfile}
-                >
-                  <Text style={{ color: "#FFF", fontWeight: "600" }}>Save</Text>
-                </Pressable>
+                <ScrollView showsVerticalScrollIndicator={true}>
+                  {/* Name Display (Read-only) */}
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Full Name
+                  </Text>
+                  <View
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      backgroundColor: "#F9FAFB",
+                      marginBottom: 15,
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, color: "#666" }}>
+                      {driver ? `${driver.first_name} ${driver.last_name}` : "Loading..."}
+                    </Text>
+                  </View>
+
+                  {/* Phone Number */}
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Phone Number
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                      marginBottom: 15,
+                    }}
+                    placeholder="Enter phone number"
+                    keyboardType="phone-pad"
+                    value={editPhone}
+                    onChangeText={setEditPhone}
+                  />
+
+                  {/* Email Address */}
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Email Address
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                      marginBottom: 20,
+                    }}
+                    placeholder="Enter email address"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={editEmail}
+                    onChangeText={setEditEmail}
+                  />
+
+                  {/* Buttons */}
+                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+                    <Pressable
+                      style={{
+                        flex: 1,
+                        backgroundColor: "#F3F4F6",
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                      onPress={() => setEditProfileModal(false)}
+                    >
+                      <Text style={{ color: "#333", fontWeight: "600" }}>
+                        Cancel
+                      </Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={{
+                        flex: 1,
+                        backgroundColor: "#183B5C",
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                      onPress={handleUpdateProfile}
+                    >
+                      <Text style={{ color: "#FFF", fontWeight: "600" }}>Save</Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
               </View>
-            </ScrollView>
-          </View>
-        </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Vehicle Modal */}
@@ -2357,239 +2379,239 @@ export default function DriverAccountScreen({ navigation }) {
           behavior={Platform.OS === "ios" ? "padding" : "height"}
           style={{ flex: 1 }}
         >
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: "rgba(0,0,0,0.5)",
-              justifyContent: "flex-end",
-            }}
-          >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
             <View
               style={{
-                backgroundColor: "#FFF",
-                borderTopLeftRadius: 24,
-                borderTopRightRadius: 24,
-                padding: 20,
-                maxHeight: "90%",
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.5)",
+                justifyContent: "flex-end",
               }}
             >
               <View
                 style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 20,
+                  backgroundColor: "#FFF",
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  padding: 20,
+                  maxHeight: "90%",
                 }}
               >
-                <Text
-                  style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
-                >
-                  Vehicle Information
-                </Text>
-                <Pressable onPress={() => setVehicleModal(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
-                </Pressable>
-              </View>
-
-              <ScrollView
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-              >
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#333",
-                    marginBottom: 8,
-                  }}
-                >
-                  Plate Number
-                </Text>
-                <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#E5E7EB",
-                    borderRadius: 12,
-                    padding: 12,
-                    fontSize: 16,
-                    marginBottom: 15,
-                    textTransform: "uppercase",
-                  }}
-                  placeholder="ABC-1234"
-                  value={editPlate}
-                  onChangeText={setEditPlate}
-                  returnKeyType="done"
-                />
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#333",
-                    marginBottom: 8,
-                  }}
-                >
-                  Vehicle Type
-                </Text>
-                <View
-                  style={{ flexDirection: "row", marginBottom: 15, gap: 10 }}
-                >
-                  {["motorcycle", "tricycle"].map((type) => (
-                    <Pressable
-                      key={type}
-                      style={[
-                        {
-                          flex: 1,
-                          padding: 12,
-                          borderRadius: 12,
-                          borderWidth: 2,
-                          alignItems: "center",
-                        },
-                        editVehicleType === type
-                          ? {
-                              borderColor: "#183B5C",
-                              backgroundColor: "#E6E9F0",
-                            }
-                          : { borderColor: "#E5E7EB" },
-                      ]}
-                      onPress={() => setEditVehicleType(type)}
-                    >
-                      <Ionicons
-                        name={
-                          type === "motorcycle"
-                            ? "bicycle"
-                            : type === "tricycle"
-                              ? "car-sport"
-                              : "car"
-                        }
-                        size={20}
-                        color={editVehicleType === type ? "#183B5C" : "#9CA3AF"}
-                      />
-                      <Text
-                        style={{
-                          fontSize: 10,
-                          marginTop: 4,
-                          color: editVehicleType === type ? "#183B5C" : "#666",
-                          textTransform: "capitalize",
-                        }}
-                      >
-                        {type}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#333",
-                    marginBottom: 8,
-                  }}
-                >
-                  Vehicle Color
-                </Text>
                 <View
                   style={{
                     flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
                     marginBottom: 20,
-                    gap: 10,
-                    flexWrap: "wrap",
                   }}
                 >
-                  {[
-                    "Red",
-                    "Blue",
-                    "Black",
-                    "White",
-                    "Silver",
-                    "Gray",
-                    "Green",
-                    "Yellow",
-                  ].map((color) => (
-                    <Pressable
-                      key={color}
-                      style={[
-                        {
-                          paddingHorizontal: 16,
-                          paddingVertical: 8,
-                          borderRadius: 20,
-                          borderWidth: 1,
-                        },
-                        editVehicleColor.toLowerCase() === color.toLowerCase()
-                          ? {
-                              borderColor: "#183B5C",
-                              backgroundColor: "#E6E9F0",
-                            }
-                          : { borderColor: "#E5E7EB" },
-                      ]}
-                      onPress={() => setEditVehicleColor(color)}
-                    >
-                      <View
-                        style={{ flexDirection: "row", alignItems: "center" }}
+                  <Text
+                    style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
+                  >
+                    Vehicle Information
+                  </Text>
+                  <Pressable onPress={() => setVehicleModal(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
+                  </Pressable>
+                </View>
+
+                <ScrollView
+                  showsVerticalScrollIndicator={true}
+                  keyboardShouldPersistTaps="handled"
+                >
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Plate Number
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 16,
+                      marginBottom: 15,
+                      textTransform: "uppercase",
+                    }}
+                    placeholder="ABC-1234"
+                    value={editPlate}
+                    onChangeText={setEditPlate}
+                    returnKeyType="done"
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Vehicle Type
+                  </Text>
+                  <View
+                    style={{ flexDirection: "row", marginBottom: 15, gap: 10 }}
+                  >
+                    {["motorcycle", "tricycle"].map((type) => (
+                      <Pressable
+                        key={type}
+                        style={[
+                          {
+                            flex: 1,
+                            padding: 12,
+                            borderRadius: 12,
+                            borderWidth: 2,
+                            alignItems: "center",
+                          },
+                          editVehicleType === type
+                            ? {
+                                borderColor: "#183B5C",
+                                backgroundColor: "#E6E9F0",
+                              }
+                            : { borderColor: "#E5E7EB" },
+                        ]}
+                        onPress={() => setEditVehicleType(type)}
                       >
-                        <View
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: 6,
-                            backgroundColor: color.toLowerCase(),
-                            marginRight: 4,
-                          }}
+                        <Ionicons
+                          name={
+                            type === "motorcycle"
+                              ? "bicycle"
+                              : type === "tricycle"
+                                ? "car-sport"
+                                : "car"
+                          }
+                          size={20}
+                          color={editVehicleType === type ? "#183B5C" : "#9CA3AF"}
                         />
                         <Text
                           style={{
-                            fontSize: 12,
-                            color:
-                              editVehicleColor.toLowerCase() ===
-                              color.toLowerCase()
-                                ? "#183B5C"
-                                : "#666",
+                            fontSize: 10,
+                            marginTop: 4,
+                            color: editVehicleType === type ? "#183B5C" : "#666",
+                            textTransform: "capitalize",
                           }}
                         >
-                          {color}
+                          {type}
                         </Text>
-                      </View>
+                      </Pressable>
+                    ))}
+                  </View>
+
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Vehicle Color
+                  </Text>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      marginBottom: 20,
+                      gap: 10,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {[
+                      "Red",
+                      "Blue",
+                      "Black",
+                      "White",
+                      "Silver",
+                      "Gray",
+                      "Green",
+                      "Yellow",
+                    ].map((color) => (
+                      <Pressable
+                        key={color}
+                        style={[
+                          {
+                            paddingHorizontal: 16,
+                            paddingVertical: 8,
+                            borderRadius: 20,
+                            borderWidth: 1,
+                          },
+                          editVehicleColor.toLowerCase() === color.toLowerCase()
+                            ? {
+                                borderColor: "#183B5C",
+                                backgroundColor: "#E6E9F0",
+                              }
+                            : { borderColor: "#E5E7EB" },
+                        ]}
+                        onPress={() => setEditVehicleColor(color)}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center" }}>
+                          <View
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: 6,
+                              backgroundColor: color.toLowerCase(),
+                              marginRight: 4,
+                            }}
+                          />
+                          <Text
+                            style={{
+                              fontSize: 12,
+                              color:
+                                editVehicleColor.toLowerCase() ===
+                                color.toLowerCase()
+                                  ? "#183B5C"
+                                  : "#666",
+                            }}
+                          >
+                            {color}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+
+                  <View
+                    style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}
+                  >
+                    <Pressable
+                      style={{
+                        flex: 1,
+                        backgroundColor: "#F3F4F6",
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                      onPress={() => setVehicleModal(false)}
+                    >
+                      <Text style={{ color: "#333", fontWeight: "600" }}>
+                        Cancel
+                      </Text>
                     </Pressable>
-                  ))}
-                </View>
 
-                <View
-                  style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}
-                >
-                  <Pressable
-                    style={{
-                      flex: 1,
-                      backgroundColor: "#F3F4F6",
-                      padding: 14,
-                      borderRadius: 12,
-                      alignItems: "center",
-                    }}
-                    onPress={() => setVehicleModal(false)}
-                  >
-                    <Text style={{ color: "#333", fontWeight: "600" }}>
-                      Cancel
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={{
-                      flex: 1,
-                      backgroundColor: "#183B5C",
-                      padding: 14,
-                      borderRadius: 12,
-                      alignItems: "center",
-                    }}
-                    onPress={handleUpdateVehicle}
-                  >
-                    <Text style={{ color: "#FFF", fontWeight: "600" }}>
-                      Save
-                    </Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
+                    <Pressable
+                      style={{
+                        flex: 1,
+                        backgroundColor: "#183B5C",
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                      onPress={handleUpdateVehicle}
+                    >
+                      <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                        Save
+                      </Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
+              </View>
             </View>
-          </View>
+          </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </Modal>
     </ScrollView>

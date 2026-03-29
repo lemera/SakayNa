@@ -670,14 +670,14 @@ const handleNotificationAction = (notification) => {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#183B5C" />
         </Pressable>
         <View>
-          <Text style={styles.headerTitle}>Inbox</Text>
+          <Text style={styles.headerTitle}></Text>
           {unreadCount > 0 && (
             <Text style={styles.headerSubtitle}>{unreadCount} unread</Text>
           )}

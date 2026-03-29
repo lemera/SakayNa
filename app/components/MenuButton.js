@@ -1,111 +1,153 @@
 import React, { useRef } from "react";
 import {
-  Pressable,
   Animated,
   StyleSheet,
+  PanResponder,
   useWindowDimensions,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 
+const BUTTON_SIZE = 60;
+
 export default function MenuButton({ onPress }) {
   const insets = useSafeAreaInsets();
-  const { height } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+
+  const initialBottom = insets.bottom + (height > 800 ? 90 : 70);
+  const initialX = width - 20 - BUTTON_SIZE;
+  const initialY = height - initialBottom - BUTTON_SIZE;
+
+  // JS-driven: controls top/left — useNativeDriver must be FALSE
+  const position = useRef(new Animated.ValueXY({ x: initialX, y: initialY })).current;
+  const lastPosition = useRef({ x: initialX, y: initialY });
+
+  // Native-driven: controls scale only — useNativeDriver must be TRUE
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const rotateAnim = useRef(new Animated.Value(0)).current;
 
-  const handlePressIn = () => {
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: 0.85,
-        useNativeDriver: true,
-        speed: 50,
-      }),
-      Animated.spring(rotateAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        speed: 50,
-      }),
-    ]).start();
+  const hasMoved = useRef(false);
+  const dragStartTime = useRef(0);
+
+  const snapToEdge = (x, y) => {
+    const snapX =
+      x + BUTTON_SIZE / 2 < width / 2 ? 16 : width - BUTTON_SIZE - 16;
+
+    const clampedY = Math.max(
+      insets.top + 16,
+      Math.min(y, height - BUTTON_SIZE - insets.bottom - 16)
+    );
+
+    Animated.spring(position, {
+      toValue: { x: snapX, y: clampedY },
+      useNativeDriver: false,
+      friction: 7,
+      tension: 50,
+    }).start();
+
+    lastPosition.current = { x: snapX, y: clampedY };
   };
 
-  const handlePressOut = () => {
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        useNativeDriver: true,
-        speed: 50,
-      }),
-      Animated.spring(rotateAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        speed: 50,
-      }),
-    ]).start();
-  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, g) =>
+        Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4,
 
-  const rotate = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ["0deg", "180deg"],
-  });
+      onPanResponderGrant: () => {
+        dragStartTime.current = Date.now();
+        hasMoved.current = false;
 
-  // Calculate bottom position based on screen height
-  const bottomPosition = insets.bottom + (height > 800 ? 90 : 70);
+        position.setOffset({
+          x: lastPosition.current.x,
+          y: lastPosition.current.y,
+        });
+        position.setValue({ x: 0, y: 0 });
+
+        Animated.spring(scaleAnim, {
+          toValue: 0.88,
+          useNativeDriver: true,
+          speed: 50,
+        }).start();
+      },
+
+      onPanResponderMove: (_, g) => {
+        if (Math.abs(g.dx) > 4 || Math.abs(g.dy) > 4) {
+          hasMoved.current = true;
+        }
+        position.setValue({ x: g.dx, y: g.dy });
+      },
+
+      onPanResponderRelease: (_, g) => {
+        position.flattenOffset();
+
+        const elapsed = Date.now() - dragStartTime.current;
+        const moved = hasMoved.current;
+
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          speed: 50,
+        }).start();
+
+        if (!moved && elapsed < 300) {
+          // It was a tap — fire onPress without snapping
+          onPress && onPress();
+        } else {
+          // It was a drag — snap to nearest edge
+          const finalX = lastPosition.current.x + g.dx;
+          const finalY = lastPosition.current.y + g.dy;
+          snapToEdge(finalX, finalY);
+        }
+
+        hasMoved.current = false;
+      },
+    })
+  ).current;
 
   return (
-    <Pressable
-      onPress={onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
+    // Outer Animated.View: JS-driven position (left/top) — useNativeDriver: false
+    <Animated.View
+      {...panResponder.panHandlers}
       style={[
         styles.container,
-        { bottom: bottomPosition }
+        {
+          left: position.x,
+          top: position.y,
+        },
       ]}
     >
-      <Animated.View
-        style={[
-          styles.buttonWrapper,
-          {
-            transform: [{ scale: scaleAnim }],
-          },
-        ]}
-      >
+      {/* Inner Animated.View: native-driven scale — useNativeDriver: true */}
+      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
         <LinearGradient
           colors={["#FF6B4A", "#FF8A5C"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.button}
         >
-          <Animated.View style={{ transform: [{ rotate }] }}>
-            <Ionicons name="menu" size={28} color="#FFF" />
-          </Animated.View>
+          <Ionicons name="menu" size={28} color="#FFF" />
         </LinearGradient>
       </Animated.View>
-    </Pressable>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     position: "absolute",
-    right: 20,
+    width: BUTTON_SIZE,
+    height: BUTTON_SIZE,
     zIndex: 999,
     shadowColor: "#FF6B4A",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.35,
     shadowRadius: 12,
     elevation: 10,
   },
-  buttonWrapper: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
   button: {
-    width: "100%",
-    height: "100%",
-    borderRadius: 30,
+    width: BUTTON_SIZE,
+    height: BUTTON_SIZE,
+    borderRadius: BUTTON_SIZE / 2,
     justifyContent: "center",
     alignItems: "center",
   },

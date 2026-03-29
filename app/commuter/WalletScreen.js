@@ -1036,7 +1036,7 @@ export default function CommuterWalletScreen() {
 
   return (
     <>
-      <View style={[styles.container, { paddingTop: insets.top }]}>
+      <View style={styles.container}>
         <ScrollView
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -1044,7 +1044,7 @@ export default function CommuterWalletScreen() {
           }
         >
           {/* Header */}
-          <View style={styles.header}>
+           <View style={[styles.header, { paddingTop: 0, marginTop: 20 }]}>
             <View>
               <Text style={styles.headerGreeting}>Hello, {commuter?.first_name || 'Rider'}! 👋</Text>
               <Text style={styles.headerTitle}>My Points</Text>
@@ -2020,11 +2020,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 20,
     paddingVertical: 15,
+    paddingTop: 10, // Reduce this value
+    marginTop: 0,   // Ensure no margin
   },
   headerGreeting: {
     fontSize: 14,
     color: "#666",
-    marginBottom: 4,
+    marginBottom: 0,
   },
   headerTitle: {
     fontSize: 28,

@@ -24,7 +24,6 @@ import TopRatedDriversScreen from "../commuter/TopRatedDrivers";
 
 const { width, height } = Dimensions.get("window");
 
-// Menu categories with items - Updated with Top Rated Drivers
 const MENU_CATEGORIES = [
   {
     id: "main",
@@ -94,33 +93,6 @@ const MENU_CATEGORIES = [
       },
     ],
   },
-  // {
-  //   id: "premium",
-  //   title: "PREMIUM DRIVERS",
-  //   icon: "ribbon-outline",
-  //   items: [
-  //     {
-  //       id: "topRated",
-  //       name: "Top Rated Drivers",
-  //       icon: "star-outline",
-  //       activeIcon: "star",
-  //       screen: "TopRatedDrivers",
-  //       color: "#F59E0B",
-  //       gradient: ["#F59E0B", "#FBBF24"],
-  //       description: "Best rated drivers 4+ stars",
-  //     },
-  //     {
-  //       id: "nearbyPremium",
-  //       name: "Nearby Premium",
-  //       icon: "location-outline",
-  //       activeIcon: "location",
-  //       screen: "NearbyPremiumDrivers",
-  //       color: "#10B981",
-  //       gradient: ["#10B981", "#34D399"],
-  //       comingSoon: true,
-  //     },
-  //   ],
-  // },
   {
     id: "communication",
     title: "COMMUNICATION & PROFILE",
@@ -190,8 +162,7 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
   const [selectedItem, setSelectedItem] = useState(null);
   const [isClosing, setIsClosing] = useState(false);
   const scrollViewRef = useRef(null);
-  
-  // Animation values
+
   const backdropOpacity = useRef(new Animated.Value(0)).current;
   const menuTranslateY = useRef(new Animated.Value(height)).current;
   const menuScale = useRef(new Animated.Value(0.95)).current;
@@ -199,12 +170,10 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
   useEffect(() => {
     if (visible && !isClosing) {
-      // Reset scroll position when menu opens
       if (scrollViewRef.current) {
         scrollViewRef.current.scrollTo({ y: 0, animated: false });
       }
-      
-      // Animate in
+
       setIsClosing(false);
       Animated.parallel([
         Animated.timing(backdropOpacity, {
@@ -237,7 +206,7 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
   const closeMenu = () => {
     setIsClosing(true);
-    
+
     Animated.parallel([
       Animated.timing(backdropOpacity, {
         toValue: 0,
@@ -267,7 +236,7 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
   const handleNavigate = (item) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
+
     if (item.comingSoon) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert("✨ Coming Soon!", `${item.name} will be available in the next update!`);
@@ -276,7 +245,7 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
     if (item.screen) {
       setSelectedItem(item.id);
-      
+
       setTimeout(() => {
         navigation.navigate(item.screen);
         closeMenu();
@@ -292,7 +261,7 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
   const getCurrentActiveItem = () => {
     for (const category of MENU_CATEGORIES) {
-      const active = category.items.find(item => item.screen === currentScreen);
+      const active = category.items.find((item) => item.screen === currentScreen);
       if (active) return active.id;
     }
     return null;
@@ -300,27 +269,23 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
 
   const activeItemId = getCurrentActiveItem();
 
-  const renderCategory = (category, categoryIndex) => {
+  const renderCategory = (category) => {
     const isPremium = category.id === "premium";
-    
+
     return (
       <View key={category.id} style={styles.categoryContainer}>
-        {/* Category Header */}
         <View style={styles.categoryHeader}>
           <LinearGradient
             colors={isPremium ? ["#FEF3C7", "#FDE68A"] : ["#FFF3F0", "#FFE5E0"]}
             style={styles.categoryIconContainer}
           >
-            <Ionicons 
-              name={category.icon} 
-              size={18} 
-              color={isPremium ? "#F59E0B" : "#FF6B4A"} 
+            <Ionicons
+              name={category.icon}
+              size={18}
+              color={isPremium ? "#F59E0B" : "#FF6B4A"}
             />
           </LinearGradient>
-          <Text style={[
-            styles.categoryTitle,
-            isPremium && styles.categoryTitlePremium
-          ]}>
+          <Text style={[styles.categoryTitle, isPremium && styles.categoryTitlePremium]}>
             {category.title}
           </Text>
           {isPremium && (
@@ -331,12 +296,11 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
           )}
         </View>
 
-        {/* Category Items */}
         <View style={styles.categoryItems}>
           {category.items.map((item) => {
             const isActive = activeItemId === item.id || selectedItem === item.id;
             const isPremiumItem = item.id === "topRated";
-            
+
             return (
               <Pressable
                 key={item.id}
@@ -349,25 +313,27 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
                 onPress={() => handleNavigate(item)}
               >
                 <LinearGradient
-                  colors={isActive ? item.gradient : (isPremiumItem ? ["#FEF3C7", "#FDE68A"] : ["#F9FAFB", "#F3F4F6"])}
+                  colors={
+                    isActive
+                      ? item.gradient
+                      : isPremiumItem
+                      ? ["#FEF3C7", "#FDE68A"]
+                      : ["#F9FAFB", "#F3F4F6"]
+                  }
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={[
                     styles.menuIconContainer,
-                    isPremiumItem && styles.premiumIconContainer
+                    isPremiumItem && styles.premiumIconContainer,
                   ]}
                 >
                   <Ionicons
                     name={isActive ? item.activeIcon || item.icon : item.icon}
                     size={isPremiumItem ? 26 : 24}
-                    color={isActive ? "#FFF" : (isPremiumItem ? "#F59E0B" : item.color)}
+                    color={isActive ? "#FFF" : isPremiumItem ? "#F59E0B" : item.color}
                   />
-                  {item.comingSoon && (
-                    <View style={styles.comingSoonDot} />
-                  )}
-                  {isPremiumItem && !isActive && (
-                    <View style={styles.premiumGlow} />
-                  )}
+                  {item.comingSoon && <View style={styles.comingSoonDot} />}
+                  {isPremiumItem && !isActive && <View style={styles.premiumGlow} />}
                 </LinearGradient>
                 <Text
                   style={[
@@ -404,125 +370,104 @@ export default function FloatingMenu({ visible, onClose, currentScreen }) {
       statusBarTranslucent={true}
     >
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      <View style={styles.container}>
-        {/* Backdrop with blur effect */}
-        <Animated.View
-          style={[
-            styles.backdrop,
-            { opacity: backdropOpacity },
-          ]}
-        >
-          <TouchableWithoutFeedback onPress={handleBackdropPress}>
-            <BlurView
-              intensity={Platform.OS === 'ios' ? 60 : 80}
-              tint="dark"
-              style={styles.backdropBlur}
-            />
-          </TouchableWithoutFeedback>
-        </Animated.View>
 
-        {/* Menu Panel */}
-        <Animated.View
-          style={[
-            styles.menuContainer,
-            {
-              transform: [
-                { translateY: menuTranslateY },
-                { scale: menuScale },
-              ],
-              opacity: menuOpacity,
-            },
-          ]}
+      {/* Backdrop */}
+      <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
+        <TouchableWithoutFeedback onPress={handleBackdropPress}>
+          <BlurView
+            intensity={Platform.OS === "ios" ? 60 : 80}
+            tint="dark"
+            style={StyleSheet.absoluteFill}
+          />
+        </TouchableWithoutFeedback>
+      </Animated.View>
+
+      {/* Menu Panel — sits above backdrop, NOT inside it */}
+      <Animated.View
+        style={[
+          styles.menuContainer,
+          {
+            transform: [{ translateY: menuTranslateY }, { scale: menuScale }],
+            opacity: menuOpacity,
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={["#FFFFFF", "#FEFEFE"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.menuGradient}
         >
-          <LinearGradient
-            colors={["#FFFFFF", "#FEFEFE"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.menuGradient}
+          {/* Fixed Header */}
+          <View style={styles.menuHeader}>
+            <View style={styles.dragHandle}>
+              <View style={styles.dragHandleBar} />
+            </View>
+            <View style={styles.headerContent}>
+              <LinearGradient colors={["#FF6B4A", "#FF8A5C"]} style={styles.logoIcon}>
+                <Ionicons name="apps" size={20} color="#FFF" />
+              </LinearGradient>
+              <Text style={styles.menuTitle}>Menu</Text>
+              <Pressable onPress={closeMenu} style={styles.closeButton}>
+                <Ionicons name="close" size={22} color="#9CA3AF" />
+              </Pressable>
+            </View>
+          </View>
+
+          {/* Scrollable Categories */}
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={true}
+            indicatorStyle="black"
+            bounces={true}
+            overScrollMode="always"
+            scrollEventThrottle={16}
+            keyboardShouldPersistTaps="handled"
           >
-            {/* Header with drag handle */}
-            <View style={styles.menuHeader}>
-              <View style={styles.dragHandle}>
-                <View style={styles.dragHandleBar} />
-              </View>
-              <View style={styles.headerContent}>
-                <LinearGradient
-                  colors={["#FF6B4A", "#FF8A5C"]}
-                  style={styles.logoIcon}
+            {MENU_CATEGORIES.map((category) => renderCategory(category))}
+          </ScrollView>
+
+          {/* Fixed Footer */}
+          <View style={styles.menuFooter}>
+            <LinearGradient colors={["#F9FAFB", "#F3F4F6"]} style={styles.footerGradient}>
+              <View style={styles.footerContent}>
+                <Ionicons name="help-circle-outline" size={20} color="#9CA3AF" />
+                <Text style={styles.footerText}>Need help?</Text>
+                <Pressable
+                  style={styles.footerButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    navigation.navigate("Support");
+                    closeMenu();
+                  }}
                 >
-                  <Ionicons name="apps" size={20} color="#FFF" />
-                </LinearGradient>
-                <Text style={styles.menuTitle}>Menu</Text>
-                <Pressable onPress={closeMenu} style={styles.closeButton}>
-                  <Ionicons name="close" size={22} color="#9CA3AF" />
+                  <Text style={styles.footerButtonText}>Contact Support</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#FF6B4A" />
                 </Pressable>
               </View>
-            </View>
-
-            {/* Categories ScrollView - Enhanced scrolling with extra bottom padding */}
-            <ScrollView
-              ref={scrollViewRef}
-              showsVerticalScrollIndicator={Platform.OS === 'ios' ? true : false}
-              indicatorStyle="black"
-              contentContainerStyle={styles.scrollContent}
-              style={styles.scrollView}
-              bounces={true}
-              overScrollMode="always"
-              scrollEventThrottle={16}
-              decelerationRate="fast"
-              persistentScrollbar={true}
-            >
-              {MENU_CATEGORIES.map((category, index) => renderCategory(category, index))}
-              {/* Extra bottom padding for better scrolling experience */}
-              <View style={styles.bottomSpacer} />
-              <View style={styles.extraBottomPadding} />
-            </ScrollView>
-
-            {/* Footer with user info - Fixed at bottom with improved spacing */}
-            <View style={styles.menuFooter}>
-              <LinearGradient
-                colors={["#F9FAFB", "#F3F4F6"]}
-                style={styles.footerGradient}
-              >
-                <View style={styles.footerContent}>
-                  <Ionicons name="help-circle-outline" size={20} color="#9CA3AF" />
-                  <Text style={styles.footerText}>Need help?</Text>
-                  <Pressable
-                    style={styles.footerButton}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      navigation.navigate("Support");
-                      closeMenu();
-                    }}
-                  >
-                    <Text style={styles.footerButtonText}>Contact Support</Text>
-                    <Ionicons name="arrow-forward" size={16} color="#FF6B4A" />
-                  </Pressable>
-                </View>
-              </LinearGradient>
-            </View>
-          </LinearGradient>
-        </Animated.View>
-      </View>
+            </LinearGradient>
+          </View>
+        </LinearGradient>
+      </Animated.View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
   },
-  backdropBlur: {
-    flex: 1,
-  },
+
+  // KEY FIX: Use fixed height instead of maxHeight, and flex column layout
   menuContainer: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
+    // Fixed height so ScrollView has a bounded parent to scroll within
+    height: height * 0.85,
     backgroundColor: "#FFF",
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
@@ -531,23 +476,25 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 24,
     elevation: 25,
-    maxHeight: height * 0.85,
+    // Overflow hidden so rounded corners clip children
+    overflow: "hidden",
   },
+
+  // KEY FIX: flex: 1 + flexDirection column so header/scroll/footer stack correctly
   menuGradient: {
+    flex: 1,
+    flexDirection: "column",
     borderTopLeftRadius: 32,
     borderTopRightRadius: 32,
-    overflow: "hidden",
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
   },
+
+  // Header must NOT flex-grow — it stays fixed at top
   menuHeader: {
     paddingTop: 12,
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: "#F0F0F0",
     backgroundColor: "#FFF",
-    flexShrink: 0,
   },
   dragHandle: {
     alignItems: "center",
@@ -587,18 +534,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+
+  // KEY FIX: flex: 1 lets ScrollView take all remaining space between header and footer
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 20,
+    paddingBottom: 24,
   },
-  bottomSpacer: {
-    height: Platform.OS === 'ios' ? 30 : 20,
-  },
-  extraBottomPadding: {
-    height: Platform.OS === 'ios' ? 40 : 30,
-  },
+
   categoryContainer: {
     marginTop: 20,
     paddingHorizontal: 20,
@@ -665,9 +609,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-  premiumMenuItem: {
-    transform: [{ scale: 1 }],
-  },
+  premiumMenuItem: {},
   menuIconContainer: {
     width: 56,
     height: 56,
@@ -747,14 +689,15 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontWeight: "bold",
   },
+
+  // Footer must NOT flex-grow — it stays fixed at bottom
   menuFooter: {
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+    paddingBottom: Platform.OS === "ios" ? 34 : 24,
     paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: "#F0F0F0",
     backgroundColor: "#FFF",
-    flexShrink: 0,
   },
   footerGradient: {
     borderRadius: 20,
