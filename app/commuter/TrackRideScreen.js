@@ -11,6 +11,9 @@ import {
   Platform,
   Image,
   ScrollView,
+  Dimensions,
+  Modal,
+  Animated,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -21,6 +24,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect, useIsFocused } from "@react-navigation/native";
 import Constants from "expo-constants";
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
+
+const { width, height } = Dimensions.get('window');
 
 export default function TrackRide({ navigation, route }) {
   const insets = useSafeAreaInsets();
@@ -30,8 +37,9 @@ export default function TrackRide({ navigation, route }) {
   const pointsAwardedRef = useRef(false);
   const subscriptionRetryRef = useRef(null);
   const statusCheckIntervalRef = useRef(null);
-  const completionAlertShownRef = useRef(false); // NEW: Prevent duplicate completion alerts
-  const pointsAlertShownRef = useRef(false); // NEW: Prevent duplicate points alerts
+  const completionAlertShownRef = useRef(false);
+  const pointsAlertShownRef = useRef(false);
+  const bottomSheetAnim = useRef(new Animated.Value(0)).current;
   
   // Get params with fallback
   const [bookingId, setBookingId] = useState(route.params?.bookingId || null);
@@ -84,6 +92,18 @@ export default function TrackRide({ navigation, route }) {
   });
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+
+  // Animate bottom sheet
+  useEffect(() => {
+    if (!loading && !noRideAvailable && !showCompletedUI) {
+      Animated.spring(bottomSheetAnim, {
+        toValue: 1,
+        useNativeDriver: true,
+        tension: 65,
+        friction: 11,
+      }).start();
+    }
+  }, [loading, noRideAvailable, showCompletedUI]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -149,7 +169,6 @@ export default function TrackRide({ navigation, route }) {
         }
       });
       setPointsConfig(config);
-      console.log("✅ Points config loaded:", config);
     } catch (err) {
       console.log("❌ Error fetching points config:", err);
     }
@@ -188,7 +207,6 @@ export default function TrackRide({ navigation, route }) {
       paymentType: completedBooking?.payment_type
     });
     
-    // Get current commuter ID from state or AsyncStorage
     let currentCommuterId = commuterId;
     
     if (!currentCommuterId) {
@@ -197,36 +215,25 @@ export default function TrackRide({ navigation, route }) {
         if (userId) {
           currentCommuterId = userId;
           setCommuterId(userId);
-          console.log("✅ Got commuterId from AsyncStorage:", userId);
         } else {
-          console.log("❌ No commuter ID found in AsyncStorage");
           return false;
         }
       } catch (err) {
-        console.log("❌ Error getting commuter ID:", err);
         return false;
       }
     }
     
     if (!completedBooking || !completedBooking.id || !currentCommuterId) {
-      console.log("❌ Missing required data for awarding points", { 
-        hasBooking: !!completedBooking, 
-        hasId: completedBooking?.id, 
-        hasCommuterId: !!currentCommuterId 
-      });
       return false;
     }
 
-    // Prevent duplicate awards
     if (pointsAwardedRef.current) {
-      console.log("⚠️ Points already being awarded, skipping duplicate call");
       return false;
     }
 
     try {
       pointsAwardedRef.current = true;
 
-      // Check if points were already awarded
       const { data: existingPoints, error: checkError } = await supabase
         .from("commuter_points_history")
         .select("id, points")
@@ -236,16 +243,13 @@ export default function TrackRide({ navigation, route }) {
         .maybeSingle();
 
       if (checkError) {
-        console.log("❌ Error checking existing points:", checkError);
         pointsAwardedRef.current = false;
         return false;
       }
 
       if (existingPoints) {
-        console.log("✅ Points already awarded for this booking:", existingPoints);
         setPointsEarned(existingPoints.points);
         
-        // Also fetch the current balance
         const { data: wallet } = await supabase
           .from("commuter_wallets")
           .select("points")
@@ -260,12 +264,9 @@ export default function TrackRide({ navigation, route }) {
         return true;
       }
 
-      // Calculate points
       const fare = completedBooking.fare || 0;
-      console.log(`💰 Fare: ₱${fare}, Min Fare: ₱${pointsConfig.minFare}`);
       
       if (fare < pointsConfig.minFare) {
-        console.log(`ℹ️ Fare ₱${fare} below minimum ₱${pointsConfig.minFare} - no points awarded`);
         setPointsEarned(0);
         pointsAwardedRef.current = false;
         return false;
@@ -273,7 +274,6 @@ export default function TrackRide({ navigation, route }) {
 
       const rate = completedBooking.payment_type === 'wallet' ? pointsConfig.walletRate : pointsConfig.cashRate;
       
-      // Use the configured rounding method
       let pointsToAward;
       switch(pointsConfig.rounding) {
         case 'ceil':
@@ -282,20 +282,16 @@ export default function TrackRide({ navigation, route }) {
         case 'round':
           pointsToAward = Math.round(fare * rate);
           break;
-        default: // floor
+        default:
           pointsToAward = Math.floor(fare * rate);
       }
 
-      console.log(`⭐ Points calculation: ${fare} × ${rate} = ${pointsToAward} points`);
-
       if (pointsToAward <= 0) {
-        console.log("ℹ️ No points to award (calculated to 0)");
         setPointsEarned(0);
         pointsAwardedRef.current = false;
         return false;
       }
 
-      // Get or create wallet
       let { data: wallet, error: walletError } = await supabase
         .from("commuter_wallets")
         .select("*")
@@ -303,7 +299,6 @@ export default function TrackRide({ navigation, route }) {
         .maybeSingle();
 
       if (walletError) {
-        console.log("❌ Error fetching wallet:", walletError);
         pointsAwardedRef.current = false;
         return false;
       }
@@ -311,8 +306,6 @@ export default function TrackRide({ navigation, route }) {
       let newPointsBalance;
 
       if (!wallet) {
-        // Create new wallet
-        console.log("📝 Creating new wallet for commuter:", currentCommuterId);
         const { data: newWallet, error: createError } = await supabase
           .from("commuter_wallets")
           .insert({
@@ -326,17 +319,13 @@ export default function TrackRide({ navigation, route }) {
           .single();
 
         if (createError) {
-          console.log("❌ Error creating wallet:", createError);
           pointsAwardedRef.current = false;
           return false;
         }
 
         newPointsBalance = pointsToAward;
-        console.log("✅ Created new wallet with points:", newPointsBalance);
       } else {
-        // Update existing wallet
         newPointsBalance = (wallet.points || 0) + pointsToAward;
-        console.log(`💰 Wallet before: ${wallet.points}, after: ${newPointsBalance}`);
         
         const { error: updateError } = await supabase
           .from("commuter_wallets")
@@ -347,18 +336,14 @@ export default function TrackRide({ navigation, route }) {
           .eq("commuter_id", currentCommuterId);
 
         if (updateError) {
-          console.log("❌ Error updating wallet:", updateError);
           pointsAwardedRef.current = false;
           return false;
         }
-
-        console.log("✅ Wallet updated successfully");
       }
 
-      // Record in points history
       const sourceType = completedBooking.payment_type === 'wallet' ? 'trip_wallet' : 'trip_cash';
       
-      const { error: historyError } = await supabase
+      await supabase
         .from("commuter_points_history")
         .insert({
           commuter_id: currentCommuterId,
@@ -366,19 +351,12 @@ export default function TrackRide({ navigation, route }) {
           type: 'earned',
           source: sourceType,
           source_id: completedBooking.id,
-          description: `Earned ${pointsToAward} points from trip to ${completedBooking.dropoff_location?.split(',')[0] || 'destination'}`,
+          description: `Earned ${pointsToAward} points from trip`,
           created_at: new Date()
         });
 
-      if (historyError) {
-        console.log("❌ Error recording history:", historyError);
-      } else {
-        console.log("✅ Points history recorded");
-      }
-
-      // Record conversion log for non-wallet payments
       if (completedBooking.payment_type !== 'wallet') {
-        const { error: conversionError } = await supabase
+        await supabase
           .from("points_conversion_logs")
           .insert({
             commuter_id: currentCommuterId,
@@ -388,26 +366,16 @@ export default function TrackRide({ navigation, route }) {
             conversion_rate: rate,
             created_at: new Date()
           });
-
-        if (conversionError) {
-          console.log("❌ Error recording points conversion:", conversionError);
-        } else {
-          console.log("✅ Points conversion logged");
-        }
       }
 
-      // Update local state
       setPointsBalance(newPointsBalance);
       setPointsEarned(pointsToAward);
 
-      console.log(`✅ SUCCESS: Awarded ${pointsToAward} points. New balance: ${newPointsBalance}`);
-      
-      // Show success message only once
       if (!pointsAlertShownRef.current && pointsToAward > 0) {
         pointsAlertShownRef.current = true;
         Alert.alert(
           "⭐ Points Earned!",
-          `You earned ${pointsToAward} points for this ride!\n\nTotal points: ${newPointsBalance}`,
+          `You earned ${pointsToAward} points for this ride!`,
           [{ text: "Awesome!" }]
         );
       }
@@ -416,54 +384,38 @@ export default function TrackRide({ navigation, route }) {
       return true;
 
     } catch (err) {
-      console.log("❌ Error in awardPointsForCompletedRide:", err);
       pointsAwardedRef.current = false;
       return false;
     }
   };
 
-  // Fetch points earned for completed booking
   const fetchPointsEarnedForBooking = async (retryCount = 0) => {
-    // Check if we have both IDs
     let currentBookingId = bookingId;
     let currentCommuterId = commuterId;
     
     if (!currentBookingId) {
-      console.log("⚠️ No bookingId available for fetchPointsEarnedForBooking");
       if (route.params?.bookingId) {
         currentBookingId = route.params.bookingId;
-        console.log("✅ Using bookingId from route params:", currentBookingId);
       } else {
-        console.log("❌ No bookingId found anywhere");
         return;
       }
     }
     
     if (!currentCommuterId) {
-      console.log("⚠️ No commuterId available for fetchPointsEarnedForBooking");
       try {
         const userId = await AsyncStorage.getItem("user_id");
         if (userId) {
           currentCommuterId = userId;
           setCommuterId(userId);
-          console.log("✅ Using commuterId from AsyncStorage:", userId);
         } else {
-          console.log("❌ No commuterId found in AsyncStorage");
           return;
         }
       } catch (err) {
-        console.log("❌ Error getting commuterId from AsyncStorage:", err);
         return;
       }
     }
     
-    console.log("🔍 Fetching points earned for booking:", { 
-      bookingId: currentBookingId, 
-      commuterId: currentCommuterId 
-    });
-    
     try {
-      // First try commuter_points_history
       const { data: historyData, error: historyError } = await supabase
         .from("commuter_points_history")
         .select("points, description, source, created_at")
@@ -476,7 +428,6 @@ export default function TrackRide({ navigation, route }) {
         .maybeSingle();
       
       if (!historyError && historyData) {
-        console.log("✅ Found points in history:", historyData);
         setPointsEarned(historyData.points);
         
         if (historyData.source === 'trip_wallet') {
@@ -487,7 +438,6 @@ export default function TrackRide({ navigation, route }) {
         return;
       }
       
-      // Try points_conversion_logs as backup
       const { data: conversionData, error: conversionError } = await supabase
         .from("points_conversion_logs")
         .select("points_converted, conversion_rate")
@@ -498,19 +448,14 @@ export default function TrackRide({ navigation, route }) {
         .maybeSingle();
 
       if (!conversionError && conversionData) {
-        console.log("✅ Found points in conversion logs:", conversionData);
         setPointsEarned(conversionData.points_converted);
         setPointsEarningRate(conversionData.conversion_rate);
         return;
       }
       
-      console.log("ℹ️ No points record found in database");
       setPointsEarned(0);
     } catch (err) {
-      console.log("❌ Error fetching points earned:", err);
-      
       if (retryCount < 3) {
-        console.log(`🔄 Retrying fetchPointsEarnedForBooking (attempt ${retryCount + 1}/3)`);
         setTimeout(() => {
           fetchPointsEarnedForBooking(retryCount + 1);
         }, 1000 * (retryCount + 1));
@@ -523,8 +468,6 @@ export default function TrackRide({ navigation, route }) {
   // Reset state when screen focuses
   useFocusEffect(
     React.useCallback(() => {
-      console.log("🎯 TrackRide focused - resetting state");
-      
       setBooking(null);
       setDriver(null);
       setDriverLocation(null);
@@ -535,7 +478,7 @@ export default function TrackRide({ navigation, route }) {
       setRouteCoordinates([]);
       setTripRouteCoordinates([]);
       setDriverETA(null);
-      setShowScanner(false); // IMPORTANT: Ensure scanner is hidden
+      setShowScanner(false);
       setScanned(false);
       setPaymentSuccess(false);
       setPointsEarned(null);
@@ -544,7 +487,6 @@ export default function TrackRide({ navigation, route }) {
       checkForActiveBooking();
       
       return () => {
-        console.log("🧹 Cleaning up TrackRide");
         if (locationSubscription) {
           locationSubscription.remove();
         }
@@ -569,19 +511,16 @@ export default function TrackRide({ navigation, route }) {
     }
   }, [booking, pointsConfig]);
 
-  // FIXED: Periodic status check for real-time updates (every 2 seconds)
+  // Periodic status check for real-time updates
   useEffect(() => {
     if (!bookingId || !commuterId || showCompletedUI) return;
 
-    // Clear existing interval
     if (statusCheckIntervalRef.current) {
       clearInterval(statusCheckIntervalRef.current);
     }
 
-    // Set up interval to check booking status
     statusCheckIntervalRef.current = setInterval(async () => {
       try {
-        console.log("⏰ Checking booking status for real-time updates:", bookingId);
         const { data, error } = await supabase
           .from("bookings")
           .select(`
@@ -600,22 +539,16 @@ export default function TrackRide({ navigation, route }) {
 
         if (error) throw error;
 
-        // Update driver arrived status
         if (data.driver_arrived_at && !driverArrived) {
-          console.log("📍 Driver has arrived at pickup! (periodic check)");
           setDriverArrived(true);
         }
 
-        // Update ride started status
         if (data.ride_started_at && !rideStarted) {
-          console.log("🚗 Ride has started! (periodic check)");
           setRideStarted(true);
           setDriverArrived(false);
         }
 
-        // Update booking with latest fare from database
         if (data.fare && booking?.fare !== data.fare) {
-          console.log(`💰 Fare updated from database: ₱${data.fare}`);
           setBooking(prev => ({
             ...prev,
             fare: data.fare,
@@ -625,11 +558,7 @@ export default function TrackRide({ navigation, route }) {
           }));
         }
 
-        // Check if completed
         if (data.status === "completed" && status !== "completed") {
-          console.log("🎉 Detected completed status via periodic check!");
-          
-          // IMPORTANT: Hide scanner immediately when trip completes
           setShowScanner(false);
           setScanned(false);
           setProcessingPayment(false);
@@ -643,7 +572,6 @@ export default function TrackRide({ navigation, route }) {
             locationSubscription.remove();
           }
           
-          // Award points if not already awarded
           if (!pointsAwardedRef.current) {
             const { data: existingPoints } = await supabase
               .from("commuter_points_history")
@@ -665,7 +593,6 @@ export default function TrackRide({ navigation, route }) {
             }
           }
           
-          // Show completion alert only once
           if (!completionAlertShownRef.current) {
             completionAlertShownRef.current = true;
             Alert.alert(
@@ -707,19 +634,16 @@ export default function TrackRide({ navigation, route }) {
       const id = await AsyncStorage.getItem("user_id");
       
       if (!id) {
-        console.log("❌ No user ID found in AsyncStorage");
         setNoRideAvailable(true);
         setLoading(false);
         return;
       }
 
-      console.log("✅ User ID from AsyncStorage:", id);
       setCommuterId(id);
 
       await fetchPointsBalance(id);
 
       if (route.params?.bookingId) {
-        console.log("📦 Using booking from params:", route.params.bookingId);
         setBookingId(route.params.bookingId);
         setDriverId(route.params.driverId);
         await fetchBookingDetails(route.params.bookingId);
@@ -732,7 +656,6 @@ export default function TrackRide({ navigation, route }) {
         return;
       }
 
-      // First check for active booking
       const { data: activeData, error: activeError } = await supabase
         .from("bookings")
         .select(`
@@ -767,7 +690,6 @@ export default function TrackRide({ navigation, route }) {
       if (activeError) throw activeError;
 
       if (activeData) {
-        console.log("✅ Found active booking:", activeData);
         setBookingId(activeData.id);
         setDriverId(activeData.driver_id);
         setBooking(activeData);
@@ -797,7 +719,6 @@ export default function TrackRide({ navigation, route }) {
         setNoRideAvailable(false);
         setShowCompletedUI(false);
       } else {
-        // Check for completed booking
         const { data: completedData, error: completedError } = await supabase
           .from("bookings")
           .select(`
@@ -828,7 +749,6 @@ export default function TrackRide({ navigation, route }) {
         if (completedError) throw completedError;
 
         if (completedData) {
-          console.log("📊 Found completed booking:", completedData);
           setBookingId(completedData.id);
           setDriverId(completedData.driver_id);
           setBooking(completedData);
@@ -840,7 +760,6 @@ export default function TrackRide({ navigation, route }) {
             fetchDriverDetails(completedData.driver_id);
           }
           
-          // Check and award points if needed
           setTimeout(async () => {
             const { data: existingPoints } = await supabase
               .from("commuter_points_history")
@@ -851,10 +770,8 @@ export default function TrackRide({ navigation, route }) {
               .maybeSingle();
             
             if (!existingPoints && completedData.fare >= pointsConfig.minFare) {
-              console.log("🔄 Awarding points for completed booking found in check");
               await awardPointsForCompletedRide(completedData);
             } else if (existingPoints) {
-              console.log("✅ Points already awarded:", existingPoints);
               setPointsEarned(existingPoints.points);
             } else {
               fetchPointsEarnedForBooking();
@@ -869,12 +786,10 @@ export default function TrackRide({ navigation, route }) {
             );
           }
         } else {
-          console.log("ℹ️ No bookings found");
           setNoRideAvailable(true);
         }
       }
     } catch (err) {
-      console.log("❌ Error checking for active booking:", err);
       setNoRideAvailable(true);
     } finally {
       setLoading(false);
@@ -892,7 +807,6 @@ export default function TrackRide({ navigation, route }) {
       if (error) throw error;
       
       if (!data) {
-        console.log("📝 Creating wallet for user:", userId);
         const { data: newWallet, error: createError } = await supabase
           .from("commuter_wallets")
           .insert({
@@ -914,10 +828,8 @@ export default function TrackRide({ navigation, route }) {
     }
   };
 
-  // Fetch booking details
   const fetchBookingDetails = async (id) => {
     try {
-      console.log("🔍 Fetching booking details for:", id);
       const { data, error } = await supabase
         .from("bookings")
         .select("*")
@@ -926,7 +838,6 @@ export default function TrackRide({ navigation, route }) {
 
       if (error) throw error;
       
-      console.log("✅ Booking details found:", data);
       setBooking(data);
       setStatus(data.status);
       setHasRated(!!data.commuter_rating);
@@ -953,9 +864,7 @@ export default function TrackRide({ navigation, route }) {
               currentCommuterId = userId;
               setCommuterId(userId);
             }
-          } catch (err) {
-            console.log("❌ Error getting commuter ID:", err);
-          }
+          } catch (err) {}
         }
         
         if (data.status === "completed" && currentCommuterId) {
@@ -969,10 +878,8 @@ export default function TrackRide({ navigation, route }) {
               .maybeSingle();
             
             if (!existingPoints && data.fare >= pointsConfig.minFare) {
-              console.log("🔄 Awarding points from fetchBookingDetails");
               await awardPointsForCompletedRide(data);
             } else if (existingPoints) {
-              console.log("✅ Points already exist for this booking");
               fetchPointsEarnedForBooking();
             } else {
               fetchPointsEarnedForBooking();
@@ -996,7 +903,6 @@ export default function TrackRide({ navigation, route }) {
         );
       }
     } catch (err) {
-      console.log("❌ Error fetching booking:", err);
       Alert.alert("Error", "Failed to load booking details");
     }
   };
@@ -1005,7 +911,6 @@ export default function TrackRide({ navigation, route }) {
     if (!id) return;
 
     try {
-      console.log("🔍 Fetching driver details for:", id);
       const { data, error } = await supabase
         .from("drivers")
         .select(`
@@ -1025,18 +930,13 @@ export default function TrackRide({ navigation, route }) {
 
       if (error) throw error;
       
-      console.log("✅ Driver details found:", data);
       setDriver(data);
-    } catch (err) {
-      console.log("❌ Error fetching driver:", err);
-    }
+    } catch (err) {}
   };
 
   // Subscribe to real-time updates
   useEffect(() => {
     if (!bookingId) return;
-
-    console.log("📡 Setting up real-time subscription for booking:", bookingId);
 
     const bookingSubscription = supabase
       .channel(`booking-${bookingId}`)
@@ -1049,34 +949,23 @@ export default function TrackRide({ navigation, route }) {
           filter: `id=eq.${bookingId}`,
         },
         async (payload) => {
-          console.log("📅 Booking updated - new status:", payload.new.status);
-          
           if (payload.new) {
             const oldStatus = status;
             const newStatus = payload.new.status;
             
-            // Update booking with latest data from database
             setBooking(payload.new);
             setStatus(newStatus);
             
-            // Update driver arrived status
             if (payload.new.driver_arrived_at && !driverArrived) {
-              console.log("✅ Driver has arrived at pickup!");
               setDriverArrived(true);
             }
             
-            // Update ride started status
             if (payload.new.ride_started_at && !rideStarted) {
-              console.log("✅ Ride has started!");
               setRideStarted(true);
               setDriverArrived(false);
             }
             
-            // Check if status changed to completed
             if (newStatus === "completed" && oldStatus !== "completed") {
-              console.log("🎉 RIDE COMPLETED via real-time update!");
-              
-              // IMPORTANT: Hide scanner immediately when trip completes
               setShowScanner(false);
               setScanned(false);
               setProcessingPayment(false);
@@ -1089,7 +978,6 @@ export default function TrackRide({ navigation, route }) {
                 locationSubscription.remove();
               }
               
-              // Get current commuter ID
               let currentCommuterId = commuterId;
               if (!currentCommuterId) {
                 try {
@@ -1098,12 +986,9 @@ export default function TrackRide({ navigation, route }) {
                     currentCommuterId = userId;
                     setCommuterId(userId);
                   }
-                } catch (err) {
-                  console.log("❌ Error getting commuter ID:", err);
-                }
+                } catch (err) {}
               }
               
-              // Award points
               setTimeout(async () => {
                 const { data: existingPoints } = await supabase
                   .from("commuter_points_history")
@@ -1114,18 +999,14 @@ export default function TrackRide({ navigation, route }) {
                   .maybeSingle();
                 
                 if (!existingPoints && payload.new.fare >= pointsConfig.minFare) {
-                  console.log("🔄 Awarding points from real-time update");
-                  const pointsAwarded = await awardPointsForCompletedRide(payload.new);
-                  console.log("Points awarded:", pointsAwarded);
+                  await awardPointsForCompletedRide(payload.new);
                 } else if (existingPoints) {
-                  console.log("Points already exist for this booking");
                   fetchPointsEarnedForBooking();
                 } else {
                   fetchPointsEarnedForBooking();
                 }
               }, 1000);
               
-              // Show completion alert only once
               if (!completionAlertShownRef.current) {
                 completionAlertShownRef.current = true;
                 Alert.alert(
@@ -1149,7 +1030,6 @@ export default function TrackRide({ navigation, route }) {
               }
             } else if (newStatus === "cancelled") {
               setShowCompletedUI(true);
-              // Hide scanner if open
               setShowScanner(false);
               Alert.alert(
                 "❌ Trip Cancelled",
@@ -1160,22 +1040,9 @@ export default function TrackRide({ navigation, route }) {
           }
         }
       )
-      .subscribe((status) => {
-        console.log("📡 Subscription status:", status);
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.log("⚠️ Subscription error, will retry...");
-          if (subscriptionRetryRef.current) {
-            clearTimeout(subscriptionRetryRef.current);
-          }
-          subscriptionRetryRef.current = setTimeout(() => {
-            console.log("🔄 Retrying subscription...");
-            checkForActiveBooking();
-          }, 5000);
-        }
-      });
+      .subscribe();
 
     return () => {
-      console.log("🧹 Cleaning up subscription for booking:", bookingId);
       bookingSubscription.unsubscribe();
       if (subscriptionRetryRef.current) {
         clearTimeout(subscriptionRetryRef.current);
@@ -1186,8 +1053,6 @@ export default function TrackRide({ navigation, route }) {
   // Subscribe to driver location updates
   useEffect(() => {
     if (!driverId || status !== "accepted" || showCompletedUI || rideStarted) return;
-
-    console.log("📍 Setting up driver location listener for:", driverId);
 
     const driverLocationSubscription = supabase
       .channel(`driver-location-${driverId}`)
@@ -1222,7 +1087,6 @@ export default function TrackRide({ navigation, route }) {
               );
               
               if (distanceToPickup < 0.05 && !driverArrived && !rideStarted) {
-                console.log("📍 Driver is within 50 meters - arrived!");
                 setDriverArrived(true);
               }
             }
@@ -1248,10 +1112,7 @@ export default function TrackRide({ navigation, route }) {
         .eq("driver_id", driverId)
         .maybeSingle();
 
-      if (error) {
-        console.log("❌ Error fetching driver location:", error);
-        return;
-      }
+      if (error) return;
 
       if (data) {
         const newLocation = {
@@ -1270,14 +1131,11 @@ export default function TrackRide({ navigation, route }) {
           );
           
           if (distanceToPickup < 0.05) {
-            console.log("📍 Driver is already near pickup!");
             setDriverArrived(true);
           }
         }
       }
-    } catch (err) {
-      console.log("❌ Error in fetchDriverLocation:", err);
-    }
+    } catch (err) {}
   };
 
   const startUserLocationTracking = async () => {
@@ -1297,9 +1155,7 @@ export default function TrackRide({ navigation, route }) {
       );
 
       setLocationSubscription(subscription);
-    } catch (err) {
-      console.log("❌ Error tracking location:", err);
-    }
+    } catch (err) {}
   };
 
   const calculateDriverETA = async (driverLoc, pickupLoc) => {
@@ -1326,9 +1182,7 @@ export default function TrackRide({ navigation, route }) {
           });
         }
       }
-    } catch (err) {
-      console.log("❌ Error calculating ETA:", err);
-    }
+    } catch (err) {}
   };
 
   const calculateTripRoute = async (startCoords, endCoords) => {
@@ -1349,9 +1203,7 @@ export default function TrackRide({ navigation, route }) {
         const points = decodePolyline(data.routes[0].overview_polyline.points);
         setTripRouteCoordinates(points);
       }
-    } catch (err) {
-      console.log("❌ Error calculating trip route:", err);
-    }
+    } catch (err) {}
   };
 
   const calculateDistance = (lat1, lon1, lat2, lon2) => {
@@ -1424,14 +1276,13 @@ export default function TrackRide({ navigation, route }) {
 
   // QR Code Scanning Functions
   const handlePayWithPoints = () => {
-    // Don't show payment option if trip is already completed
     if (showCompletedUI || status === "completed") {
       return;
     }
     
     Alert.alert(
       "Pay with Points",
-      `Your current points balance: ${pointsBalance}\n\nScan the driver's QR code to pay with your points. (10 points = ₱1)`,
+      `Your points balance: ${pointsBalance}\n\nScan driver's QR code to pay with points. (10 points = ₱1)`,
       [
         { text: "Cancel", style: "cancel" },
         { text: "Continue", onPress: openScanner }
@@ -1440,7 +1291,6 @@ export default function TrackRide({ navigation, route }) {
   };
 
   const openScanner = async () => {
-    // Don't open scanner if trip is already completed
     if (showCompletedUI || status === "completed") {
       Alert.alert("Trip Completed", "This trip has already been completed.");
       return;
@@ -1461,13 +1311,10 @@ export default function TrackRide({ navigation, route }) {
       
       setScanned(false);
       setShowScanner(true);
-    } catch (err) {
-      console.log("❌ Error opening scanner:", err);
-    }
+    } catch (err) {}
   };
 
   const handleBarCodeScanned = async ({ type, data }) => {
-    // Don't process if trip is already completed
     if (showCompletedUI || status === "completed") {
       setShowScanner(false);
       Alert.alert("Trip Completed", "This trip has already been completed.");
@@ -1484,7 +1331,6 @@ export default function TrackRide({ navigation, route }) {
     
     try {
       const qrData = JSON.parse(data);
-      console.log("📱 QR Code scanned:", qrData);
       
       if (qrData.type !== 'points_payment') {
         Alert.alert(
@@ -1529,7 +1375,6 @@ export default function TrackRide({ navigation, route }) {
       await processPointsPayment(qrData);
       
     } catch (err) {
-      console.log("❌ Error processing QR code:", err);
       Alert.alert(
         "Invalid QR Code",
         "Could not read the QR code. Please try again.",
@@ -1543,9 +1388,7 @@ export default function TrackRide({ navigation, route }) {
     }
   };
 
-  // FIXED: Process points payment and ensure points are awarded later
   const processPointsPayment = async (qrData) => {
-    // Don't process if trip is already completed
     if (showCompletedUI || status === "completed") {
       setShowScanner(false);
       Alert.alert("Trip Completed", "This trip has already been completed.");
@@ -1558,12 +1401,10 @@ export default function TrackRide({ navigation, route }) {
       const userId = await AsyncStorage.getItem("user_id");
       
       if (!userId) {
-        console.log("❌ No user ID found in AsyncStorage");
         throw new Error("Not authenticated");
       }
 
       if (userId !== commuterId) {
-        console.log("⚠️ User ID mismatch - updating commuterId");
         setCommuterId(userId);
       }
 
@@ -1578,7 +1419,6 @@ export default function TrackRide({ navigation, route }) {
       let currentWallet = wallet;
 
       if (!currentWallet) {
-        console.log("📝 Creating wallet for user:", userId);
         const { data: newWallet, error: createError } = await supabase
           .from("commuter_wallets")
           .insert({
@@ -1597,7 +1437,7 @@ export default function TrackRide({ navigation, route }) {
       if (currentWallet.points < qrData.points) {
         Alert.alert(
           "Insufficient Points",
-          `You need ${qrData.points} points to pay ₱${qrData.amount}. Your current balance: ${currentWallet.points || 0} points.\n\nWould you like to inform the driver to switch to cash payment?`,
+          `You need ${qrData.points} points to pay ₱${qrData.amount}. Your balance: ${currentWallet.points || 0} points.\n\nWould you like to inform the driver to switch to cash payment?`,
           [
             { text: "Cancel", style: "cancel", onPress: () => {
               setShowScanner(false);
@@ -1636,7 +1476,7 @@ export default function TrackRide({ navigation, route }) {
 
       if (updateError) throw updateError;
 
-      const { error: historyError } = await supabase
+      await supabase
         .from("commuter_points_history")
         .insert({
           commuter_id: userId,
@@ -1644,15 +1484,11 @@ export default function TrackRide({ navigation, route }) {
           type: 'redeemed',
           source: 'trip',
           source_id: bookingId,
-          description: `Points payment for trip to ${booking?.dropoff_location || 'destination'}`,
+          description: `Points payment for trip`,
           created_at: new Date()
         });
 
-      if (historyError) {
-        console.log("❌ Error recording points history:", historyError);
-      }
-
-      const { error: bookingError } = await supabase
+      await supabase
         .from("bookings")
         .update({
           payment_status: "paid",
@@ -1663,13 +1499,10 @@ export default function TrackRide({ navigation, route }) {
         })
         .eq("id", bookingId);
 
-      if (bookingError) throw bookingError;
-
       setPointsBalance(newPoints);
       setPaymentSuccess(true);
       setShowScanner(false);
       
-      // Fetch the latest booking data to confirm payment
       const { data: updatedBooking } = await supabase
         .from("bookings")
         .select("*")
@@ -1682,13 +1515,11 @@ export default function TrackRide({ navigation, route }) {
       
       Alert.alert(
         "✅ Payment Successful!",
-        `You have successfully paid ₱${qrData.amount.toFixed(2)} using ${qrData.points} points.\n\nRemaining points: ${newPoints}`,
+        `You paid ₱${qrData.amount.toFixed(2)} using ${qrData.points} points.\n\nRemaining points: ${newPoints}`,
         [{ text: "Great!" }]
       );
 
     } catch (err) {
-      console.log("❌ Error processing payment:", err);
-      
       let errorMessage = "There was an error processing your payment. Please try again or pay with cash.";
       
       if (err.message === "Not authenticated") {
@@ -1754,7 +1585,6 @@ export default function TrackRide({ navigation, route }) {
                 [{ text: "OK", onPress: () => navigation.goBack() }]
               );
             } catch (err) {
-              console.log("❌ Error cancelling ride:", err);
               Alert.alert("Error", "Failed to cancel ride");
             }
           }
@@ -1800,7 +1630,7 @@ export default function TrackRide({ navigation, route }) {
     }
     
     if (status === "completed") {
-      return hasRated ? "Trip completed - Thank you for rating!" : "Trip completed";
+      return hasRated ? "Trip completed - Thank you!" : "Trip completed";
     }
     
     if (!driverId) {
@@ -1808,26 +1638,26 @@ export default function TrackRide({ navigation, route }) {
     }
     
     if (rideStarted) {
-      return "On the way to destination";
+      return "On the way";
     }
     
     if (driverArrived) {
-      return "Driver has arrived at pickup";
+      return "Driver has arrived";
     }
     
     if (!driverLocationLoaded) {
-      return "Driver is online - waiting for location...";
+      return "Driver is online";
     }
     
     if (!driverLocation) {
-      return "Driver location not available yet";
+      return "Location not available";
     }
     
-    return driverETA ? `Driver arriving in ${driverETA} min` : "Driver is on the way";
+    return driverETA ? `${driverETA} min away` : "Driver is on the way";
   };
 
   const getStatusIcon = () => {
-    if (rideStarted) return "navigate";
+    if (rideStarted) return "navigate-circle";
     if (driverArrived) return "location";
     if (status === "accepted") return "car";
     if (status === "completed") return "checkmark-circle";
@@ -1848,18 +1678,22 @@ export default function TrackRide({ navigation, route }) {
   const showDriverLocation = driverLocation !== null && status === "accepted" && !rideStarted && !showCompletedUI;
   const showRouteToDriver = status === "accepted" && !driverArrived && !rideStarted && routeCoordinates.length > 0 && !showCompletedUI;
   const showTripRoute = (rideStarted || driverArrived || status === "completed") && tripRouteCoordinates.length > 0 && !showCompletedUI;
-
   const showPointsPayment = status === "accepted" && 
                            rideStarted && 
                            booking?.payment_type === 'wallet' && 
                            booking?.payment_status === 'pending' &&
                            !paymentSuccess &&
-                           !showCompletedUI; // Don't show if completed
+                           !showCompletedUI;
+
+  const bottomSheetTranslate = bottomSheetAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [300, 0],
+  });
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#183B5C" />
+        <ActivityIndicator size="large" color="#3B82F6" />
       </View>
     );
   }
@@ -1894,7 +1728,7 @@ export default function TrackRide({ navigation, route }) {
               </View>
               
               <Text style={styles.scannerInstruction}>
-                Position the QR code within the frame
+                Position QR code within the frame
               </Text>
               
               {processingPayment && (
@@ -1909,7 +1743,7 @@ export default function TrackRide({ navigation, route }) {
 
         <View style={styles.scannerFooter}>
           <Text style={styles.scannerFooterText}>
-            Make sure the QR code is clearly visible and well-lit
+            Make sure the QR code is clearly visible
           </Text>
         </View>
       </View>
@@ -1919,55 +1753,35 @@ export default function TrackRide({ navigation, route }) {
   // Show "No Ride Available" screen
   if (noRideAvailable) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#183B5C', '#183B5C']}
+          style={styles.headerGradient}
+        >
           <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
           </Pressable>
           <View style={styles.headerContent}>
-            <Text style={styles.headerSubtitle}>Track Your Ride</Text>
-            <Text style={styles.headerTitle}>No Active Ride</Text>
+            <Text style={styles.headerTitle}>Track Your Ride</Text>
+            <Text style={styles.headerSubtitle}>No Active Ride</Text>
           </View>
-        </View>
+        </LinearGradient>
 
         <View style={styles.noRideContainer}>
           <View style={styles.noRideIconContainer}>
-            <Ionicons name="car-outline" size={80} color="#D1D5DB" />
+            <Ionicons name="car-outline" size={80} color="#CBD5E0" />
           </View>
           
-          <Text style={styles.noRideTitle}>No Active Ride Found</Text>
+          <Text style={styles.noRideTitle}>No Active Ride</Text>
           
           <Text style={styles.noRideMessage}>
             You don't have any active rides at the moment.{'\n'}
             Book a ride to get started!
           </Text>
 
-          <View style={styles.noRideFeatures}>
-            <View style={styles.featureItem}>
-              <View style={styles.featureIcon}>
-                <Ionicons name="location" size={24} color="#183B5C" />
-              </View>
-              <Text style={styles.featureText}>Track your ride in real-time</Text>
-            </View>
-
-            <View style={styles.featureItem}>
-              <View style={styles.featureIcon}>
-                <Ionicons name="chatbubble" size={24} color="#183B5C" />
-              </View>
-              <Text style={styles.featureText}>Contact your driver easily</Text>
-            </View>
-
-            <View style={styles.featureItem}>
-              <View style={styles.featureIcon}>
-                <Ionicons name="star" size={24} color="#183B5C" />
-              </View>
-              <Text style={styles.featureText}>Rate your ride experience</Text>
-            </View>
-          </View>
-
           <Pressable style={styles.bookRideButton} onPress={handleBookRide}>
-            <Ionicons name="bicycle" size={24} color="#FFF" />
-            <Text style={styles.bookRideButtonText}>Book a Ride Now</Text>
+            <Ionicons name="search" size={20} color="#FFF" />
+            <Text style={styles.bookRideButtonText}>Find a Ride</Text>
           </Pressable>
         </View>
       </View>
@@ -1977,36 +1791,38 @@ export default function TrackRide({ navigation, route }) {
   // Show completed/cancelled ride summary
   if (showCompletedUI) {
     return (
-      <View style={[styles.container, { paddingTop: insets.top }]}>
-        <View style={styles.header}>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={['#183B5C', '#183B5C']}
+          style={styles.headerGradient}
+        >
           <Pressable onPress={handleBackToHome} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
           </Pressable>
           <View style={styles.headerContent}>
-            <Text style={styles.headerSubtitle}>Ride Summary</Text>
             <Text style={styles.headerTitle}>
               {status === "completed" ? "Trip Completed" : "Trip Cancelled"}
             </Text>
           </View>
-        </View>
+        </LinearGradient>
 
         <ScrollView style={styles.completedContainer} showsVerticalScrollIndicator={false}>
           <View style={styles.completedIconContainer}>
             <Ionicons 
               name={status === "completed" ? "checkmark-circle" : "close-circle"} 
-              size={50} 
+              size={80} 
               color={status === "completed" ? "#10B981" : "#EF4444"} 
             />
           </View>
           
           <Text style={styles.completedTitle}>
-            {status === "completed" ? "Thank You for Riding!" : "Ride Cancelled"}
+            {status === "completed" ? "Thank You!" : "Ride Cancelled"}
           </Text>
           
           <Text style={styles.completedMessage}>
             {status === "completed" 
               ? hasRated 
-                ? "You've already rated this ride. Thank you for your feedback!"
+                ? "Thank you for rating your driver!"
                 : "How was your ride? Rate your driver to help improve our service."
               : "This ride has been cancelled."}
           </Text>
@@ -2016,18 +1832,18 @@ export default function TrackRide({ navigation, route }) {
             <View style={styles.completedPaymentCard}>
               <Text style={styles.completedPaymentTitle}>Payment Details</Text>
               <View style={styles.completedPaymentRow}>
-                <Text style={styles.completedPaymentLabel}>Method:</Text>
+                <Text style={styles.completedPaymentLabel}>Method</Text>
                 <Text style={styles.completedPaymentValue}>
-                  {booking.payment_type === 'wallet' ? '⭐ Points' : '💵 Cash'}
+                  {booking.payment_type === 'wallet' ? '⭐ Points' : '💰 Cash'}
                 </Text>
               </View>
               <View style={styles.completedPaymentRow}>
-                <Text style={styles.completedPaymentLabel}>Amount:</Text>
+                <Text style={styles.completedPaymentLabel}>Amount</Text>
                 <Text style={styles.completedPaymentValue}>₱{booking.fare?.toFixed(2) || "0.00"}</Text>
               </View>
               {booking.points_used > 0 && (
                 <View style={styles.completedPaymentRow}>
-                  <Text style={styles.completedPaymentLabel}>Points Used:</Text>
+                  <Text style={styles.completedPaymentLabel}>Points Used</Text>
                   <Text style={styles.completedPaymentValue}>{booking.points_used}</Text>
                 </View>
               )}
@@ -2037,25 +1853,11 @@ export default function TrackRide({ navigation, route }) {
                 <View style={styles.pointsEarnedContainer}>
                   <View style={styles.pointsEarnedDivider} />
                   <View style={styles.completedPaymentRow}>
-                    <Text style={styles.completedPaymentLabel}>⭐ Points Earned:</Text>
+                    <Text style={styles.completedPaymentLabel}>⭐ Points Earned</Text>
                     <Text style={[styles.completedPaymentValue, styles.pointsEarnedValue]}>
                       +{pointsEarned}
                     </Text>
                   </View>
-                  <Text style={styles.pointsEarnedNote}>
-                    {booking?.payment_type === 'wallet' 
-                      ? `Earned ${(pointsConfig.walletRate * 100).toFixed(0)}% of fare as points (Wallet bonus!)` 
-                      : `Earned ${(pointsConfig.cashRate * 100).toFixed(0)}% of fare as points`}
-                  </Text>
-                </View>
-              )}
-              
-              {pointsEarned === 0 && booking?.fare >= pointsConfig.minFare && (
-                <View style={styles.pointsEarnedContainer}>
-                  <View style={styles.pointsEarnedDivider} />
-                  <Text style={styles.noPointsText}>
-                    No points earned for this ride
-                  </Text>
                 </View>
               )}
             </View>
@@ -2068,7 +1870,9 @@ export default function TrackRide({ navigation, route }) {
                 {driver.profile_picture ? (
                   <Image source={{ uri: driver.profile_picture }} style={styles.completedDriverImage} />
                 ) : (
-                  <Ionicons name="person-circle" size={60} color="#9CA3AF" />
+                  <View style={styles.completedDriverAvatarPlaceholder}>
+                    <Ionicons name="person" size={30} color="#FFF" />
+                  </View>
                 )}
               </View>
               <View style={styles.completedDriverInfo}>
@@ -2077,7 +1881,7 @@ export default function TrackRide({ navigation, route }) {
                 </Text>
                 {driver.driver_vehicles?.[0] && (
                   <Text style={styles.completedVehicleInfo}>
-                    {driver.driver_vehicles[0].vehicle_color || ''} {driver.driver_vehicles[0].vehicle_type || ''}
+                    {driver.driver_vehicles[0].vehicle_color} {driver.driver_vehicles[0].vehicle_type}
                   </Text>
                 )}
               </View>
@@ -2117,10 +1921,6 @@ export default function TrackRide({ navigation, route }) {
             <Ionicons name="home" size={20} color="#183B5C" />
             <Text style={styles.completedHomeButtonText}>Back to Home</Text>
           </Pressable>
-
-          <Pressable style={styles.completedHistoryButton} onPress={() => navigation.navigate("RideHistoryScreen")}>
-            <Text style={styles.completedHistoryButtonText}>View Ride History</Text>
-          </Pressable>
         </ScrollView>
       </View>
     );
@@ -2128,16 +1928,19 @@ export default function TrackRide({ navigation, route }) {
 
   // Show active ride screen
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
+    <View style={styles.container}>
+      {/* Header with Gradient */}
+      <LinearGradient
+        colors={['#183B5C', '#183B5C']}
+        style={styles.headerGradient}
+      >
         <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </Pressable>
         <View style={styles.headerContent}>
-          <Text style={styles.headerSubtitle}>Track Your Ride</Text>
+          <Text style={styles.headerSubtitle}>Live Tracking</Text>
           <Text style={styles.headerTitle}>
-            {rideStarted ? "En Route to Destination" : driverArrived ? "Driver Arrived" : "Heading to Pickup"}
+            {rideStarted ? "En Route" : driverArrived ? "Driver Arrived" : "Finding Driver"}
           </Text>
         </View>
         {canCancel && (
@@ -2145,7 +1948,7 @@ export default function TrackRide({ navigation, route }) {
             <Ionicons name="close-circle" size={24} color="#FFB37A" />
           </Pressable>
         )}
-      </View>
+      </LinearGradient>
 
       {/* Map */}
       <View style={styles.mapContainer}>
@@ -2165,7 +1968,7 @@ export default function TrackRide({ navigation, route }) {
           showsCompass={true}
         >
           {showDriverLocation && driverLocation && (
-            <Marker coordinate={driverLocation} title="Your Driver" flat>
+            <Marker coordinate={driverLocation} title="Your Driver">
               <View style={styles.driverMarker}>
                 <Ionicons name="car" size={20} color="#FFF" />
               </View>
@@ -2223,167 +2026,152 @@ export default function TrackRide({ navigation, route }) {
         </Pressable>
       </View>
 
-      {/* Bottom Sheet */}
-      <ScrollView style={styles.bottomSheet} showsVerticalScrollIndicator={false}>
-        <View style={styles.statusCard}>
-          <View style={[styles.statusIcon, { backgroundColor: getStatusColor() + "20" }]}>
-            <Ionicons name={getStatusIcon()} size={24} color={getStatusColor()} />
-          </View>
-          <View style={styles.statusInfo}>
-            <Text style={styles.statusMessage}>{getStatusMessage()}</Text>
-            {rideStarted && (
-              <Text style={styles.statusDetail}>Heading to your destination</Text>
-            )}
-            {driverArrived && !rideStarted && (
-              <Text style={styles.statusDetail}>Please go to the pickup point</Text>
-            )}
-            {driverETA && !driverArrived && !rideStarted && (
-              <Text style={styles.statusDetail}>Driver is on the way</Text>
-            )}
-            {!driverLocation && driverId && !rideStarted && (
-              <Text style={styles.statusDetail}>Driver will share location soon</Text>
-            )}
-          </View>
+      {/* Bottom Sheet with Animation */}
+      <Animated.View 
+        style={[
+          styles.bottomSheet,
+          {
+            transform: [{ translateY: bottomSheetTranslate }]
+          }
+        ]}
+      >
+        <View style={styles.bottomSheetHandle}>
+          <View style={styles.handleBar} />
         </View>
 
-        {driver && (
-          <View style={styles.driverCard}>
-            <View style={styles.driverAvatar}>
-              {driver.profile_picture ? (
-                <Image source={{ uri: driver.profile_picture }} style={styles.driverImage} />
-              ) : (
-                <Ionicons name="person-circle" size={50} color="#9CA3AF" />
-              )}
+        <ScrollView showsVerticalScrollIndicator={false} style={styles.bottomSheetContent}>
+          {/* Status Card */}
+          <View style={[styles.statusCard, { borderLeftColor: getStatusColor() }]}>
+            <View style={[styles.statusIcon, { backgroundColor: getStatusColor() + "15" }]}>
+              <Ionicons name={getStatusIcon()} size={28} color={getStatusColor()} />
             </View>
-            <View style={styles.driverInfo}>
-              <Text style={styles.driverName}>
-                {driver.first_name} {driver.last_name}
+            <View style={styles.statusInfo}>
+              <Text style={styles.statusMessage}>{getStatusMessage()}</Text>
+              <Text style={styles.statusDetail}>
+                {rideStarted ? "Heading to your destination" :
+                 driverArrived ? "Please go to pickup point" :
+                 driverETA ? `Estimated arrival in ${driverETA} minutes` :
+                 "Preparing your ride"}
               </Text>
-              {driver.driver_vehicles?.[0] && (
-                <Text style={styles.vehicleInfo}>
-                  {driver.driver_vehicles[0].vehicle_color || ''} {driver.driver_vehicles[0].vehicle_type || ''} • 
-                  {driver.driver_vehicles[0].plate_number || ''}
+            </View>
+          </View>
+
+          {/* Driver Card */}
+          {driver && (
+            <View style={styles.driverCard}>
+              <View style={styles.driverAvatar}>
+                {driver.profile_picture ? (
+                  <Image source={{ uri: driver.profile_picture }} style={styles.driverImage} />
+                ) : (
+                  <View style={styles.driverAvatarPlaceholder}>
+                    <Ionicons name="person" size={24} color="#FFF" />
+                  </View>
+                )}
+              </View>
+              <View style={styles.driverInfo}>
+                <Text style={styles.driverName}>
+                  {driver.first_name} {driver.last_name}
                 </Text>
-              )}
+                {driver.driver_vehicles?.[0] && (
+                  <Text style={styles.vehicleInfo}>
+                    {driver.driver_vehicles[0].vehicle_color} {driver.driver_vehicles[0].vehicle_type}
+                  </Text>
+                )}
+              </View>
+              <Pressable style={styles.contactButton} onPress={handleContactDriver}>
+                <Ionicons name="chatbubble-ellipses" size={24} color="#183B5C" />
+              </Pressable>
             </View>
-            <Pressable style={styles.contactButton} onPress={handleContactDriver}>
-              <Ionicons name="chatbubble" size={24} color="#183B5C" />
+          )}
+
+          {/* Trip Details */}
+          <View style={styles.tripDetails}>
+            <View style={styles.locationRow}>
+              <View style={styles.locationIcon}>
+                <Ionicons name="location" size={16} color="#10B981" />
+              </View>
+              <Text style={styles.locationText} numberOfLines={1}>
+                {booking?.pickup_location}
+              </Text>
+            </View>
+            <View style={styles.locationDivider} />
+            <View style={styles.locationRow}>
+              <View style={styles.locationIcon}>
+                <Ionicons name="flag" size={16} color="#EF4444" />
+              </View>
+              <Text style={styles.locationText} numberOfLines={1}>
+                {booking?.dropoff_location}
+              </Text>
+            </View>
+          </View>
+
+          {/* Stats */}
+          {(tripDistance || booking?.distance_km) && (
+            <View style={styles.statsContainer}>
+              <View style={styles.statItem}>
+                <Ionicons name="map-outline" size={20} color="#666" />
+                <Text style={styles.statValue}>{tripDistance || booking?.distance_km || "?"} km</Text>
+                <Text style={styles.statLabel}>Distance</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Ionicons name="time-outline" size={20} color="#666" />
+                <Text style={styles.statValue}>{tripDuration || booking?.duration_minutes || "?"} min</Text>
+                <Text style={styles.statLabel}>Duration</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statItem}>
+                <Ionicons name="cash-outline" size={20} color="#666" />
+                <Text style={styles.statValue}>₱{booking?.fare?.toFixed(2) || "0.00"}</Text>
+                <Text style={styles.statLabel}>Fare</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Points Preview */}
+          {rideStarted && booking?.fare > 0 && booking.fare >= pointsConfig.minFare && (
+            <View style={styles.pointsPreviewContainer}>
+              <Ionicons name="star" size={20} color="#F59E0B" />
+              <Text style={styles.pointsPreviewText}>
+                Earn <Text style={styles.pointsPreviewHighlight}>{potentialPoints} points</Text> for this trip
+              </Text>
+            </View>
+          )}
+
+          {/* Points Payment Button */}
+          {showPointsPayment && (
+            <Pressable style={styles.pointsPaymentButton} onPress={handlePayWithPoints}>
+              <LinearGradient
+                colors={['#F59E0B', '#F97316']}
+                style={styles.pointsPaymentGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+              >
+                <Ionicons name="qr-code" size={24} color="#FFF" />
+                <View style={styles.pointsPaymentTextContainer}>
+                  <Text style={styles.pointsPaymentTitle}>Pay with Points</Text>
+                  <Text style={styles.pointsPaymentSubtitle}>Balance: {pointsBalance} points</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={24} color="#FFF" />
+              </LinearGradient>
             </Pressable>
-          </View>
-        )}
+          )}
 
-        <View style={styles.tripDetails}>
-          <View style={styles.locationRow}>
-            <Ionicons name="location" size={16} color="#10B981" />
-            <Text style={styles.locationText} numberOfLines={1}>
-              {booking?.pickup_location}
-              {booking?.pickup_details ? ` (${booking.pickup_details})` : ''}
-            </Text>
-          </View>
-          <View style={styles.locationRow}>
-            <Ionicons name="flag" size={16} color="#EF4444" />
-            <Text style={styles.locationText} numberOfLines={1}>
-              {booking?.dropoff_location}
-              {booking?.dropoff_details ? ` (${booking.dropoff_details})` : ''}
-            </Text>
-          </View>
-        </View>
-
-        {(tripDistance || booking?.distance_km) && (
-          <View style={styles.statsContainer}>
-            <View style={styles.statBox}>
-              <Ionicons name="map-outline" size={20} color="#666" />
-              <Text style={styles.statLabel}>Distance</Text>
-              <Text style={styles.statValue}>
-                {tripDistance || booking?.distance_km || "?"} km
-              </Text>
-            </View>
-            <View style={styles.statBox}>
-              <Ionicons name="time-outline" size={20} color="#666" />
-              <Text style={styles.statLabel}>Duration</Text>
-              <Text style={styles.statValue}>
-                {tripDuration || booking?.duration_minutes || "?"} min
-              </Text>
-            </View>
-            <View style={styles.statBox}>
-              <Ionicons name="cash-outline" size={20} color="#666" />
-              <Text style={styles.statLabel}>Fare</Text>
-              <Text style={styles.statValue}>
-                ₱{booking?.fare?.toFixed(2) || "0.00"}
-              </Text>
-            </View>
-          </View>
-        )}
-
-        {pointsBalance > 0 && (
-          <View style={styles.pointsBalanceContainer}>
-            <Ionicons name="star" size={20} color="#F59E0B" />
-            <Text style={styles.pointsBalanceText}>
-              Your points balance: {pointsBalance} (10 points = ₱1)
-            </Text>
-          </View>
-        )}
-
-        {rideStarted && booking?.fare > 0 && booking.fare >= pointsConfig.minFare && (
-          <View style={styles.pointsPreviewContainer}>
-            <Ionicons name="star-outline" size={20} color="#F59E0B" />
-            <Text style={styles.pointsPreviewText}>
-              You'll earn{' '}
-              <Text style={styles.pointsPreviewHighlight}>
-                {potentialPoints} points
-              </Text>{' '}
-              for this trip
-              {booking.payment_type === 'wallet' && ' (Wallet bonus! 2x points)'}
-            </Text>
-          </View>
-        )}
-
-        {showPointsPayment && (
-          <Pressable style={styles.pointsPaymentButton} onPress={handlePayWithPoints}>
-            <Ionicons name="qr-code" size={24} color="#FFF" />
-            <View style={styles.pointsPaymentTextContainer}>
-              <Text style={styles.pointsPaymentTitle}>Pay with Points</Text>
-              <Text style={styles.pointsPaymentSubtitle}>Scan driver's QR code</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={24} color="#FFF" />
-          </Pressable>
-        )}
-
-        {canCancel && (
-          <Pressable style={styles.cancelButton} onPress={handleCancelRide}>
-            <Ionicons name="close-circle" size={20} color="#EF4444" />
-            <Text style={styles.cancelButtonText}>Cancel Ride</Text>
-          </Pressable>
-        )}
-
-        {driverArrived && !rideStarted && (
-          <View style={styles.arrivedMessage}>
-            <Ionicons name="car" size={24} color="#10B981" />
-            <Text style={styles.arrivedText}>Your driver has arrived. Please go to the pickup point.</Text>
-          </View>
-        )}
-
-        {rideStarted && (
-          <View style={styles.rideStartedMessage}>
-            <Ionicons name="navigate" size={24} color="#F59E0B" />
-            <Text style={styles.rideStartedText}>On the way to your destination</Text>
-          </View>
-        )}
-
-        {(status === "accepted" || driverArrived || rideStarted) && (
-          <Pressable style={styles.shareButton}>
-            <Ionicons name="share-social" size={20} color="#183B5C" />
-            <Text style={styles.shareButtonText}>Share Trip</Text>
-          </Pressable>
-        )}
-      </ScrollView>
+          {/* Cancel Button */}
+          {canCancel && (
+            <Pressable style={styles.cancelButton} onPress={handleCancelRide}>
+              <Ionicons name="close-circle" size={20} color="#EF4444" />
+              <Text style={styles.cancelButtonText}>Cancel Ride</Text>
+            </Pressable>
+          )}
+        </ScrollView>
+      </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginTop: -50,
     flex: 1,
     backgroundColor: "#F5F7FA",
   },
@@ -2393,8 +2181,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#F5F7FA",
   },
-  header: {
-    backgroundColor: "#183B5C",
+  headerGradient: {
     paddingTop: 20,
     paddingBottom: 20,
     paddingHorizontal: 20,
@@ -2409,83 +2196,125 @@ const styles = StyleSheet.create({
   },
   headerSubtitle: {
     fontSize: 14,
-    color: "#FFB37A",
+    color: "rgba(255,255,255,0.8)",
+    fontWeight: "500",
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: "bold",
     color: "#FFF",
+    marginTop: 2,
   },
   cancelHeaderButton: {
     padding: 8,
   },
   mapContainer: {
     flex: 1,
+    position: "relative",
   },
   map: {
     flex: 1,
   },
   driverMarker: {
     backgroundColor: "#3B82F6",
-    padding: 10,
-    borderRadius: 25,
+    padding: 8,
+    borderRadius: 20,
     borderWidth: 2,
     borderColor: "#FFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   pickupMarker: {
     backgroundColor: "#10B981",
-    padding: 8,
-    borderRadius: 20,
+    padding: 6,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: "#FFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   dropoffMarker: {
     backgroundColor: "#EF4444",
-    padding: 8,
-    borderRadius: 20,
+    padding: 6,
+    borderRadius: 16,
     borderWidth: 2,
     borderColor: "#FFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
   },
   locateButton: {
     position: "absolute",
     bottom: 20,
     right: 20,
     backgroundColor: "#FFF",
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
     elevation: 5,
   },
   bottomSheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
     backgroundColor: "#FFF",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    padding: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.1,
     shadowRadius: 12,
     elevation: 10,
-    maxHeight: "50%",
+    maxHeight: "70%",
+  },
+  bottomSheetHandle: {
+    alignItems: "center",
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  handleBar: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#E2E8F0",
+    borderRadius: 2,
+  },
+  bottomSheetContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
   },
   statusCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#FFF",
     borderRadius: 16,
-    padding: 15,
-    marginBottom: 15,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   statusIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -2494,51 +2323,60 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   statusMessage: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "600",
-    color: "#333",
+    color: "#1F2937",
+    marginBottom: 4,
   },
   statusDetail: {
     fontSize: 13,
-    color: "#666",
-    marginTop: 2,
+    color: "#6B7280",
   },
   driverCard: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 15,
-    padding: 15,
     backgroundColor: "#FFF",
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   driverAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#F3F4F6",
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    marginRight: 12,
+    overflow: "hidden",
+  },
+  driverAvatarPlaceholder: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#183B5C",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
   driverImage: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
   driverInfo: {
     flex: 1,
   },
   driverName: {
     fontSize: 16,
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: "600",
+    color: "#1F2937",
+    marginBottom: 2,
   },
   vehicleInfo: {
     fontSize: 12,
-    color: "#666",
-    marginTop: 2,
+    color: "#6B7280",
   },
   contactButton: {
     width: 44,
@@ -2549,58 +2387,67 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   tripDetails: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#FFF",
     borderRadius: 16,
-    padding: 15,
-    marginBottom: 15,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   locationRow: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 8,
+  },
+  locationIcon: {
+    width: 28,
+    alignItems: "center",
   },
   locationText: {
     fontSize: 14,
-    color: "#333",
+    color: "#374151",
     flex: 1,
     marginLeft: 8,
   },
+  locationDivider: {
+    height: 1,
+    backgroundColor: "#E5E7EB",
+    marginVertical: 12,
+    marginLeft: 28,
+  },
   statsContainer: {
     flexDirection: "row",
-    marginBottom: 15,
-    gap: 10,
+    backgroundColor: "#FFF",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    justifyContent: "space-between",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  statBox: {
+  statItem: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 12,
     alignItems: "center",
-  },
-  statLabel: {
-    fontSize: 11,
-    color: "#666",
-    marginTop: 4,
   },
   statValue: {
     fontSize: 16,
     fontWeight: "bold",
-    color: "#333",
+    color: "#1F2937",
+    marginTop: 6,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: "#6B7280",
     marginTop: 2,
   },
-  pointsBalanceContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEF3C7",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 15,
-    gap: 8,
-  },
-  pointsBalanceText: {
-    fontSize: 14,
-    color: "#F59E0B",
-    fontWeight: "600",
+  statDivider: {
+    width: 1,
+    backgroundColor: "#E5E7EB",
   },
   pointsPreviewContainer: {
     flexDirection: "row",
@@ -2608,12 +2455,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#FEF3C7",
     padding: 12,
     borderRadius: 12,
-    marginBottom: 15,
+    marginBottom: 12,
     gap: 8,
   },
   pointsPreviewText: {
-    fontSize: 14,
-    color: "#333",
+    fontSize: 13,
+    color: "#92400E",
     flex: 1,
   },
   pointsPreviewHighlight: {
@@ -2621,12 +2468,14 @@ const styles = StyleSheet.create({
     color: "#F59E0B",
   },
   pointsPaymentButton: {
-    backgroundColor: "#F59E0B",
+    marginBottom: 12,
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  pointsPaymentGradient: {
     flexDirection: "row",
     alignItems: "center",
     padding: 16,
-    borderRadius: 12,
-    marginBottom: 15,
     gap: 12,
   },
   pointsPaymentTextContainer: {
@@ -2641,24 +2490,10 @@ const styles = StyleSheet.create({
     color: "#FFF",
     fontSize: 12,
     opacity: 0.9,
-  },
-  scanQRButton: {
-    backgroundColor: "#3B82F6",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 15,
-    gap: 8,
-  },
-  scanQRButtonText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "600",
+    marginTop: 2,
   },
   cancelButton: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#FEF2F2",
     padding: 14,
     borderRadius: 12,
     alignItems: "center",
@@ -2672,49 +2507,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: 16,
   },
-  arrivedMessage: {
-    backgroundColor: "#E8F5E9",
-    padding: 16,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  },
-  arrivedText: {
-    flex: 1,
-    fontSize: 14,
-    color: "#2E7D32",
-  },
-  rideStartedMessage: {
-    backgroundColor: "#FEF3C7",
-    padding: 16,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  },
-  rideStartedText: {
-    flex: 1,
-    fontSize: 14,
-    color: "#F59E0B",
-    fontWeight: "500",
-  },
-  shareButton: {
-    backgroundColor: "#F3F4F6",
-    padding: 14,
-    borderRadius: 12,
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "center",
-    gap: 8,
-  },
-  shareButtonText: {
-    color: "#183B5C",
-    fontWeight: "600",
-    fontSize: 14,
-  },
+  // No Ride Styles
   noRideContainer: {
     flex: 1,
     justifyContent: "center",
@@ -2729,52 +2522,21 @@ const styles = StyleSheet.create({
     backgroundColor: "#F3F4F6",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   noRideTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
-    marginBottom: 10,
+    color: "#1F2937",
+    marginBottom: 8,
     textAlign: "center",
   },
   noRideMessage: {
     fontSize: 16,
-    color: "#666",
+    color: "#6B7280",
     textAlign: "center",
     lineHeight: 22,
-    marginBottom: 30,
-  },
-  noRideFeatures: {
-    width: "100%",
-    marginBottom: 30,
-  },
-  featureItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFF",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  featureIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#F0F9FF",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  featureText: {
-    fontSize: 15,
-    color: "#333",
-    flex: 1,
+    marginBottom: 32,
   },
   bookRideButton: {
     backgroundColor: "#183B5C",
@@ -2782,78 +2544,69 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 16,
-    paddingHorizontal: 30,
+    paddingHorizontal: 32,
     borderRadius: 12,
-    width: "100%",
-    marginBottom: 12,
     gap: 8,
   },
   bookRideButtonText: {
     color: "#FFF",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
   },
-  historyButton: {
-    paddingVertical: 12,
-  },
-  historyButtonText: {
-    color: "#183B5C",
-    fontSize: 16,
-    fontWeight: "500",
-    textDecorationLine: "underline",
-  },
+  // Completed Styles
   completedContainer: {
     flex: 1,
     paddingHorizontal: 20,
     backgroundColor: "#F5F7FA",
-    marginTop: 20,
   },
   completedIconContainer: {
     alignItems: "center",
-    marginBottom: 10,
+    marginVertical: 24,
   },
   completedTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: "#333",
-    marginBottom: 10,
+    color: "#1F2937",
+    marginBottom: 8,
     textAlign: "center",
   },
   completedMessage: {
     fontSize: 16,
-    color: "#666",
+    color: "#6B7280",
     textAlign: "center",
-    marginBottom: 30,
+    marginBottom: 24,
     lineHeight: 22,
   },
   completedPaymentCard: {
-    backgroundColor: "#F0F9FF",
+    backgroundColor: "#FFF",
     borderRadius: 16,
-    padding: 15,
-    width: "100%",
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: "#BFDBFE",
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   completedPaymentTitle: {
     fontSize: 16,
     fontWeight: "bold",
-    color: "#183B5C",
-    marginBottom: 8,
+    color: "#1F2937",
+    marginBottom: 12,
   },
   completedPaymentRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 4,
+    marginBottom: 8,
   },
   completedPaymentLabel: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
   },
   completedPaymentValue: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#333",
+    color: "#1F2937",
   },
   pointsEarnedContainer: {
     marginTop: 8,
@@ -2861,33 +2614,18 @@ const styles = StyleSheet.create({
   pointsEarnedDivider: {
     height: 1,
     backgroundColor: "#E5E7EB",
-    marginVertical: 8,
+    marginVertical: 12,
   },
   pointsEarnedValue: {
     color: "#F59E0B",
-    fontWeight: "bold",
-  },
-  pointsEarnedNote: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    marginTop: 2,
-    fontStyle: "italic",
-  },
-  noPointsText: {
-    fontSize: 12,
-    color: "#9CA3AF",
-    fontStyle: "italic",
-    textAlign: "center",
-    paddingVertical: 8,
   },
   completedDriverCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFF",
     borderRadius: 16,
-    padding: 15,
-    width: "100%",
-    marginBottom: 20,
+    padding: 16,
+    marginBottom: 12,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -2898,7 +2636,16 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    marginRight: 15,
+    marginRight: 16,
+    overflow: "hidden",
+  },
+  completedDriverAvatarPlaceholder: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#183B5C",
+    justifyContent: "center",
+    alignItems: "center",
   },
   completedDriverImage: {
     width: 60,
@@ -2911,28 +2658,32 @@ const styles = StyleSheet.create({
   completedDriverName: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#333",
+    color: "#1F2937",
     marginBottom: 4,
   },
   completedVehicleInfo: {
     fontSize: 14,
-    color: "#666",
+    color: "#6B7280",
   },
   completedTripDetails: {
-    backgroundColor: "#F9FAFB",
+    backgroundColor: "#FFF",
     borderRadius: 16,
-    padding: 15,
-    width: "100%",
-    marginBottom: 20,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
   completedLocationRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    marginBottom: 8,
+    marginBottom: 12,
   },
   completedLocationText: {
     fontSize: 14,
-    color: "#333",
+    color: "#374151",
     flex: 1,
     marginLeft: 8,
   },
@@ -2942,15 +2693,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 16,
-    paddingHorizontal: 30,
     borderRadius: 12,
-    width: "100%",
     marginBottom: 12,
     gap: 8,
   },
   completedRateButtonText: {
     color: "#FFF",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
   },
   completedHomeButton: {
@@ -2959,10 +2708,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 14,
-    paddingHorizontal: 30,
     borderRadius: 12,
-    width: "100%",
-    marginBottom: 12,
+    marginBottom: 20,
     borderWidth: 1,
     borderColor: "#183B5C",
     gap: 8,
@@ -2972,19 +2719,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  completedHistoryButton: {
-    paddingVertical: 12,
-    marginBottom: 20,
-  },
-  completedHistoryButtonText: {
-    color: "#183B5C",
-    fontSize: 14,
-    fontWeight: "500",
-    textDecorationLine: "underline",
-    textAlign: "center",
-  },
+  // Scanner Styles
   scannerHeader: {
-    backgroundColor: "#183B5C",
+    backgroundColor: "#1F2937",
     paddingTop: 60,
     paddingBottom: 20,
     paddingHorizontal: 20,
@@ -3071,7 +2808,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   scannerFooter: {
-    backgroundColor: "#183B5C",
+    backgroundColor: "#1F2937",
     padding: 20,
     alignItems: "center",
   },

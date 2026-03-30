@@ -1,19 +1,23 @@
+// AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws
 {
   "expo": {
     "name": "SakayNa",
     "slug": "SakayNa",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/sakayna_icon.png",
+    "icon": "./assets/iconss.png",
     "userInterfaceStyle": "light",
     "scheme": "sakayna",
+
     "splash": {
       "image": "./assets/sakayna_icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#00000000"
     },
+
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.lemera.sakayna",
       "config": {
         "googleMapsApiKey": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
       },
@@ -23,46 +27,56 @@
         "UIBackgroundModes": ["location"]
       }
     },
+
     "android": {
+      "package": "com.lemera.sakayna",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/sakayna_icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "package": "com.lemera.SakayNa",
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
-        }
       },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION"
-      ]
+      ],
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
+        }
+      }
     },
+
     "web": {
       "favicon": "./assets/sakayna_icon.png"
     },
+
     "extra": {
+      "GOOGLE_API_KEY": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws",
       "eas": {
         "projectId": "2c53eff2-d71b-44a1-b9ac-cfc13330d935"
-      },
-      "GOOGLE_API_KEY": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
+      }
     },
+
     "plugins": [
       "expo-secure-store",
+
       [
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Allow SakayNa to use your location to track rides."
         }
       ],
+
       [
         "expo-notifications",
         {
+          "icon": "./assets/notification-icon.png",
+          "color": "#E97A3E",
           "sounds": ["./assets/sounds/new_booking.wav"]
         }
       ],
+
       "expo-font",
       "expo-asset"
     ]

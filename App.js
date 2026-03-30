@@ -1,10 +1,10 @@
-import 'react-native-gesture-handler';
-import React, { useEffect, useRef } from 'react';
-import { AppState } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import "react-native-gesture-handler";
+import React, { useEffect, useRef, useState } from "react";
+import { View, ActivityIndicator } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /* ============================= */
 /* Screens Import */
@@ -80,45 +80,64 @@ const linking = {
 };
 
 export default function App() {
-  const notificationSub = useRef(null);
+const notificationSub = useRef(null);
+  const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
     const init = async () => {
       try {
-        // 1. Create Android channels
+        // 1. ask permission FIRST
+        const granted = await requestNotificationPermission();
+
+        // 2. setup channels
         await setupNotificationChannels();
 
-        // 2. Register for push notifications and save the token
-        const driverId = await AsyncStorage.getItem('user_id');
-        if (driverId) {
-          await registerForPushNotifications(driverId);
+        // 3. register token only if allowed
+        if (granted) {
+          const driverId = await AsyncStorage.getItem("user_id");
+          if (driverId) {
+            await registerForPushNotifications(driverId);
+          }
         }
+
+        // 4. listen for notification taps
+        notificationSub.current = addNotificationResponseListener((response) => {
+          const data = response?.notification?.request?.content?.data;
+          if (data?.type === "booking_request") {
+            console.log("📲 Notification tapped — booking request", data);
+          }
+        });
       } catch (error) {
-        console.log('Notification init error:', error);
+        console.log("App init error:", error);
+      } finally {
+        setAppReady(true);
       }
     };
 
     init();
 
-    // 3. Handle taps on notifications while app is backgrounded/killed
-    notificationSub.current = addNotificationResponseListener((response) => {
-      const data = response?.notification?.request?.content?.data;
-
-      if (data?.type === 'booking_request') {
-        console.log('📲 Notification tapped — booking request', data);
-
-        // If you have navigation ref later:
-        // navigationRef.current?.navigate("DriverTrackRide", { bookingData: data });
-      }
-    });
-
     return () => {
-      if (notificationSub.current) {
-        notificationSub.current.remove();
-      }
+      notificationSub.current?.remove?.();
       unloadBookingSound();
     };
   }, []);
+
+  if (!appReady) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            backgroundColor: "#fff",
+          }}
+        >
+          <ActivityIndicator size="large" color="#183B5C" />
+        </View>
+      </GestureHandlerRootView>
+    );
+  }
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

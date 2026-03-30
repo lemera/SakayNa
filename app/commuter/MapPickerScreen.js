@@ -5,7 +5,6 @@ import {
   Text,
   StyleSheet,
   TextInput,
-  Pressable,
   Alert,
   ActivityIndicator,
   Platform,
@@ -14,6 +13,7 @@ import {
   TouchableOpacity,
   Dimensions,
   Animated,
+  StatusBar,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
@@ -21,9 +21,9 @@ import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import Constants from "expo-constants";
-import * as Haptics from 'expo-haptics';
+import * as Haptics from "expo-haptics";
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function MapPickerScreen() {
   const insets = useSafeAreaInsets();
@@ -32,8 +32,10 @@ export default function MapPickerScreen() {
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
   const bottomSheetAnim = useRef(new Animated.Value(0)).current;
-  
+  const hasAutoCentered = useRef(false);
+
   const { type, onSelect, initialLocation } = route.params || {};
+
   const [selectedLocation, setSelectedLocation] = useState(initialLocation || null);
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,27 +44,59 @@ export default function MapPickerScreen() {
   const [searching, setSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
-  const [mapReady, setMapReady] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
-  
+  const [initialAutoLocating, setInitialAutoLocating] = useState(true);
+  const [mapInteracted, setMapInteracted] = useState(false);
+
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
-  
-  // Animate bottom sheet on mount
+
   useEffect(() => {
     Animated.spring(bottomSheetAnim, {
       toValue: 1,
       useNativeDriver: true,
-      tension: 65,
-      friction: 11,
+      tension: 70,
+      friction: 12,
     }).start();
   }, []);
 
-  // Get current location on mount
   useEffect(() => {
-    getCurrentLocation();
+    let mounted = true;
+
+    const initLocation = async () => {
+      try {
+        if (initialLocation) {
+          setSelectedLocation(initialLocation);
+          await getAddressFromCoords(initialLocation);
+
+          setTimeout(() => {
+            mapRef.current?.animateToRegion(
+              {
+                latitude: initialLocation.latitude,
+                longitude: initialLocation.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              },
+              500
+            );
+          }, 250);
+
+          hasAutoCentered.current = true;
+        } else {
+          await getCurrentLocation({ isInitial: true, forceRecenter: true });
+        }
+      } finally {
+        if (mounted) setInitialAutoLocating(false);
+      }
+    };
+
+    initLocation();
+
+    return () => {
+      mounted = false;
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
+    };
   }, []);
 
-  // Auto-search when user types (with debounce)
   useEffect(() => {
     if (searchQuery.length < 3) {
       setSearchResults([]);
@@ -70,59 +104,37 @@ export default function MapPickerScreen() {
       return;
     }
 
-    if (searchTimeout.current) {
-      clearTimeout(searchTimeout.current);
-    }
+    if (searchTimeout.current) clearTimeout(searchTimeout.current);
 
     searchTimeout.current = setTimeout(() => {
       performSearch();
     }, 500);
 
     return () => {
-      if (searchTimeout.current) {
-        clearTimeout(searchTimeout.current);
-      }
+      if (searchTimeout.current) clearTimeout(searchTimeout.current);
     };
   }, [searchQuery]);
 
-  // If initial location provided, use it
-  useEffect(() => {
-    if (initialLocation) {
-      setSelectedLocation(initialLocation);
-      getAddressFromCoords(initialLocation);
-      
-      setTimeout(() => {
-        if (mapRef.current) {
-          mapRef.current.animateToRegion({
-            latitude: initialLocation.latitude,
-            longitude: initialLocation.longitude,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          }, 500);
-        }
-      }, 500);
-    }
-  }, [initialLocation]);
-
-  const getCurrentLocation = async () => {
+  const getCurrentLocation = async ({ isInitial = false, forceRecenter = false } = {}) => {
     try {
       setIsLocating(true);
       setErrorMessage("");
-      
-      // Haptic feedback
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      
+
+      if (!isInitial) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
+
       const { status } = await Location.requestForegroundPermissionsAsync();
+
       if (status !== "granted") {
         Alert.alert(
           "Location Permission Required",
-          "Please enable location access to find your current location. You can manually search for locations instead.",
+          "Please enable location access to find your current location.",
           [
             { text: "Cancel", style: "cancel" },
-            { text: "Open Settings", onPress: () => Location.openSettings() }
+            { text: "Open Settings", onPress: () => Location.openSettings() },
           ]
         );
-        setIsLocating(false);
         return;
       }
 
@@ -135,26 +147,34 @@ export default function MapPickerScreen() {
         longitude: location.coords.longitude,
       };
 
-      // Animate to current location
-      mapRef.current?.animateToRegion({
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }, 1000);
+      const shouldMoveMap =
+        forceRecenter || !mapInteracted || !hasAutoCentered.current;
 
-      if (!initialLocation) {
+      if (shouldMoveMap && mapRef.current) {
+        mapRef.current.animateToRegion(
+          {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          },
+          900
+        );
+        hasAutoCentered.current = true;
+      }
+
+      if (isInitial || !initialLocation || forceRecenter) {
         setSelectedLocation(coords);
         await getAddressFromCoords(coords);
       }
-      
-      // Success feedback
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      
+
+      if (!isInitial) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
     } catch (err) {
       console.log("Error getting location:", err);
-      setErrorMessage("Unable to get your location. Please check your GPS or try searching manually.");
-      setTimeout(() => setErrorMessage(""), 3000);
+      setErrorMessage("Unable to get your current location.");
+      setTimeout(() => setErrorMessage(""), 2500);
     } finally {
       setIsLocating(false);
     }
@@ -164,47 +184,46 @@ export default function MapPickerScreen() {
     try {
       setLoading(true);
       const addressArray = await Location.reverseGeocodeAsync(coords);
-      
+
       if (addressArray[0]) {
         const addr = addressArray[0];
-        
         const addressParts = [];
-        
-        // Build a user-friendly address
-        if (addr.street) addressParts.push(addr.street);
-        else if (addr.name) addressParts.push(addr.name);
-        
+
+        if (addr.name) addressParts.push(addr.name);
+        else if (addr.street) addressParts.push(addr.street);
+
         if (addr.district) addressParts.push(addr.district);
         else if (addr.subregion) addressParts.push(addr.subregion);
-        
+
         if (addr.city) addressParts.push(addr.city);
         else if (addr.region) addressParts.push(addr.region);
-        
+
         const fullAddress = addressParts.filter(Boolean).join(", ");
-        setAddress(fullAddress || "Selected Location");
+        setAddress(fullAddress || "Selected location");
       } else {
-        setAddress("Selected Location");
+        setAddress("Selected location");
       }
     } catch (err) {
       console.log("Error getting address:", err);
-      setAddress("Selected Location");
+      setAddress("Selected location");
     } finally {
       setLoading(false);
     }
   };
 
   const handleMapPress = (event) => {
+    if (isLocating || initialAutoLocating) return;
+
     const coords = event.nativeEvent.coordinate;
+    setMapInteracted(true);
     setSelectedLocation(coords);
     getAddressFromCoords(coords);
-    
-    // Clear search and hide results
+
     setSearchQuery("");
     setSearchResults([]);
     setShowSearchResults(false);
     Keyboard.dismiss();
-    
-    // Haptic feedback
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
@@ -213,6 +232,7 @@ export default function MapPickerScreen() {
 
     try {
       setSearching(true);
+
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
         searchQuery
       )}&key=${googleApiKey}`;
@@ -247,6 +267,7 @@ export default function MapPickerScreen() {
       longitude: result.location.lng,
     };
 
+    setMapInteracted(true);
     setSelectedLocation(coords);
     setAddress(result.address);
     setSearchQuery("");
@@ -254,28 +275,27 @@ export default function MapPickerScreen() {
     setShowSearchResults(false);
     Keyboard.dismiss();
 
-    mapRef.current?.animateToRegion({
-      latitude: coords.latitude,
-      longitude: coords.longitude,
-      latitudeDelta: 0.01,
-      longitudeDelta: 0.01,
-    }, 500);
-    
+    mapRef.current?.animateToRegion(
+      {
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      },
+      500
+    );
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   const handleConfirm = () => {
     if (!selectedLocation) {
-      Alert.alert(
-        "No Location Selected",
-        "Please select a location on the map by tapping or searching",
-        [{ text: "OK" }]
-      );
+      Alert.alert("No Location Selected", "Please select a location first.");
       return;
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    
+
     if (onSelect) {
       onSelect(selectedLocation, address);
     }
@@ -287,120 +307,37 @@ export default function MapPickerScreen() {
     <TouchableOpacity
       style={styles.searchResultItem}
       onPress={() => handleSelectSearchResult(item)}
-      activeOpacity={0.7}
+      activeOpacity={0.75}
     >
       <View style={styles.searchResultIcon}>
-        <Ionicons name="location-outline" size={20} color="#183B5C" />
+        <Ionicons name="location-outline" size={18} color="#183B5C" />
       </View>
+
       <View style={styles.searchResultContent}>
         <Text style={styles.searchResultText} numberOfLines={2}>
           {item.address}
         </Text>
       </View>
-      <Ionicons name="chevron-forward" size={18} color="#CBD5E1" />
+
+      <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
     </TouchableOpacity>
   );
 
   const bottomSheetTransform = {
-    transform: [{
-      translateY: bottomSheetAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: [300, 0],
-      })
-    }]
+    transform: [
+      {
+        translateY: bottomSheetAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [260, 0],
+        }),
+      },
+    ],
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          onPress={() => navigation.goBack()} 
-          style={styles.headerButton}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="arrow-back" size={24} color="#183B5C" />
-        </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>
-            Set {type === "pickup" ? "Pickup" : "Dropoff"} Location
-          </Text>
-          <Text style={styles.headerSubtitle}>
-            Tap on map or search for a place
-          </Text>
-        </View>
-        <TouchableOpacity 
-          onPress={getCurrentLocation} 
-          style={styles.headerButton}
-          disabled={isLocating}
-          activeOpacity={0.7}
-        >
-          {isLocating ? (
-            <ActivityIndicator size="small" color="#183B5C" />
-          ) : (
-            <Ionicons name="location" size={24} color="#183B5C" />
-          )}
-        </TouchableOpacity>
-      </View>
+    <View style={styles.container}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
-      {/* Error Message */}
-      {errorMessage ? (
-        <View style={styles.errorContainer}>
-          <Ionicons name="alert-circle" size={18} color="#EF4444" />
-          <Text style={styles.errorText}>{errorMessage}</Text>
-        </View>
-      ) : null}
-
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={20} color="#94A3B8" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search for a place, address, or landmark..."
-            placeholderTextColor="#94A3B8"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-            autoCapitalize="none"
-            autoCorrect={false}
-            onSubmitEditing={performSearch}
-          />
-          {searching ? (
-            <ActivityIndicator size="small" color="#183B5C" />
-          ) : searchQuery.length > 0 ? (
-            <TouchableOpacity onPress={() => {
-              setSearchQuery("");
-              setSearchResults([]);
-              setShowSearchResults(false);
-            }}>
-              <Ionicons name="close-circle" size={20} color="#94A3B8" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </View>
-
-      {/* Search Results */}
-      {showSearchResults && searchResults.length > 0 && (
-        <View style={styles.searchResultsContainer}>
-          <View style={styles.searchResultsHeader}>
-            <Text style={styles.searchResultsTitle}>Search Results</Text>
-            <TouchableOpacity onPress={() => setShowSearchResults(false)}>
-              <Ionicons name="close" size={20} color="#94A3B8" />
-            </TouchableOpacity>
-          </View>
-          <FlatList
-            data={searchResults}
-            renderItem={renderSearchResult}
-            keyExtractor={(item) => item.id}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            maxToRenderPerBatch={10}
-          />
-        </View>
-      )}
-
-      {/* Map */}
       <MapView
         ref={mapRef}
         style={styles.map}
@@ -412,125 +349,220 @@ export default function MapPickerScreen() {
           longitudeDelta: 0.0421,
         }}
         onPress={handleMapPress}
-        showsUserLocation={true}
+        showsUserLocation
         showsMyLocationButton={false}
-        showsCompass={true}
-        showsScale={true}
-        loadingEnabled={true}
+        showsCompass={false}
+        showsScale={false}
+        loadingEnabled
         loadingIndicatorColor="#183B5C"
-        loadingBackgroundColor="#F5F7FA"
-        onMapReady={() => setMapReady(true)}
-        onError={() => Alert.alert("Map Error", "Unable to load map. Please check your connection.")}
+        loadingBackgroundColor="#F8FAFC"
+        onError={() =>
+          Alert.alert("Map Error", "Unable to load map. Please check your connection.")
+        }
       >
         {selectedLocation && (
           <Marker
             coordinate={selectedLocation}
             title={type === "pickup" ? "Pickup Location" : "Dropoff Location"}
             description={address}
-            draggable={true}
+            draggable={!isLocating && !initialAutoLocating}
             onDragEnd={(e) => {
+              if (isLocating || initialAutoLocating) return;
+
               const coords = e.nativeEvent.coordinate;
+              setMapInteracted(true);
               setSelectedLocation(coords);
               getAddressFromCoords(coords);
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             }}
           >
-            <View style={[
-              styles.marker,
-              type === "pickup" ? styles.pickupMarker : styles.dropoffMarker
-            ]}>
-              <Ionicons 
-                name={type === "pickup" ? "location" : "flag"} 
-                size={20} 
-                color="#FFF" 
+            <View
+              style={[
+                styles.marker,
+                type === "pickup" ? styles.pickupMarker : styles.dropoffMarker,
+              ]}
+            >
+              <Ionicons
+                name={type === "pickup" ? "location" : "flag"}
+                size={18}
+                color="#FFF"
               />
             </View>
           </Marker>
         )}
       </MapView>
 
-      {/* Recenter Button */}
-      <TouchableOpacity 
-        style={styles.recenterButton} 
-        onPress={getCurrentLocation}
+      <View style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.iconButton}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="arrow-back" size={22} color="#183B5C" />
+          </TouchableOpacity>
+
+          <Text style={styles.screenTitle}>
+            {type === "pickup" ? "Pickup location" : "Dropoff location"}
+          </Text>
+
+          <TouchableOpacity
+            onPress={() => getCurrentLocation({ forceRecenter: true })}
+            style={styles.iconButton}
+            activeOpacity={0.75}
+            disabled={isLocating}
+          >
+            {isLocating ? (
+              <ActivityIndicator size="small" color="#183B5C" />
+            ) : (
+              <Ionicons name="locate" size={20} color="#183B5C" />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.searchWrapper}>
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={18} color="#94A3B8" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search place or address"
+              placeholderTextColor="#94A3B8"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+              autoCapitalize="none"
+              autoCorrect={false}
+              onSubmitEditing={performSearch}
+              editable={!initialAutoLocating}
+            />
+
+            {searching ? (
+              <ActivityIndicator size="small" color="#183B5C" />
+            ) : searchQuery.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setSearchQuery("");
+                  setSearchResults([]);
+                  setShowSearchResults(false);
+                }}
+              >
+                <Ionicons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          {showSearchResults && searchResults.length > 0 && (
+            <View style={styles.searchResultsContainer}>
+              <FlatList
+                data={searchResults}
+                renderItem={renderSearchResult}
+                keyExtractor={(item) => item.id}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              />
+            </View>
+          )}
+        </View>
+
+        {errorMessage ? (
+          <View style={styles.errorChip}>
+            <Ionicons name="alert-circle" size={16} color="#DC2626" />
+            <Text style={styles.errorChipText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+      </View>
+
+      {initialAutoLocating && (
+        <View style={styles.mapLoadingOverlay} pointerEvents="auto">
+          <View style={styles.loadingCard}>
+            <ActivityIndicator size="large" color="#183B5C" />
+            <Text style={styles.mapLoadingTitle}>Getting your location</Text>
+            <Text style={styles.mapLoadingSubtext}>
+              Please wait while we find your current position
+            </Text>
+          </View>
+        </View>
+      )}
+
+      <TouchableOpacity
+        style={[styles.floatingLocateButton, { bottom: 250 }]}
+        onPress={() => getCurrentLocation({ forceRecenter: true })}
         activeOpacity={0.8}
+        disabled={isLocating}
       >
-        <Ionicons name="locate" size={24} color="#183B5C" />
+        {isLocating ? (
+          <ActivityIndicator size="small" color="#183B5C" />
+        ) : (
+          <Ionicons name="locate" size={22} color="#183B5C" />
+        )}
       </TouchableOpacity>
 
-      {/* Bottom Sheet */}
-      <Animated.View style={[styles.bottomSheet, bottomSheetTransform]}>
-        <View style={styles.bottomSheetHandle}>
-          <View style={styles.handle} />
-        </View>
-        
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#183B5C" />
-            <Text style={styles.loadingText}>Getting address...</Text>
+      <Animated.View
+        style={[
+          styles.bottomCard,
+          bottomSheetTransform,
+          { paddingBottom: Math.max(insets.bottom + 14, 20) },
+        ]}
+      >
+        <View style={styles.sheetHandle} />
+
+        <View style={styles.locationRow}>
+          <View
+            style={[
+              styles.locationBadge,
+              type === "pickup" ? styles.pickupIconBg : styles.dropoffIconBg,
+            ]}
+          >
+            <Ionicons
+              name={type === "pickup" ? "navigate" : "flag"}
+              size={18}
+              color={type === "pickup" ? "#059669" : "#DC2626"}
+            />
           </View>
-        ) : (
-          <>
-            <View style={styles.addressContainer}>
-              <View style={[
-                styles.addressIcon,
-                type === "pickup" ? styles.pickupIconBg : styles.dropoffIconBg
-              ]}>
-                <Ionicons 
-                  name={type === "pickup" ? "location" : "flag"} 
-                  size={20} 
-                  color={type === "pickup" ? "#10B981" : "#EF4444"} 
-                />
-              </View>
-              <View style={styles.addressContent}>
-                <Text style={styles.addressLabel}>
-                  {type === "pickup" ? "Pickup Location" : "Dropoff Location"}
-                </Text>
-                <Text style={styles.addressText} numberOfLines={2}>
-                  {address || "Tap on the map to select a location"}
-                </Text>
-              </View>
-            </View>
 
-            {selectedLocation && (
-              <View style={styles.coordinatesContainer}>
-                <Text style={styles.coordinatesText}>
-                  📍 {selectedLocation.latitude.toFixed(6)}, {selectedLocation.longitude.toFixed(6)}
-                </Text>
+          <View style={styles.locationTextWrap}>
+            <Text style={styles.locationLabel}>
+              {type === "pickup" ? "Selected pickup" : "Selected dropoff"}
+            </Text>
+
+            {loading ? (
+              <View style={styles.inlineLoading}>
+                <ActivityIndicator size="small" color="#183B5C" />
+                <Text style={styles.inlineLoadingText}>Loading address...</Text>
               </View>
+            ) : (
+              <Text style={styles.locationAddress} numberOfLines={2}>
+                {address || "Tap on the map to choose a location"}
+              </Text>
             )}
+          </View>
+        </View>
 
-            <View style={styles.instructionContainer}>
-              <Ionicons name="hand-right" size={16} color="#94A3B8" />
-              <Text style={styles.instructionText}>
-                Tip: You can drag the marker to adjust the exact location
-              </Text>
-            </View>
-
-            <TouchableOpacity 
-              style={[
-                styles.confirmButton,
-                (!selectedLocation || loading) && styles.confirmButtonDisabled
-              ]}
-              onPress={handleConfirm}
-              disabled={!selectedLocation || loading}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.confirmButtonText}>
-                Confirm {type === "pickup" ? "Pickup" : "Dropoff"} Location
-              </Text>
-              <Ionicons name="checkmark" size={20} color="#FFF" />
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={styles.cancelButton}
-              onPress={() => navigation.goBack()}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-          </>
+        {selectedLocation && (
+          <View style={styles.coordinatePill}>
+            <Text style={styles.coordinateText}>
+              {selectedLocation.latitude.toFixed(6)}, {selectedLocation.longitude.toFixed(6)}
+            </Text>
+          </View>
         )}
+
+        <Text style={styles.helperText}>
+          Drag the pin or tap the map to adjust the exact location.
+        </Text>
+
+        <TouchableOpacity
+          style={[
+            styles.confirmButton,
+            (!selectedLocation || loading) && styles.confirmButtonDisabled,
+          ]}
+          onPress={handleConfirm}
+          disabled={!selectedLocation || loading}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.confirmButtonText}>
+            Confirm {type === "pickup" ? "pickup" : "dropoff"}
+          </Text>
+        </TouchableOpacity>
       </Animated.View>
     </View>
   );
@@ -539,148 +571,140 @@ export default function MapPickerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F7FA",
+    backgroundColor: "#F8FAFC",
   },
-  header: {
+  map: {
+    flex: 1,
+  },
+
+  topOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    zIndex: 10,
+  },
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+    marginBottom: 14,
   },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  headerTitleContainer: {
+  screenTitle: {
     flex: 1,
-    alignItems: "center",
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "700",
     color: "#183B5C",
   },
-  headerSubtitle: {
-    fontSize: 12,
-    color: "#6B7280",
-    marginTop: 2,
-  },
-  errorContainer: {
-    flexDirection: "row",
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#FEF2F2",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginHorizontal: 16,
-    marginTop: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#FEE2E2",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    elevation: 6,
   },
-  errorText: {
-    marginLeft: 8,
-    fontSize: 12,
-    color: "#EF4444",
-    flex: 1,
-  },
-  searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
-    zIndex: 3,
+
+  searchWrapper: {
+    zIndex: 11,
   },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    backgroundColor: "rgba(255,255,255,0.98)",
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    minHeight: 54,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+    elevation: 6,
   },
   searchInput: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 8,
+    marginLeft: 8,
     fontSize: 15,
-    color: "#333",
+    color: "#0F172A",
+    paddingVertical: 14,
   },
   searchResultsContainer: {
-    position: "absolute",
-    top: 120,
-    left: 16,
-    right: 16,
-    backgroundColor: "#FFF",
-    borderRadius: 16,
-    padding: 8,
-    maxHeight: SCREEN_HEIGHT * 0.4,
-    zIndex: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
+    marginTop: 10,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 18,
+    maxHeight: SCREEN_HEIGHT * 0.32,
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.1,
-    shadowRadius: 12,
+    shadowRadius: 18,
     elevation: 8,
-  },
-  searchResultsHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  searchResultsTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#183B5C",
   },
   searchResultItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    borderBottomColor: "#F1F5F9",
   },
   searchResultIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     backgroundColor: "#EFF6FF",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 10,
   },
   searchResultContent: {
     flex: 1,
   },
   searchResultText: {
     fontSize: 14,
-    color: "#333",
     lineHeight: 20,
+    color: "#0F172A",
   },
-  map: {
-    flex: 1,
+
+  errorChip: {
+    marginTop: 10,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(254,242,242,0.96)",
+    borderColor: "#FECACA",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
+  errorChipText: {
+    marginLeft: 6,
+    fontSize: 12,
+    color: "#DC2626",
+    fontWeight: "500",
+  },
+
   marker: {
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 2,
-    borderColor: "#FFF",
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 7,
   },
   pickupMarker: {
     backgroundColor: "#10B981",
@@ -688,141 +712,162 @@ const styles = StyleSheet.create({
   dropoffMarker: {
     backgroundColor: "#EF4444",
   },
-  bottomSheet: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "#FFF",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 10,
-    zIndex: 2,
-  },
-  bottomSheetHandle: {
+
+  mapLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(248,250,252,0.82)",
+    justifyContent: "center",
     alignItems: "center",
+    zIndex: 20,
+  },
+  loadingCard: {
+    width: "78%",
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    paddingVertical: 28,
+    paddingHorizontal: 22,
+    alignItems: "center",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.12,
+    shadowRadius: 22,
+    elevation: 10,
+  },
+  mapLoadingTitle: {
+    marginTop: 14,
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#183B5C",
+  },
+  mapLoadingSubtext: {
+    marginTop: 6,
+    textAlign: "center",
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#64748B",
+  },
+
+  floatingLocateButton: {
+    position: "absolute",
+    right: 18,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#FFFFFF",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+    zIndex: 12,
+  },
+
+  bottomCard: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    bottom: 14,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 28,
+    paddingTop: 14,
+    paddingHorizontal: 18,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 12,
+    zIndex: 12,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    width: 42,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#E2E8F0",
     marginBottom: 16,
   },
-  handle: {
-    width: 40,
-    height: 4,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 2,
-  },
-  loadingContainer: {
-    alignItems: "center",
-    paddingVertical: 20,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: "#6B7280",
-  },
-  addressContainer: {
+  locationRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    backgroundColor: "#F9FAFB",
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 12,
   },
-  addressIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  locationBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
   },
   pickupIconBg: {
-    backgroundColor: "#E8F5E9",
+    backgroundColor: "#ECFDF5",
   },
   dropoffIconBg: {
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#FEF2F2",
   },
-  addressContent: {
+  locationTextWrap: {
     flex: 1,
   },
-  addressLabel: {
+  locationLabel: {
     fontSize: 12,
     fontWeight: "600",
-    color: "#6B7280",
+    color: "#64748B",
     marginBottom: 4,
   },
-  addressText: {
-    fontSize: 14,
-    color: "#333",
-    lineHeight: 20,
+  locationAddress: {
+    fontSize: 15,
+    lineHeight: 21,
+    color: "#0F172A",
+    fontWeight: "500",
   },
-  coordinatesContainer: {
-    marginBottom: 12,
-    paddingHorizontal: 4,
-  },
-  coordinatesText: {
-    fontSize: 11,
-    color: "#9CA3AF",
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  instructionContainer: {
+
+  inlineLoading: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 20,
-    paddingHorizontal: 4,
   },
-  instructionText: {
+  inlineLoadingText: {
     marginLeft: 8,
-    fontSize: 12,
-    color: "#94A3B8",
-    flex: 1,
+    fontSize: 14,
+    color: "#64748B",
   },
+
+  coordinatePill: {
+    alignSelf: "flex-start",
+    marginTop: 14,
+    marginBottom: 10,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  coordinateText: {
+    fontSize: 12,
+    color: "#475569",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  helperText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#64748B",
+    marginBottom: 16,
+  },
+
   confirmButton: {
     backgroundColor: "#183B5C",
-    paddingVertical: 16,
-    borderRadius: 12,
-    flexDirection: "row",
-    alignItems: "center",
+    minHeight: 54,
+    borderRadius: 18,
     justifyContent: "center",
-    marginBottom: 12,
-    gap: 8,
+    alignItems: "center",
   },
   confirmButtonDisabled: {
     backgroundColor: "#CBD5E1",
   },
   confirmButtonText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  cancelButton: {
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  cancelButtonText: {
-    color: "#EF4444",
+    color: "#FFFFFF",
     fontSize: 15,
-    fontWeight: "500",
-  },
-  recenterButton: {
-    position: "absolute",
-    bottom: 220,
-    right: 20,
-    backgroundColor: "#FFF",
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 5,
-    zIndex: 2,
+    fontWeight: "700",
   },
 });

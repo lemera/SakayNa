@@ -1,4 +1,4 @@
-// screens/commuter/HomeScreen.js
+// screens/commuter/HomeScreen.js (Fixed Version)
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   View,
@@ -7,11 +7,14 @@ import {
   TextInput,
   Pressable,
   ScrollView,
-  Alert,
   ActivityIndicator,
   RefreshControl,
   Modal,
   TouchableOpacity,
+  Animated,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, Polyline, Circle, PROVIDER_GOOGLE } from "react-native-maps";
@@ -24,12 +27,190 @@ import Constants from "expo-constants";
 import Slider from '@react-native-community/slider';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import FindingDriverScreen from "./FindingDriver";
+// Add this with your other imports
+import CharacterMessage, { CharacterMessages, getRandomIdleMessage } from "../components/characterMessage";
 
-// Custom Alert Component
-const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText = "Yes", cancelText = "No", type = "warning" }) => {
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// ==================== MODERN CUSTOM ALERT COMPONENT ====================
+const ModernAlert = ({ 
+  visible, 
+  onClose, 
+  title, 
+  message, 
+  type = "info",
+  confirmText = "OK",
+  cancelText = "Cancel",
+  onConfirm,
+  onCancel,
+  showCancel = false,
+  icon,
+  loading = false 
+}) => {
+  const scaleAnim = useRef(new Animated.Value(0)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          tension: 50,
+          friction: 7,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      scaleAnim.setValue(0);
+      opacityAnim.setValue(0);
+    }
+  }, [visible]);
+
+  const getIconConfig = () => {
+    switch(type) {
+      case 'success':
+        return { 
+          icon: 'checkmark-circle', 
+          color: '#10B981',
+        };
+      case 'error':
+        return { 
+          icon: 'alert-circle', 
+          color: '#EF4444',
+        };
+      case 'warning':
+        return { 
+          icon: 'warning', 
+          color: '#F59E0B',
+        };
+      case 'confirm':
+        return { 
+          icon: 'help-circle', 
+          color: '#3B82F6',
+        };
+      default:
+        return { 
+          icon: 'information-circle', 
+          color: '#3B82F6',
+        };
+    }
+  };
+
+  const iconConfig = getIconConfig();
+
   if (!visible) return null;
 
-  const getIconName = () => {
+  return (
+    <Modal
+      transparent={true}
+      visible={visible}
+      animationType="none"
+      onRequestClose={onClose}
+    >
+      <Animated.View 
+        style={[
+          styles.alertOverlay,
+          { opacity: opacityAnim }
+        ]}
+      >
+        <Animated.View 
+          style={[
+            styles.alertContainer,
+            {
+              transform: [{ scale: scaleAnim }]
+            }
+          ]}
+        >
+          <View style={[styles.alertIconContainer, { backgroundColor: `${iconConfig.color}10` }]}>
+            {loading ? (
+              <ActivityIndicator size="large" color={iconConfig.color} />
+            ) : (
+              <Ionicons name={icon || iconConfig.icon} size={48} color={iconConfig.color} />
+            )}
+          </View>
+
+          {title && (
+            <Text style={styles.alertTitle}>{title}</Text>
+          )}
+
+          {message && (
+            <Text style={styles.alertMessage}>{message}</Text>
+          )}
+
+          <View style={styles.alertButtons}>
+            {showCancel && onCancel && (
+              <TouchableOpacity
+                style={[styles.alertButton, styles.alertCancelButton]}
+                onPress={onCancel}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.alertCancelText}>{cancelText}</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[
+                styles.alertButton, 
+                styles.alertConfirmButton,
+                { backgroundColor: iconConfig.color }
+              ]}
+              onPress={onConfirm || onClose}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.alertConfirmText}>{confirmText}</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+      </Animated.View>
+    </Modal>
+  );
+};
+
+// ==================== CUSTOM TOAST NOTIFICATION ====================
+const ModernToast = ({ visible, message, type, onHide }) => {
+  const translateY = useRef(new Animated.Value(100)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          damping: 20,
+          stiffness: 300,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+
+      const timer = setTimeout(() => {
+        Animated.parallel([
+          Animated.timing(translateY, {
+            toValue: 100,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0,
+            duration: 200,
+            useNativeDriver: true,
+          }),
+        ]).start(() => onHide());
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [visible]);
+
+  const getIcon = () => {
     switch(type) {
       case 'success': return 'checkmark-circle';
       case 'error': return 'alert-circle';
@@ -38,51 +219,329 @@ const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText
     }
   };
 
-  const getIconColor = () => {
+  const getColors = () => {
     switch(type) {
-      case 'success': return '#10B981';
-      case 'error': return '#EF4444';
-      case 'warning': return '#F59E0B';
-      default: return '#3B82F6';
+      case 'success': return { bg: '#10B981', icon: '#FFFFFF' };
+      case 'error': return { bg: '#EF4444', icon: '#FFFFFF' };
+      case 'warning': return { bg: '#F59E0B', icon: '#FFFFFF' };
+      default: return { bg: '#183B5C', icon: '#FFFFFF' };
     }
   };
+
+  const colors = getColors();
+
+  return (
+    <Animated.View
+      style={[
+        styles.toastContainer,
+        {
+          transform: [{ translateY }],
+          opacity,
+          backgroundColor: colors.bg,
+        },
+      ]}
+    >
+      <Ionicons name={getIcon()} size={20} color={colors.icon} />
+      <Text style={styles.toastMessage}>{message}</Text>
+    </Animated.View>
+  );
+};
+
+// ==================== LOCATION INPUT CARD (FIXED CURRENT LOCATION BUTTON) ====================
+const LocationCard = ({ 
+  icon, 
+  iconColor, 
+  label, 
+  placeholder, 
+  value, 
+  details, 
+  onDetailsChange, 
+  onPress, 
+  onCurrentLocation,
+  showCurrentLocation,
+  isActive = false,
+  trackUserAction
+}) => (
+  <Pressable 
+    style={[
+      styles.locationCard,
+      isActive && styles.locationCardActive
+    ]} 
+    onPress={() => {
+      if (trackUserAction) trackUserAction();
+      onPress();
+    }}
+  >
+    <View style={[styles.locationIconContainer, { backgroundColor: `${iconColor}15` }]}>
+      <Ionicons name={icon} size={20} color={iconColor} />
+    </View>
+    <View style={styles.locationContent}>
+      <Text style={styles.locationLabel}>{label}</Text>
+      <Text style={[styles.locationValue, !value && styles.locationPlaceholder]}>
+        {value || placeholder}
+      </Text>
+      {details !== undefined && (
+        <TextInput
+          style={styles.locationDetails}
+          placeholder="Add details (optional)"
+          placeholderTextColor="#9CA3AF"
+          value={details}
+          onChangeText={onDetailsChange}
+        />
+      )}
+    </View>
+    {showCurrentLocation && (
+      <TouchableOpacity 
+        onPress={() => {
+          if (trackUserAction) trackUserAction();
+          onCurrentLocation();
+        }} 
+        style={styles.currentLocationButton}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="locate" size={22} color="#183B5C" />
+      </TouchableOpacity>
+    )}
+  </Pressable>
+);
+
+// ==================== PASSENGER SELECTOR ====================
+const PassengerSelector = ({ count, onChange, max = 6, trackUserAction }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <View style={styles.passengerCard}>
+      <TouchableOpacity 
+        style={styles.passengerHeader}
+        onPress={() => {
+          if (trackUserAction) trackUserAction();
+          setIsExpanded(!isExpanded);
+        }}
+        activeOpacity={0.7}
+      >
+        <View style={styles.passengerHeaderLeft}>
+          <Ionicons name="people" size={20} color="#6B7280" />
+          <Text style={styles.passengerTitle}>Passengers</Text>
+        </View>
+        <View style={styles.passengerHeaderRight}>
+          <Text style={styles.passengerCountText}>{count}</Text>
+          <Ionicons 
+            name={isExpanded ? "chevron-up" : "chevron-down"} 
+            size={20} 
+            color="#9CA3AF" 
+          />
+        </View>
+      </TouchableOpacity>
+      
+      {isExpanded && (
+        <View style={styles.passengerControls}>
+          <TouchableOpacity
+            style={[styles.passengerControl, count <= 1 && styles.passengerControlDisabled]}
+            onPress={() => {
+              if (trackUserAction) trackUserAction();
+              onChange(count - 1);
+            }}
+            disabled={count <= 1}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="remove" size={20} color={count <= 1 ? "#D1D5DB" : "#183B5C"} />
+          </TouchableOpacity>
+          <Text style={styles.passengerNumber}>{count}</Text>
+          <TouchableOpacity
+            style={[styles.passengerControl, count >= max && styles.passengerControlDisabled]}
+            onPress={() => {
+              if (trackUserAction) trackUserAction();
+              onChange(count + 1);
+            }}
+            disabled={count >= max}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="add" size={20} color={count >= max ? "#D1D5DB" : "#183B5C"} />
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+};
+
+// ==================== TRIP SUMMARY CARD ====================
+const TripSummaryCard = ({ distance, time, passengers, fare }) => (
+  <View style={styles.summaryCard}>
+    <View style={styles.summaryMetrics}>
+      <View style={styles.metricItem}>
+        <Ionicons name="map-outline" size={20} color="#6B7280" />
+        <Text style={styles.metricValue}>{distance}</Text>
+        <Text style={styles.metricLabel}>km</Text>
+      </View>
+      <View style={styles.metricDivider} />
+      <View style={styles.metricItem}>
+        <Ionicons name="time-outline" size={20} color="#6B7280" />
+        <Text style={styles.metricValue}>{time}</Text>
+        <Text style={styles.metricLabel}>min</Text>
+      </View>
+      <View style={styles.metricDivider} />
+      <View style={styles.metricItem}>
+        <Ionicons name="people-outline" size={20} color="#6B7280" />
+        <Text style={styles.metricValue}>{passengers}</Text>
+        <Text style={styles.metricLabel}>pax</Text>
+      </View>
+    </View>
+    <View style={styles.fareRow}>
+      <Text style={styles.fareLabel}>Total Fare</Text>
+      <Text style={styles.fareAmount}>₱{fare}</Text>
+    </View>
+  </View>
+);
+
+// ==================== ACTION BUTTONS ====================
+const ActionButtons = ({ onScan, onFind, disabled, trackUserAction }) => (
+  <View style={styles.actionContainer}>
+    <TouchableOpacity
+      style={[styles.actionButton, disabled && styles.actionButtonDisabled]}
+      onPress={() => {
+        if (trackUserAction) trackUserAction();
+        onScan();
+      }}
+      disabled={disabled}
+      activeOpacity={0.8}
+    >
+      <View style={styles.actionIconWrapper}>
+        <Ionicons name="qr-code-outline" size={28} color="#10B981" />
+      </View>
+      <Text style={styles.actionTitle}>Scan QR</Text>
+      <Text style={styles.actionSubtitle}>Instant ride</Text>
+    </TouchableOpacity>
+    
+    <TouchableOpacity
+      style={[styles.actionButton, styles.actionButtonPrimary, disabled && styles.actionButtonDisabled]}
+      onPress={() => {
+        if (trackUserAction) trackUserAction();
+        onFind();
+      }}
+      disabled={disabled}
+      activeOpacity={0.8}
+    >
+      <View style={styles.actionIconWrapper}>
+        <Ionicons name="car-outline" size={28} color="#FFF" />
+      </View>
+      <Text style={[styles.actionTitle, styles.actionTitleLight]}>Find Driver</Text>
+      <Text style={[styles.actionSubtitle, styles.actionSubtitleLight]}>Search nearby</Text>
+    </TouchableOpacity>
+  </View>
+);
+
+// ==================== PROXIMITY FILTER MODAL ====================
+const ProximityModal = ({ 
+  visible, 
+  onClose, 
+  radius, 
+  onRadiusChange, 
+  onApply,
+  driversCount,
+  config 
+}) => {
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 20,
+        stiffness: 300,
+      }).start();
+    } else {
+      slideAnim.setValue(SCREEN_HEIGHT);
+    }
+  }, [visible]);
 
   return (
     <Modal
       transparent={true}
       visible={visible}
-      animationType="fade"
-      onRequestClose={onCancel}
+      animationType="none"
+      onRequestClose={onClose}
     >
-      <View style={styles.customAlertOverlay}>
-        <View style={styles.customAlertContainer}>
-          <View style={styles.customAlertIconContainer}>
-            <Ionicons name={getIconName()} size={50} color={getIconColor()} />
-          </View>
-          <Text style={styles.customAlertTitle}>{title}</Text>
-          <Text style={styles.customAlertMessage}>{message}</Text>
-          <View style={styles.customAlertButtons}>
-            {onCancel && (
-              <TouchableOpacity
-                style={[styles.customAlertButton, styles.customAlertCancelButton]}
-                onPress={onCancel}
-              >
-                <Text style={styles.customAlertCancelText}>{cancelText}</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={[styles.customAlertButton, styles.customAlertConfirmButton]}
-              onPress={onConfirm}
-            >
-              <Text style={styles.customAlertConfirmText}>{confirmText}</Text>
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity 
+          style={styles.modalBackdrop} 
+          activeOpacity={1} 
+          onPress={onClose} 
+        />
+        <Animated.View 
+          style={[
+            styles.modalContent,
+            { transform: [{ translateY: slideAnim }] }
+          ]}
+        >
+          <View style={styles.modalHandle} />
+          
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Search Radius</Text>
+            <TouchableOpacity onPress={onClose} style={styles.modalClose}>
+              <Ionicons name="close" size={24} color="#9CA3AF" />
             </TouchableOpacity>
           </View>
-        </View>
+
+          <View style={styles.radiusDisplay}>
+            <Text style={styles.radiusValue}>{radius.toFixed(1)}</Text>
+            <Text style={styles.radiusUnit}>km</Text>
+          </View>
+
+          <Slider
+            style={styles.slider}
+            minimumValue={config.minRadius}
+            maximumValue={config.maxRadius}
+            step={0.1}
+            value={radius}
+            onValueChange={onRadiusChange}
+            minimumTrackTintColor="#183B5C"
+            maximumTrackTintColor="#E5E7EB"
+            thumbTintColor="#183B5C"
+          />
+
+          <View style={styles.quickSelectGrid}>
+            {[1, 2, 3, 5].map((value) => (
+              <TouchableOpacity
+                key={value}
+                style={[
+                  styles.quickSelectChip,
+                  radius === value && styles.quickSelectChipActive
+                ]}
+                onPress={() => onRadiusChange(value)}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.quickSelectText,
+                  radius === value && styles.quickSelectTextActive
+                ]}>
+                  {value} km
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.driverStats}>
+            <Ionicons name="car-outline" size={20} color="#6B7280" />
+            <Text style={styles.driverStatsText}>
+              {driversCount} driver{driversCount !== 1 ? 's' : ''} available
+            </Text>
+          </View>
+
+          <TouchableOpacity 
+            style={styles.applyButton} 
+            onPress={onApply}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.applyButtonText}>Apply Filter</Text>
+          </TouchableOpacity>
+        </Animated.View>
       </View>
     </Modal>
   );
 };
 
+// ==================== MAIN SCREEN COMPONENT ====================
 export default function CommuterHomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -109,7 +568,6 @@ export default function CommuterHomeScreen() {
   const [initialLoad, setInitialLoad] = useState(true);
 
   // Driver info
-  const [nearbyDrivers, setNearbyDrivers] = useState(0);
   const [allDrivers, setAllDrivers] = useState([]);
 
   // Trip calculation
@@ -144,7 +602,32 @@ export default function CommuterHomeScreen() {
 
   // Recent locations
   const [recentLocations, setRecentLocations] = useState([]);
-  const [savedPlaces, setSavedPlaces] = useState([]);
+
+  // Alert States
+  const [alert, setAlert] = useState({
+    visible: false,
+    type: 'info',
+    title: '',
+    message: '',
+    confirmText: 'OK',
+    cancelText: 'Cancel',
+    showCancel: false,
+    onConfirm: null,
+    onCancel: null,
+  });
+  
+  // Character message states
+  const [showCharacterMessage, setShowCharacterMessage] = useState(false);
+  const [characterMessage, setCharacterMessage] = useState("");
+  const [characterType, setCharacterType] = useState('default');
+  
+  // Add these with your other states
+  const [idleTimer, setIdleTimer] = useState(null);
+  const [lastUserAction, setLastUserAction] = useState(Date.now());
+  const [hasShownWelcome, setHasShownWelcome] = useState(false);
+  
+  // Toast states
+  const [toast, setToast] = useState({ visible: false, message: '', type: 'info' });
 
   // QR Code Scanning States
   const [permission, requestPermission] = useCameraPermissions();
@@ -153,14 +636,51 @@ export default function CommuterHomeScreen() {
   const [scanningForDriver, setScanningForDriver] = useState(false);
   const [scannedDriverData, setScannedDriverData] = useState(null);
 
-  // Custom Alert States
-  const [showSuccessAlert, setShowSuccessAlert] = useState(false);
-  const [showErrorAlert, setShowErrorAlert] = useState(false);
-  const [alertMessage, setAlertMessage] = useState("");
-  const [alertTitle, setAlertTitle] = useState("");
-  const [alertType, setAlertType] = useState("warning");
-
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+  
+  // Character message helper
+  const showCharacterTip = (message, type = 'default', autoHide = true) => {
+    setCharacterMessage(message);
+    setCharacterType(type);
+    setShowCharacterMessage(true);
+    
+    if (autoHide) {
+      setTimeout(() => {
+        setShowCharacterMessage(false);
+      }, 5000);
+    }
+  };
+  
+  // Show custom alert helper
+  const showAlert = ({ type = 'info', title, message, confirmText = 'OK', cancelText = 'Cancel', showCancel = false, onConfirm, onCancel }) => {
+    setAlert({
+      visible: true,
+      type,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      showCancel,
+      onConfirm: () => {
+        setAlert(prev => ({ ...prev, visible: false }));
+        if (onConfirm) onConfirm();
+      },
+      onCancel: () => {
+        setAlert(prev => ({ ...prev, visible: false }));
+        if (onCancel) onCancel();
+      },
+    });
+  };
+
+  // Show toast helper
+  const showToast = (message, type = 'info') => {
+    setToast({ visible: true, message, type });
+  };
+
+  // Hide alert helper
+  const hideAlert = () => {
+    setAlert(prev => ({ ...prev, visible: false }));
+  };
 
   // Cleanup
   useEffect(() => {
@@ -182,7 +702,6 @@ export default function CommuterHomeScreen() {
             checkActiveBooking(),
             getCommuterId(),
             loadRecentLocations(),
-            loadSavedPlaces(),
             fetchFareSettings(),
             fetchProximityConfig(),
             loadProximityRadius(),
@@ -268,25 +787,10 @@ export default function CommuterHomeScreen() {
     try {
       setProximityRadius(radius);
       await AsyncStorage.setItem('proximity_radius_home', radius.toString());
-      
-      showCustomAlert("success", "✅ Proximity Filter Updated", `Showing drivers within ${parseFloat(radius).toFixed(1)} km of your pickup location.`);
+      setShowProximityFilter(false);
+      showToast(`Showing drivers within ${radius.toFixed(1)} km`, 'success');
     } catch (err) {
       console.log("Error saving proximity radius:", err);
-    }
-  };
-
-  const showCustomAlert = (type, title, message) => {
-    setAlertType(type);
-    setAlertTitle(title);
-    setAlertMessage(message);
-    
-    if (type === 'success') {
-      setShowSuccessAlert(true);
-      setTimeout(() => {
-        setShowSuccessAlert(false);
-      }, 2000);
-    } else if (type === 'error') {
-      setShowErrorAlert(true);
     }
   };
 
@@ -322,7 +826,6 @@ export default function CommuterHomeScreen() {
       getUserLocation(),
       fetchFareSettings(),
       loadRecentLocations(),
-      loadSavedPlaces(),
       checkActiveBooking(),
       fetchProximityConfig(),
     ]);
@@ -362,25 +865,6 @@ export default function CommuterHomeScreen() {
       }
     } catch (err) {
       console.log("Error loading recent locations:", err);
-    }
-  };
-
-  const loadSavedPlaces = async () => {
-    try {
-      const id = await AsyncStorage.getItem("user_id");
-      if (!id) return;
-
-      const { data, error } = await supabase
-        .from("saved_places")
-        .select("*")
-        .eq("commuter_id", id)
-        .order("created_at", { ascending: false });
-
-      if (data) {
-        setSavedPlaces(data);
-      }
-    } catch (err) {
-      console.log("Error loading saved places:", err);
     }
   };
 
@@ -452,10 +936,12 @@ export default function CommuterHomeScreen() {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert(
-          "Permission Denied",
-          "Location permission is needed to book a ride",
-        );
+        showAlert({
+          type: 'warning',
+          title: 'Location Permission',
+          message: 'Location permission is needed to book a ride',
+          confirmText: 'OK',
+        });
         return;
       }
 
@@ -484,6 +970,12 @@ export default function CommuterHomeScreen() {
       getNearbyDrivers(coords);
     } catch (err) {
       console.log("Error getting location:", err);
+      showAlert({
+        type: 'error',
+        title: 'Location Error',
+        message: 'Failed to get your location. Please try again.',
+        confirmText: 'OK',
+      });
     }
   };
 
@@ -544,27 +1036,19 @@ export default function CommuterHomeScreen() {
 
         setAllDrivers(driversWithDistance);
 
-        const nearbyDrivers = driversWithDistance
-          .filter((d) => d.distance_km <= 5)
-          .sort((a, b) => a.distance_km - b.distance_km);
-
-        setNearbyDrivers(nearbyDrivers.length);
-
         if (pickup) {
           filterDriversByProximity();
         }
       } else {
         setAllDrivers([]);
-        setNearbyDrivers(0);
-        setFilteredDrivers([]);
         setDriversWithinRadius(0);
+        setFilteredDrivers([]);
       }
     } catch (err) {
       console.log("Error getting nearby drivers:", err);
       setAllDrivers([]);
-      setNearbyDrivers(0);
-      setFilteredDrivers([]);
       setDriversWithinRadius(0);
+      setFilteredDrivers([]);
     }
   };
 
@@ -583,6 +1067,8 @@ export default function CommuterHomeScreen() {
   };
 
   const handleUseCurrentLocation = () => {
+    trackUserAction();
+    
     if (userLocation) {
       setPickup(userLocation);
       Location.reverseGeocodeAsync(userLocation).then((address) => {
@@ -590,21 +1076,26 @@ export default function CommuterHomeScreen() {
           const { street, name, city, region } = address[0];
           const fullAddress = `${street || name || "Current Location"}, ${city || ""}, ${region || ""}`;
           setPickupText(fullAddress);
+          showCharacterTip(CharacterMessages.pickupSelectedCute(fullAddress), 'happy');
         }
       });
     }
   };
 
   const handleSelectOnMap = (type) => {
+    trackUserAction();
+    
     navigation.navigate("MapPicker", {
       type,
       onSelect: (location, address) => {
         if (type === "pickup") {
           setPickup(location);
           setPickupText(address);
+          showCharacterTip(CharacterMessages.pickupSelectedCute(address), 'happy');
         } else {
           setDropoff(location);
           setDropoffText(address);
+          showCharacterTip(CharacterMessages.dropoffSelectedCute(address), 'excited');
         }
 
         if ((type === "pickup" && dropoff) || (type === "dropoff" && pickup)) {
@@ -613,19 +1104,29 @@ export default function CommuterHomeScreen() {
             type === "dropoff" ? location : dropoff,
           );
         }
+        
+        if (pickup && dropoff) {
+          setTimeout(() => {
+            showCharacterTip(CharacterMessages.bothSelected(), 'excited');
+          }, 1000);
+        }
       },
     });
   };
 
   const handleSelectRecent = (recent) => {
+    trackUserAction();
+    
     if (recent.type === "pickup") {
       setPickup(recent.location);
       setPickupText(recent.address);
       setPickupDetails(recent.details || "");
+      showCharacterTip(CharacterMessages.pickupSelectedCute(recent.address), 'happy');
     } else {
       setDropoff(recent.location);
       setDropoffText(recent.address);
       setDropoffDetails(recent.details || "");
+      showCharacterTip(CharacterMessages.dropoffSelectedCute(recent.address), 'excited');
     }
 
     if (pickup && dropoff) {
@@ -733,97 +1234,160 @@ export default function CommuterHomeScreen() {
       calculateRoute(pickup, dropoff);
     }
   }, [pickup, dropoff]);
+  
+  useEffect(() => {
+    if (pickup && dropoff && !showCharacterMessage) {
+      const lastShown = lastUserAction;
+      const now = Date.now();
+      if (now - lastShown > 3000) {
+        setTimeout(() => {
+          showCharacterTip(CharacterMessages.bothSelected(), 'excited');
+        }, 500);
+      }
+    }
+  }, [pickup, dropoff]);
+  
+  useEffect(() => {
+    if (!pickup && !dropoff && !initialLoad && !showCharacterMessage) {
+      setTimeout(() => {
+        showCharacterTip(CharacterMessages.needBoth(), 'cute');
+      }, 1000);
+    } else if (pickup && !dropoff && !initialLoad && !showCharacterMessage) {
+      setTimeout(() => {
+        showCharacterTip(CharacterMessages.needDropoff(), 'cute');
+      }, 1000);
+    } else if (!pickup && dropoff && !initialLoad && !showCharacterMessage) {
+      setTimeout(() => {
+        showCharacterTip(CharacterMessages.needPickup(), 'cute');
+      }, 1000);
+    }
+  }, [pickup, dropoff, initialLoad]);
 
-  const handlePassengerChange = (increment) => {
-    const newCount = passengerCount + increment;
+  useEffect(() => {
+    if (!initialLoad && !hasShownWelcome && !showCharacterMessage) {
+      setTimeout(() => {
+        showCharacterTip(CharacterMessages.welcome(), 'excited');
+        setHasShownWelcome(true);
+      }, 1000);
+    }
+  }, [initialLoad, hasShownWelcome]);
+
+  useEffect(() => {
+    const idleCheckInterval = setInterval(() => {
+      const now = Date.now();
+      const idleTime = now - lastUserAction;
+      
+      if (idleTime > 10000 && !showCharacterMessage && !loading && !findingDriver) {
+        if (!pickup || !dropoff) {
+          showCharacterTip(getRandomIdleMessage(), 'curious');
+        }
+      }
+    }, 5000);
+
+    return () => {
+      clearInterval(idleCheckInterval);
+    };
+  }, [lastUserAction, showCharacterMessage, loading, findingDriver, pickup, dropoff]);
+
+  const trackUserAction = useCallback(() => {
+    setLastUserAction(Date.now());
+  }, []);
+
+  const handlePassengerChange = (newCount) => {
+    trackUserAction();
+    
     if (newCount >= 1 && newCount <= 6) {
       setPassengerCount(newCount);
+      showCharacterTip(CharacterMessages.passengerSelected(newCount), 'cute');
     }
   };
 
-const createBooking = async () => {
-  if (!commuterId) {
-    Alert.alert("Error", "Please login first");
-    return;
-  }
-
-  // Check if there are drivers available within radius before creating booking
-  if (driversWithinRadius === 0) {
-    showCustomAlert(
-      "error", 
-      "No Drivers Available", 
-      `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location. Try increasing your search radius or try again later.`
-    );
-    return;
-  }
-
-  setFindingDriver(true);
-
-  try {
-    const pickupDisplay = pickupDetails
-      ? `${pickupText} - ${pickupDetails}`
-      : pickupText;
-    const dropoffDisplay = dropoffDetails
-      ? `${dropoffText} - ${dropoffDetails}`
-      : dropoffText;
-
-    const { data: booking, error: bookingError } = await supabase
-      .from("bookings")
-      .insert([
-        {
-          commuter_id: commuterId,
-          pickup_location: pickupDisplay,
-          pickup_latitude: pickup.latitude,
-          pickup_longitude: pickup.longitude,
-          pickup_details: pickupDetails,
-          dropoff_location: dropoffDisplay,
-          dropoff_latitude: dropoff.latitude,
-          dropoff_longitude: dropoff.longitude,
-          dropoff_details: dropoffDetails,
-          passenger_count: passengerCount,
-          fare: estimatedFare,
-          base_fare: fareSettings.baseFare,
-          per_km_rate: fareSettings.perKmRate,
-          distance_km: estimatedDistance,
-          duration_minutes: estimatedTime,
-          status: "pending",
-          created_at: new Date().toISOString(),
-        },
-      ])
-      .select()
-      .single();
-
-    if (bookingError) throw bookingError;
-
-    console.log(`✅ Booking created: ${booking.id}`);
-    setCurrentBookingId(booking.id);
-
-    if (pickup && pickupText) {
-      saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
+  const createBooking = async () => {
+    if (!commuterId) {
+      showAlert({
+        type: 'error',
+        title: 'Login Required',
+        message: 'Please login first to book a ride',
+        confirmText: 'OK',
+      });
+      return;
     }
-    if (dropoff && dropoffText) {
-      saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
-    }
-    
-  } catch (err) {
-    console.log("Error creating booking:", err);
-    Alert.alert("Error", "Failed to create booking");
-    setFindingDriver(false);
-  }
-};
 
-// Add this function to check drivers before booking
-const checkDriversAvailability = () => {
-  if (driversWithinRadius === 0) {
-    showCustomAlert(
-      "error", 
-      "No Drivers Available", 
-      `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location.\n\nSuggestions:\n• Increase your search radius\n• Try a different pickup location\n• Wait a few minutes and try again`
-    );
-    return false;
-  }
-  return true;
-};
+    if (driversWithinRadius === 0) {
+      showCharacterTip(CharacterMessages.noDrivers(proximityRadius.toFixed(1)), 'worried');
+      showAlert({
+        type: 'warning',
+        title: 'No Drivers Available',
+        message: `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location. Would you like to increase the search radius?`,
+        confirmText: 'Increase Radius',
+        cancelText: 'Cancel',
+        showCancel: true,
+        onConfirm: () => openProximityFilter(),
+      });
+      return;
+    }
+
+    setFindingDriver(true);
+    showCharacterTip(CharacterMessages.waiting(), 'excited', false);
+
+    try {
+      const pickupDisplay = pickupDetails
+        ? `${pickupText} - ${pickupDetails}`
+        : pickupText;
+      const dropoffDisplay = dropoffDetails
+        ? `${dropoffText} - ${dropoffDetails}`
+        : dropoffText;
+
+      const { data: booking, error: bookingError } = await supabase
+        .from("bookings")
+        .insert([
+          {
+            commuter_id: commuterId,
+            pickup_location: pickupDisplay,
+            pickup_latitude: pickup.latitude,
+            pickup_longitude: pickup.longitude,
+            pickup_details: pickupDetails,
+            dropoff_location: dropoffDisplay,
+            dropoff_latitude: dropoff.latitude,
+            dropoff_longitude: dropoff.longitude,
+            dropoff_details: dropoffDetails,
+            passenger_count: passengerCount,
+            fare: estimatedFare,
+            base_fare: fareSettings.baseFare,
+            per_km_rate: fareSettings.perKmRate,
+            distance_km: estimatedDistance,
+            duration_minutes: estimatedTime,
+            status: "pending",
+            created_at: new Date().toISOString(),
+          },
+        ])
+        .select()
+        .single();
+
+      if (bookingError) throw bookingError;
+
+      setCurrentBookingId(booking.id);
+      showCharacterTip(CharacterMessages.bookingSuccess(), 'happy');
+
+      if (pickup && pickupText) {
+        saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
+      }
+      if (dropoff && dropoffText) {
+        saveRecentLocation(dropoff, dropoffText, dropoffDetails, "dropoff");
+      }
+      
+    } catch (err) {
+      console.log("Error creating booking:", err);
+      showCharacterTip(CharacterMessages.bookingError(), 'worried');
+      showAlert({
+        type: 'error',
+        title: 'Booking Failed',
+        message: 'Failed to create booking. Please try again.',
+        confirmText: 'OK',
+      });
+      setFindingDriver(false);
+    }
+  };
 
   const handleDriverFound = (driverId) => {
     setFindingDriver(false);
@@ -843,21 +1407,33 @@ const checkDriversAvailability = () => {
     setCurrentBookingId(null);
   };
 
-  // QR Code Scanning Functions
   const openScanner = async () => {
     try {
       if (!permission?.granted) {
         const { granted } = await requestPermission();
         if (!granted) {
-          Alert.alert(
-            "Camera Permission Required",
-            "We need camera access to scan the driver's QR code.",
-            [{ text: "OK" }]
-          );
+          showAlert({
+            type: 'warning',
+            title: 'Camera Permission',
+            message: 'We need camera access to scan the driver\'s QR code.',
+            confirmText: 'OK',
+          });
           return;
         }
       }
       
+      if (!pickup || !dropoff) {
+        showCharacterTip(CharacterMessages.needBoth(), 'worried');
+        showAlert({
+          type: 'warning',
+          title: 'Missing Locations',
+          message: 'Please select both pickup and dropoff locations before scanning.',
+          confirmText: 'OK',
+        });
+        return;
+      }
+      
+      showCharacterTip(CharacterMessages.scanning(), 'excited');
       setScanned(false);
       setScanningForDriver(true);
       setShowScanner(true);
@@ -877,17 +1453,18 @@ const checkDriversAvailability = () => {
     
     try {
       const qrData = JSON.parse(data);
-      console.log("QR Code scanned:", qrData);
       
       if (qrData.type !== 'driver_qr' && !qrData.driver_id) {
-        Alert.alert(
-          "Invalid QR Code",
-          "This is not a valid driver QR code.",
-          [{ text: "OK", onPress: () => {
+        showAlert({
+          type: 'error',
+          title: 'Invalid QR Code',
+          message: 'This is not a valid driver QR code.',
+          confirmText: 'OK',
+          onConfirm: () => {
             setShowScanner(false);
             setScanningForDriver(false);
-          }}]
-        );
+          },
+        });
         return;
       }
       
@@ -911,14 +1488,16 @@ const checkDriversAvailability = () => {
         .single();
       
       if (driverError || !driverData) {
-        Alert.alert(
-          "Driver Not Found",
-          "Could not find driver information.",
-          [{ text: "OK", onPress: () => {
+        showAlert({
+          type: 'error',
+          title: 'Driver Not Found',
+          message: 'Could not find driver information.',
+          confirmText: 'OK',
+          onConfirm: () => {
             setShowScanner(false);
             setScanningForDriver(false);
-          }}]
-        );
+          },
+        });
         return;
       }
       
@@ -926,20 +1505,24 @@ const checkDriversAvailability = () => {
       setShowScanner(false);
       
       if (!pickup) {
-        Alert.alert(
-          "Missing Pickup Location",
-          "Please set your pickup location first.",
-          [{ text: "OK", onPress: () => setScanningForDriver(false) }]
-        );
+        showAlert({
+          type: 'warning',
+          title: 'Missing Pickup',
+          message: 'Please set your pickup location first.',
+          confirmText: 'OK',
+          onConfirm: () => setScanningForDriver(false),
+        });
         return;
       }
       
       if (!dropoff) {
-        Alert.alert(
-          "Missing Dropoff Location",
-          "Please set your dropoff location first.",
-          [{ text: "OK", onPress: () => setScanningForDriver(false) }]
-        );
+        showAlert({
+          type: 'warning',
+          title: 'Missing Dropoff',
+          message: 'Please set your dropoff location first.',
+          confirmText: 'OK',
+          onConfirm: () => setScanningForDriver(false),
+        });
         return;
       }
       
@@ -947,37 +1530,46 @@ const checkDriversAvailability = () => {
       
     } catch (err) {
       console.log("Error processing QR code:", err);
-      Alert.alert(
-        "Invalid QR Code",
-        "Could not read the QR code. Please try again.",
-        [{ text: "OK", onPress: () => {
+      showAlert({
+        type: 'error',
+        title: 'Invalid QR Code',
+        message: 'Could not read the QR code. Please try again.',
+        confirmText: 'OK',
+        onConfirm: () => {
           scanTimeoutRef.current = setTimeout(() => {
             setScanned(false);
             setShowScanner(false);
             setScanningForDriver(false);
             scanTimeoutRef.current = null;
           }, 1000);
-        }}]
-      );
+        },
+      });
     }
   };
 
   const showDriverBookingConfirmation = (driverData) => {
     const vehicle = driverData.driver_vehicles?.[0] || {};
     
-    Alert.alert(
-      "📱 Scan to Ride",
-      `Driver: ${driverData.first_name} ${driverData.last_name}\nVehicle: ${vehicle.vehicle_color || ''} ${vehicle.vehicle_type || ''}\nPlate: ${vehicle.plate_number || 'N/A'}\n\n📍 Pickup: ${pickupText}\n🏁 Dropoff: ${dropoffText}\n👥 Passengers: ${passengerCount}\n💰 Fare: ₱${estimatedFare}`,
-      [
-        { text: "Cancel", style: "cancel", onPress: () => setScanningForDriver(false) },
-        { text: "Confirm Ride", onPress: () => createDirectBooking(driverData.id) }
-      ]
-    );
+    showAlert({
+      type: 'confirm',
+      title: 'Confirm Ride',
+      message: `${driverData.first_name} ${driverData.last_name}\n${vehicle.vehicle_color || ''} ${vehicle.vehicle_type || ''}\n${vehicle.plate_number || 'N/A'}\n\n📍 ${pickupText}\n🏁 ${dropoffText}\n👥 ${passengerCount} pax\n💰 ₱${estimatedFare}`,
+      confirmText: 'Confirm',
+      cancelText: 'Cancel',
+      showCancel: true,
+      onConfirm: () => createDirectBooking(driverData.id),
+      onCancel: () => setScanningForDriver(false),
+    });
   };
 
   const createDirectBooking = async (driverId) => {
     if (!commuterId) {
-      Alert.alert("Error", "Please login first");
+      showAlert({
+        type: 'error',
+        title: 'Login Required',
+        message: 'Please login first',
+        confirmText: 'OK',
+      });
       return;
     }
 
@@ -1021,8 +1613,6 @@ const checkDriversAvailability = () => {
 
       if (bookingError) throw bookingError;
 
-      console.log(`✅ Direct booking created: ${booking.id}`);
-
       if (pickup && pickupText) {
         saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
       }
@@ -1040,7 +1630,12 @@ const checkDriversAvailability = () => {
       
     } catch (err) {
       console.log("Error creating direct booking:", err);
-      Alert.alert("Error", "Failed to create booking");
+      showAlert({
+        type: 'error',
+        title: 'Booking Failed',
+        message: 'Failed to create booking. Please try again.',
+        confirmText: 'OK',
+      });
       setFindingDriver(false);
       setScanningForDriver(false);
     }
@@ -1050,183 +1645,63 @@ const checkDriversAvailability = () => {
     setShowScanner(false);
     setScanned(false);
     setScanningForDriver(false);
-    setScannedDriverData(null);
     if (scanTimeoutRef.current) {
       clearTimeout(scanTimeoutRef.current);
       scanTimeoutRef.current = null;
     }
   };
 
-const handleBookRide = () => {
-  if (!pickup) {
-    Alert.alert("Missing Info", "Please select a pickup location");
-    return;
-  }
-  if (!dropoff) {
-    Alert.alert("Missing Info", "Please select a dropoff location");
-    return;
-  }
+  const handleBookRide = () => {
+    if (!pickup) {
+      showCharacterTip(CharacterMessages.needPickup(), 'worried');
+      showAlert({
+        type: 'warning',
+        title: 'Missing Pickup',
+        message: 'Please select a pickup location',
+        confirmText: 'OK',
+      });
+      return;
+    }
+    if (!dropoff) {
+      showCharacterTip(CharacterMessages.needDropoff(), 'worried');
+      showAlert({
+        type: 'warning',
+        title: 'Missing Dropoff',
+        message: 'Please select a dropoff location',
+        confirmText: 'OK',
+      });
+      return;
+    }
 
-  // Check if drivers are available before showing confirmation
-  if (driversWithinRadius === 0) {
-    Alert.alert(
-      "No Drivers Available",
-      `No drivers found within ${proximityRadius.toFixed(1)} km of your pickup location.\n\nWould you like to increase your search radius?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Increase Radius", onPress: openProximityFilter }
-      ]
-    );
-    return;
-  }
+    if (driversWithinRadius === 0) {
+      showCharacterTip(CharacterMessages.noDrivers(proximityRadius.toFixed(1)), 'worried');
+      showAlert({
+        type: 'warning',
+        title: 'No Drivers Available',
+        message: `No drivers found within ${proximityRadius.toFixed(1)} km. Would you like to increase the search radius?`,
+        confirmText: 'Increase Radius',
+        cancelText: 'Cancel',
+        showCancel: true,
+        onConfirm: () => openProximityFilter(),
+      });
+      return;
+    }
 
-  const pickupDisplay = pickupDetails
-    ? `${pickupText} - ${pickupDetails}`
-    : pickupText;
-  const dropoffDisplay = dropoffDetails
-    ? `${dropoffText} - ${dropoffDetails}`
-    : dropoffText;
-
-  Alert.alert(
-    "Confirm Booking",
-    `📍 PICKUP:\n${pickupDisplay}\n\n🏁 DROPOFF:\n${dropoffDisplay}\n\n👥 Passengers: ${passengerCount}\n📏 Distance: ${estimatedDistance} km\n⏱️ Est. Time: ${estimatedTime} mins\n💰 Total Fare: ₱${estimatedFare}\n\n🚗 Available Drivers: ${driversWithinRadius}`,
-    [
-      { text: "Cancel", style: "cancel" },
-      { text: "Book Now", onPress: createBooking },
-    ],
-  );
-};
-
-  // Proximity Filter Modal
-  const ProximityFilterModal = useMemo(() => (
-    <Modal
-      animationType="slide"
-      transparent={true}
-      visible={showProximityFilter}
-      onRequestClose={() => setShowProximityFilter(false)}
-    >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>📍 Proximity Filter</Text>
-            <Pressable onPress={() => setShowProximityFilter(false)}>
-              <Ionicons name="close" size={24} color="#666" />
-            </Pressable>
-          </View>
-
-          <Text style={styles.modalDescription}>
-            Set the search radius for finding nearby drivers.
-          </Text>
-
-          <View style={styles.recommendationContainer}>
-            <Ionicons name="bulb-outline" size={16} color="#F59E0B" />
-            <Text style={styles.recommendationText}>
-              Recommended: 1-3km for faster pickup
-            </Text>
-          </View>
-
-          <View style={styles.radiusDisplay}>
-            <Text style={styles.radiusValue}>
-              {tempProximityRadius.toFixed(1)} km
-            </Text>
-          </View>
-
-          <Slider
-            style={styles.slider}
-            minimumValue={proximityConfig.minRadius}
-            maximumValue={proximityConfig.maxRadius}
-            step={0.1}
-            value={tempProximityRadius}
-            onValueChange={(value) => setTempProximityRadius(value)}
-            minimumTrackTintColor="#183B5C"
-            maximumTrackTintColor="#E5E7EB"
-            thumbTintColor="#183B5C"
-          />
-
-          <View style={styles.distanceRecommendation}>
-            <View style={styles.distanceLevel}>
-              <View style={[styles.distanceDot, { backgroundColor: '#10B981' }]} />
-              <Text style={styles.distanceText}>0.5-2km: Fastest pickup (5-10 min)</Text>
-            </View>
-            <View style={styles.distanceLevel}>
-              <View style={[styles.distanceDot, { backgroundColor: '#F59E0B' }]} />
-              <Text style={styles.distanceText}>2-3km: Good balance (10-15 min)</Text>
-            </View>
-            <View style={styles.distanceLevel}>
-              <View style={[styles.distanceDot, { backgroundColor: '#EF4444' }]} />
-              <Text style={styles.distanceText}>3-5km: Longer wait (15-25 min)</Text>
-            </View>
-          </View>
-
-          {pickup && (
-            <View style={styles.currentDriversContainer}>
-              <Text style={styles.currentDriversLabel}>Drivers within range:</Text>
-              <Text style={[
-                styles.currentDriversValue,
-                driversWithinRadius > 0 ? styles.driversAvailable : styles.driversUnavailable
-              ]}>
-                {driversWithinRadius} {driversWithinRadius === 1 ? 'driver' : 'drivers'}
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.quickSelectContainer}>
-            <Text style={styles.quickSelectLabel}>Quick select:</Text>
-            <View style={styles.quickSelectButtons}>
-              <Pressable 
-                style={[styles.quickSelectButton, tempProximityRadius === 1 && styles.quickSelectActive]}
-                onPress={() => setTempProximityRadius(1)}
-              >
-                <Text style={styles.quickSelectText}>1 km</Text>
-              </Pressable>
-              <Pressable 
-                style={[styles.quickSelectButton, tempProximityRadius === 2 && styles.quickSelectActive]}
-                onPress={() => setTempProximityRadius(2)}
-              >
-                <Text style={styles.quickSelectText}>2 km</Text>
-              </Pressable>
-              <Pressable 
-                style={[styles.quickSelectButton, tempProximityRadius === 3 && styles.quickSelectActive]}
-                onPress={() => setTempProximityRadius(3)}
-              >
-                <Text style={styles.quickSelectText}>3 km</Text>
-              </Pressable>
-              <Pressable 
-                style={[styles.quickSelectButton, tempProximityRadius === 5 && styles.quickSelectActive]}
-                onPress={() => setTempProximityRadius(5)}
-              >
-                <Text style={styles.quickSelectText}>5 km</Text>
-              </Pressable>
-            </View>
-          </View>
-
-          <View style={styles.modalButtons}>
-            <Pressable 
-              style={[styles.modalButton, styles.cancelModalButton]} 
-              onPress={() => setShowProximityFilter(false)}
-            >
-              <Text style={styles.cancelModalButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable 
-              style={[styles.modalButton, styles.saveModalButton]} 
-              onPress={() => {
-                saveProximityRadius(tempProximityRadius);
-                setShowProximityFilter(false);
-              }}
-            >
-              <Text style={styles.saveModalButtonText}>Apply Filter</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  ), [showProximityFilter, tempProximityRadius, proximityConfig, pickup, driversWithinRadius]);
+    showAlert({
+      type: 'confirm',
+      title: 'Confirm Booking',
+      message: `${pickupText}\n→\n${dropoffText}\n\n${passengerCount} passenger${passengerCount > 1 ? 's' : ''} • ₱${estimatedFare}`,
+      confirmText: 'Book Now',
+      cancelText: 'Cancel',
+      showCancel: true,
+      onConfirm: createBooking,
+    });
+  };
 
   if (initialLoad && loading) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#183B5C" />
-        <Text style={styles.loadingText}>Loading your ride...</Text>
       </View>
     );
   }
@@ -1251,10 +1726,10 @@ const handleBookRide = () => {
     return (
       <View style={styles.container}>
         <View style={styles.scannerHeader}>
-          <Pressable onPress={handleCancelScanning} style={styles.scannerBackButton}>
-            <Ionicons name="close" size={28} color="#FFF" />
-          </Pressable>
-          <Text style={styles.scannerTitle}>Scan Driver's QR Code</Text>
+          <TouchableOpacity onPress={handleCancelScanning} style={styles.scannerBackButton}>
+            <Ionicons name="arrow-back" size={24} color="#FFF" />
+          </TouchableOpacity>
+          <Text style={styles.scannerTitle}>Scan Driver QR</Text>
           <View style={{ width: 40 }} />
         </View>
 
@@ -1274,45 +1749,63 @@ const handleBookRide = () => {
                 <View style={[styles.scanCorner, styles.scanCornerBottomLeft]} />
                 <View style={[styles.scanCorner, styles.scanCornerBottomRight]} />
               </View>
-              
               <Text style={styles.scannerInstruction}>
-                Position the driver's QR code within the frame
+                Position QR code within frame
               </Text>
             </View>
           </CameraView>
-        </View>
-
-        <View style={styles.scannerFooter}>
-          <Text style={styles.scannerFooterText}>
-            Scan the QR code on the driver's vehicle to book directly
-          </Text>
         </View>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {ProximityFilterModal}
-
-      <CustomAlert
-        visible={showSuccessAlert}
-        title={alertTitle}
-        message={alertMessage}
-        onConfirm={() => setShowSuccessAlert(false)}
-        confirmText="OK"
-        type="success"
+    <View style={[styles.container]}>
+      {/* Modern Alerts */}
+      <ModernAlert
+        visible={alert.visible}
+        type={alert.type}
+        title={alert.title}
+        message={alert.message}
+        confirmText={alert.confirmText}
+        cancelText={alert.cancelText}
+        showCancel={alert.showCancel}
+        onConfirm={alert.onConfirm}
+        onCancel={alert.onCancel}
+        onClose={hideAlert}
       />
 
-      <CustomAlert
-        visible={showErrorAlert}
-        title={alertTitle}
-        message={alertMessage}
-        onConfirm={() => setShowErrorAlert(false)}
-        confirmText="OK"
-        type="error"
+      {/* Toast Notifications */}
+      <ModernToast
+        visible={toast.visible}
+        message={toast.message}
+        type={toast.type}
+        onHide={() => setToast({ ...toast, visible: false })}
       />
 
+      {/* Cute Character Message - at the top */}
+      <CharacterMessage
+        visible={showCharacterMessage}
+        message={characterMessage}
+        characterType={characterType}
+        position="top"
+        autoHide={true}
+        autoHideDuration={5000}
+        onClose={() => setShowCharacterMessage(false)}
+      />
+
+      {/* Proximity Filter Modal */}
+      <ProximityModal
+        visible={showProximityFilter}
+        onClose={() => setShowProximityFilter(false)}
+        radius={tempProximityRadius}
+        onRadiusChange={setTempProximityRadius}
+        onApply={() => saveProximityRadius(tempProximityRadius)}
+        driversCount={driversWithinRadius}
+        config={proximityConfig}
+      />
+
+      {/* Map View */}
       <View style={styles.mapContainer}>
         <MapView
           ref={mapRef}
@@ -1325,18 +1818,15 @@ const handleBookRide = () => {
             longitudeDelta: 0.01,
           }}
           showsUserLocation={true}
-          showsMyLocationButton={true}
+          showsMyLocationButton={false}
         >
           {pickup && proximityConfig.showOnMap && (
             <Circle
-              center={{
-                latitude: pickup.latitude,
-                longitude: pickup.longitude,
-              }}
+              center={pickup}
               radius={proximityRadius * 1000}
-              strokeColor="rgba(24, 59, 92, 0.5)"
-              fillColor="rgba(24, 59, 92, 0.1)"
-              strokeWidth={2}
+              strokeColor="rgba(24, 59, 92, 0.3)"
+              fillColor="rgba(24, 59, 92, 0.05)"
+              strokeWidth={1}
             />
           )}
 
@@ -1347,34 +1837,24 @@ const handleBookRide = () => {
                 latitude: driver.latitude,
                 longitude: driver.longitude,
               }}
-              title={`${driver.first_name} ${driver.last_name}`}
-              description={`${driver.vehicle_color} ${driver.vehicle_type} • ${driver.distance_km.toFixed(1)}km away`}
             >
               <View style={styles.driverMarker}>
-                <Ionicons name="car" size={16} color="#FFF" />
+                <Ionicons name="car" size={12} color="#FFF" />
               </View>
             </Marker>
           ))}
 
           {pickup && (
-            <Marker
-              coordinate={pickup}
-              title="Pickup Location"
-              description={pickupDetails || ""}
-            >
+            <Marker coordinate={pickup}>
               <View style={styles.pickupMarker}>
-                <Ionicons name="location" size={16} color="#FFF" />
+                <Ionicons name="location" size={12} color="#FFF" />
               </View>
             </Marker>
           )}
           {dropoff && (
-            <Marker
-              coordinate={dropoff}
-              title="Dropoff Location"
-              description={dropoffDetails || ""}
-            >
+            <Marker coordinate={dropoff}>
               <View style={styles.dropoffMarker}>
-                <Ionicons name="flag" size={16} color="#FFF" />
+                <Ionicons name="flag" size={12} color="#FFF" />
               </View>
             </Marker>
           )}
@@ -1383,15 +1863,41 @@ const handleBookRide = () => {
             <Polyline
               coordinates={routeCoordinates}
               strokeColor="#3B82F6"
-              strokeWidth={4}
+              strokeWidth={3}
             />
           )}
         </MapView>
+        {/* Custom Current Location Button - Always visible */}
+        <TouchableOpacity 
+          style={styles.mapCurrentLocationButton}
+          onPress={() => {
+            trackUserAction();
+            if (userLocation) {
+              mapRef.current?.animateToRegion({
+                latitude: userLocation.latitude,
+                longitude: userLocation.longitude,
+                latitudeDelta: 0.01,
+                longitudeDelta: 0.01,
+              }, 500);
+            }
+          }}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="location" size={24} color="#FFF" />
+          <View style={styles.mapButtonInner}>
+            <Ionicons name="locate" size={20} color="#183B5C" />
+          </View>
+        </TouchableOpacity>
       </View>
 
-      <View style={styles.bottomSheet}>
+      {/* Bottom Sheet - NO TOP PADDING/INSETS */}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.bottomSheet}
+      >
         <ScrollView
           showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.scrollContent}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -1401,301 +1907,115 @@ const handleBookRide = () => {
             />
           }
         >
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Where are you going?</Text>
-            
-            <Pressable 
-              style={styles.proximityButton} 
-              onPress={openProximityFilter}
+          {/* Header */}
+          <View style={styles.headerSection}>
+            <View>
+              <Text style={styles.greeting}>Hello,</Text>
+              <Text style={styles.greetingName}>Where to?</Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.filterButton} 
+              onPress={() => {
+                trackUserAction();
+                openProximityFilter();
+              }}
             >
               <Ionicons name="options-outline" size={20} color="#183B5C" />
-              <Text style={styles.proximityButtonText}>
-                {parseFloat(proximityRadius).toFixed(1)}km
-              </Text>
-            </Pressable>
+              <Text style={styles.filterText}>{proximityRadius.toFixed(1)}km</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.inputGroup}>
-            <View style={styles.inputIcon}>
-              <Ionicons name="location" size={20} color="#10B981" />
-            </View>
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>PICKUP LOCATION</Text>
-              <Pressable onPress={() => handleSelectOnMap("pickup")}>
-                <Text style={styles.inputText} numberOfLines={2}>
-                  {pickupText || "Tap to select pickup location"}
-                </Text>
-              </Pressable>
+          {/* Location Inputs */}
+          <LocationCard
+            icon="location"
+            iconColor="#10B981"
+            label="PICKUP"
+            placeholder="Select pickup location"
+            value={pickupText}
+            details={pickupDetails}
+            onDetailsChange={setPickupDetails}
+            onPress={() => handleSelectOnMap("pickup")}
+            onCurrentLocation={handleUseCurrentLocation}
+            showCurrentLocation={true}
+            trackUserAction={trackUserAction}
+          />
 
-              <View style={styles.detailsContainer}>
-                <TextInput
-                  style={styles.detailsInput}
-                  placeholder="Where exactly? (e.g., near the corner)"
-                  placeholderTextColor="#E97A3E"
-                  value={pickupDetails}
-                  onChangeText={setPickupDetails}
-                  multiline
-                  numberOfLines={2}
-                />
-              </View>
-            </View>
-            <Pressable
-              onPress={handleUseCurrentLocation}
-              style={styles.currentLocation}
-            >
-              <Ionicons name="locate" size={20} color="#183B5C" />
-            </Pressable>
-          </View>
-
-          <View style={styles.inputGroup}>
-            <View style={styles.inputIcon}>
-              <Ionicons name="flag" size={20} color="#EF4444" />
-            </View>
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>DROPOFF LOCATION</Text>
-              <Pressable onPress={() => handleSelectOnMap("dropoff")}>
-                <Text style={styles.inputText} numberOfLines={2}>
-                  {dropoffText || "Tap to select dropoff location"}
-                </Text>
-              </Pressable>
-
-              <View style={styles.detailsContainer}>
-                <TextInput
-                  style={styles.detailsInput}
-                  placeholder="Where exactly? (e.g., in front of Jollibee)"
-                  placeholderTextColor="#E97A3E"
-                  value={dropoffDetails}
-                  onChangeText={setDropoffDetails}
-                  multiline
-                  numberOfLines={2}
-                />
-              </View>
-            </View>
-          </View>
-
-          {(pickup || dropoff) && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.detailsSuggestions}
-            >
-              {commonDetails.map((detail, index) => (
-                <Pressable
-                  key={index}
-                  style={styles.detailChip}
-                  onPress={() => {
-                    if (pickupDetails === "" && dropoffDetails === "") {
-                      setPickupDetails(detail);
-                    } else if (pickupDetails !== "") {
-                      setDropoffDetails(detail);
-                    } else {
-                      setPickupDetails(detail);
-                    }
-                  }}
-                >
-                  <Text style={styles.detailChipText}>{detail}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          )}
-
-          <View style={styles.passengerContainer}>
-            <Text style={styles.passengerLabel}>Number of Passengers:</Text>
-            <View style={styles.passengerControls}>
-              <Pressable
-                style={[
-                  styles.passengerButton,
-                  passengerCount <= 1 && styles.passengerButtonDisabled,
-                ]}
-                onPress={() => handlePassengerChange(-1)}
-                disabled={passengerCount <= 1}
-              >
-                <Ionicons
-                  name="remove"
-                  size={20}
-                  color={passengerCount <= 1 ? "#9CA3AF" : "#183B5C"}
-                />
-              </Pressable>
-
-              <Text style={styles.passengerCount}>{passengerCount}</Text>
-
-              <Pressable
-                style={[
-                  styles.passengerButton,
-                  passengerCount >= 6 && styles.passengerButtonDisabled,
-                ]}
-                onPress={() => handlePassengerChange(1)}
-                disabled={passengerCount >= 6}
-              >
-                <Ionicons
-                  name="add"
-                  size={20}
-                  color={passengerCount >= 6 ? "#9CA3AF" : "#183B5C"}
-                />
-              </Pressable>
-            </View>
-            <Text style={styles.passengerNote}>Maximum of 6 passengers</Text>
-          </View>
-
+          <LocationCard
+            icon="flag"
+            iconColor="#EF4444"
+            label="DROPOFF"
+            placeholder="Select dropoff location"
+            value={dropoffText}
+            details={dropoffDetails}
+            onDetailsChange={setDropoffDetails}
+            onPress={() => handleSelectOnMap("dropoff")}
+            showCurrentLocation={false}
+            trackUserAction={trackUserAction}
+          />
+          
+          {/* RECENT LOCATIONS  */}
           {recentLocations.length > 0 && (
-            <View style={styles.recentContainer}>
-              <Text style={styles.recentTitle}>Recent Locations</Text>
+            <View style={styles.recentSection}>
+              <Text style={styles.sectionTitle}>Recent Locations</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                 {recentLocations.map((recent) => (
-                  <Pressable
+                  <TouchableOpacity
                     key={recent.id}
-                    style={styles.recentItem}
-                    onPress={() => handleSelectRecent(recent)}
+                    style={styles.recentChip}
+                    onPress={() => {
+                      trackUserAction();
+                      handleSelectRecent(recent);
+                    }}
+                    activeOpacity={0.7}
                   >
                     <Ionicons
                       name={recent.type === "pickup" ? "location" : "flag"}
-                      size={16}
+                      size={14}
                       color={recent.type === "pickup" ? "#10B981" : "#EF4444"}
                     />
-                    <Text style={styles.recentText} numberOfLines={1}>
-                      {recent.details || "Recent"}
+                    <Text style={styles.recentChipText} numberOfLines={1}>
+                      {recent.address.split(',')[0]}
                     </Text>
-                  </Pressable>
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             </View>
           )}
 
-          {pickup && dropoff && estimatedDistance && (
-            <View style={styles.tripSummary}>
-              <View style={styles.summaryRow}>
-                <View style={styles.summaryItem}>
-                  <Ionicons name="map-outline" size={16} color="#666" />
-                  <Text style={styles.summaryLabel}>Distance</Text>
-                  <Text style={styles.summaryValue}>{estimatedDistance} km</Text>
-                </View>
-                <View style={styles.summaryItem}>
-                  <Ionicons name="time-outline" size={16} color="#666" />
-                  <Text style={styles.summaryLabel}>Est. Time</Text>
-                  <Text style={styles.summaryValue}>{estimatedTime} min</Text>
-                </View>
-                <View style={styles.summaryItem}>
-                  <Ionicons name="people-outline" size={16} color="#666" />
-                  <Text style={styles.summaryLabel}>Passengers</Text>
-                  <Text style={styles.summaryValue}>{passengerCount}</Text>
-                </View>
-              </View>
+          {/* Passenger Selector */}
+          <PassengerSelector
+            count={passengerCount}
+            onChange={handlePassengerChange}
+            trackUserAction={trackUserAction}
+          />
 
-              <View style={styles.fareCard}>
-                <View style={styles.fareHeader}>
-                  <Text style={styles.fareHeaderTitle}>FARE DETAILS</Text>
-                </View>
-                
-                {parseFloat(estimatedDistance) <= 1 ? (
-                  <View style={styles.fareRow}>
-                    <Text style={styles.fareLabel}>Minimum Fare (0-1km)</Text>
-                    <Text style={styles.fareValue}>₱20</Text>
-                  </View>
-                ) : parseFloat(estimatedDistance) < 2 ? (
-                  <View style={styles.fareRow}>
-                    <Text style={styles.fareLabel}>Special Rate (1-2km)</Text>
-                    <Text style={styles.fareValue}>₱30</Text>
-                  </View>
-                ) : (
-                  <>
-                    <View style={styles.fareRow}>
-                      <Text style={styles.fareLabel}>
-                        Distance: {Math.ceil(parseFloat(estimatedDistance) * 2) / 2} km
-                      </Text>
-                      <Text style={styles.fareValue}>
-                        × ₱20/km
-                      </Text>
-                    </View>
-                    <View style={styles.fareRow}>
-                      <Text style={styles.fareLabel}>Subtotal (per passenger)</Text>
-                      <Text style={styles.fareValue}>
-                        ₱{Math.ceil(parseFloat(estimatedDistance) * 2) / 2 * 20}
-                      </Text>
-                    </View>
-                  </>
-                )}
-                
-                <View style={styles.fareRow}>
-                  <Text style={styles.fareLabel}>
-                    × {passengerCount} passenger{passengerCount > 1 ? 's' : ''}
-                  </Text>
-                  <Text style={styles.fareValue}>
-                    × {passengerCount}
-                  </Text>
-                </View>
-                
-                <View style={styles.fareDivider} />
-                
-                <View style={styles.fareTotal}>
-                  <Text style={styles.fareTotalLabel}>TOTAL FARE</Text>
-                  <Text style={styles.fareTotalValue}>₱{estimatedFare}</Text>
-                </View>
-              </View>
-            </View>
+          {/* Trip Summary */}
+          {pickup && dropoff && estimatedDistance && (
+            <TripSummaryCard
+              distance={estimatedDistance}
+              time={estimatedTime}
+              passengers={passengerCount}
+              fare={estimatedFare}
+            />
           )}
 
-          <View style={styles.driversInfo}>
-            <Ionicons name="people-circle" size={20} color="#183B5C" />
-            <Text style={styles.driversText}>
-              {driversWithinRadius} drivers within {parseFloat(proximityRadius).toFixed(1)}km
-            </Text>
-          </View>
-
-          <View style={styles.buttonRow}>
-            <Pressable
-              style={[
-                styles.optionCard,
-                (!pickup || !dropoff) && styles.disabledCard
-              ]}
-              onPress={openScanner}
-              disabled={!pickup || !dropoff}
-            >
-              <Ionicons name="qr-code-outline" size={26} color="#16a34a" />
-              <Text style={styles.optionTitle}>Scan Driver QR</Text>
-              <Text style={styles.optionSubtitle}>
-                Scan the driver to ride instantly
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={[
-                styles.optionCard,
-                (!pickup || !dropoff) && styles.disabledCard
-              ]}
-              onPress={handleBookRide}
-              disabled={!pickup || !dropoff}
-            >
-              <Ionicons name="car-outline" size={26} color="#2563eb" />
-              <Text style={styles.optionTitle}>Find Driver</Text>
-              <Text style={styles.optionSubtitle}>
-                Search for nearby drivers
-              </Text>
-            </Pressable>
-          </View>
+          {/* Action Buttons */}
+          <ActionButtons
+            onScan={openScanner}
+            onFind={handleBookRide}
+            disabled={!pickup || !dropoff}
+            trackUserAction={trackUserAction}
+          />
         </ScrollView>
-      </View>
+      </KeyboardAvoidingView>
     </View>
   );
 }
 
-const commonDetails = [
-  "near the corner",
-  "in front of",
-  "behind",
-  "beside",
-  "under the bridge",
-  "near waiting shed",
-  "near basketball court",
-  "near barangay hall",
-  "near alley",
-  "near overpass",
-];
-
 const styles = StyleSheet.create({
   container: {
-    marginTop: -50,
     flex: 1,
-    backgroundColor: "#F5F7FA",
+    backgroundColor: "#F9FAFB",
   },
   loadingContainer: {
     flex: 1,
@@ -1703,13 +2023,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#FFF",
   },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: "#183B5C",
-  },
   mapContainer: {
-    height: 300,
+    height: 320,
     width: "100%",
   },
   map: {
@@ -1717,423 +2032,516 @@ const styles = StyleSheet.create({
   },
   driverMarker: {
     backgroundColor: "#3B82F6",
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 2,
+    padding: 6,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: "#FFF",
   },
   pickupMarker: {
     backgroundColor: "#10B981",
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 2,
+    padding: 6,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: "#FFF",
   },
   dropoffMarker: {
     backgroundColor: "#EF4444",
-    padding: 8,
-    borderRadius: 20,
-    borderWidth: 2,
+    padding: 6,
+    borderRadius: 12,
+    borderWidth: 1.5,
     borderColor: "#FFF",
   },
   bottomSheet: {
     flex: 1,
     backgroundColor: "#FFF",
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 10,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    marginTop: -24,
+    maxHeight: SCREEN_HEIGHT - 200,
   },
-  headerRow: {
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 32,
+  },
+  headerSection: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 20,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#183B5C",
-  },
-  proximityButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F0F7FF",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 4,
-  },
-  proximityButtonText: {
-    color: "#183B5C",
+  greeting: {
     fontSize: 14,
-    fontWeight: "600",
-  },
-  inputGroup: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 15,
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 10,
-  },
-  inputIcon: {
-    width: 40,
-    alignItems: "center",
-    paddingTop: 8,
-  },
-  inputContainer: {
-    flex: 1,
-  },
-  inputLabel: {
-    fontSize: 10,
-    color: "#666",
+    color: "#6B7280",
     marginBottom: 2,
   },
-  inputText: {
-    fontSize: 14,
-    color: "#333",
-    fontWeight: "500",
+  greetingName: {
+    fontSize: 24,
+    fontWeight: "600",
+    color: "#111827",
   },
-  currentLocation: {
-    padding: 8,
-    marginTop: 8,
-  },
-  detailsContainer: {
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#1F1D1D",
-    paddingTop: 8,
-    color: "#000000",
-  },
-  detailsInput: {
-    fontSize: 13,
-    color: "#000000",
-    padding: 0,
-    minHeight: 40,
-    textAlignVertical: "top",
-  },
-  detailsSuggestions: {
+  filterButton: {
     flexDirection: "row",
-    marginBottom: 15,
-    marginLeft: 40,
-  },
-  detailChip: {
+    alignItems: "center",
     backgroundColor: "#F3F4F6",
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 20,
-    marginRight: 8,
+    gap: 6,
   },
-  detailChipText: {
-    fontSize: 12,
-    color: "#666",
-  },
-  passengerContainer: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-  },
-  passengerLabel: {
+  filterText: {
     fontSize: 14,
-    color: "#666",
-    marginBottom: 10,
+    fontWeight: "500",
+    color: "#183B5C",
+  },
+  locationCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#F9FAFB",
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+    position: "relative",
+  },
+  locationCardActive: {
+    borderColor: "#183B5C",
+    borderWidth: 1.5,
+  },
+  locationIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  locationContent: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  locationLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#9CA3AF",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  locationValue: {
+    fontSize: 15,
+    fontWeight: "500",
+    color: "#111827",
+    marginBottom: 8,
+  },
+  locationPlaceholder: {
+    color: "#9CA3AF",
+    fontWeight: "400",
+  },
+  locationDetails: {
+    fontSize: 13,
+    color: "#6B7280",
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+  },
+  currentLocationButton: {
+    position: "absolute",
+    right: 16,
+    top: 16,
+    padding: 8,
+    backgroundColor: "#FFF",
+    borderRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  passengerCard: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+    overflow: "hidden",
+  },
+  passengerHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+  },
+  passengerHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  passengerHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  passengerTitle: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#111827",
+  },
+  passengerCountText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#183B5C",
   },
   passengerControls: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 20,
+    gap: 32,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
   },
-  passengerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  passengerControl: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: "#FFF",
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  passengerButtonDisabled: {
+  passengerControlDisabled: {
     backgroundColor: "#F3F4F6",
   },
-  passengerCount: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#183B5C",
-    minWidth: 40,
-    textAlign: "center",
-  },
-  passengerNote: {
-    fontSize: 11,
-    color: "#999",
-    textAlign: "center",
-    marginTop: 8,
-  },
-  recentContainer: {
-    marginBottom: 15,
-  },
-  recentTitle: {
-    fontSize: 12,
+  passengerNumber: {
+    fontSize: 28,
     fontWeight: "600",
-    color: "#666",
-    marginBottom: 8,
+    color: "#183B5C",
+    minWidth: 48,
+    textAlign: "center",
   },
-  recentItem: {
+  recentSection: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#6B7280",
+    marginBottom: 12,
+  },
+  recentChip: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F3F4F6",
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
+    gap: 6,
   },
-  recentText: {
-    fontSize: 12,
-    color: "#333",
-    marginLeft: 4,
+  recentChipText: {
+    fontSize: 13,
+    color: "#374151",
     maxWidth: 100,
   },
-  tripSummary: {
+  summaryCard: {
     backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 15,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
   },
-  summaryRow: {
+  summaryMetrics: {
     flexDirection: "row",
-    justifyContent: "space-around",
-    marginBottom: 15,
+    justifyContent: "space-between",
+    marginBottom: 16,
   },
-  summaryItem: {
+  metricItem: {
+    flex: 1,
     alignItems: "center",
     gap: 4,
   },
-  summaryLabel: {
+  metricValue: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  metricLabel: {
     fontSize: 11,
-    color: "#666",
+    color: "#9CA3AF",
   },
-  summaryValue: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#183B5C",
+  metricDivider: {
+    width: 1,
+    backgroundColor: "#E5E7EB",
   },
-  driversInfo: {
+  fareRow: {
     flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#F0F7FF",
-    padding: 12,
-    borderRadius: 12,
-    marginBottom: 15,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
   },
-  driversText: {
-    marginLeft: 8,
-    fontSize: 13,
+  fareLabel: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+  fareAmount: {
+    fontSize: 24,
+    fontWeight: "700",
     color: "#183B5C",
-    flex: 1,
   },
-  buttonRow: {
+  actionContainer: {
     flexDirection: "row",
     gap: 12,
-    marginBottom: 15,
+    marginBottom: 24,
   },
-  optionCard: {
+  actionButton: {
     flex: 1,
     backgroundColor: "#FFF",
-    padding: 16,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
+    paddingVertical: 16,
+    borderRadius: 16,
     alignItems: "center",
-    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
   },
-  optionTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    marginTop: 6,
+  actionButtonPrimary: {
+    backgroundColor: "#183B5C",
+    borderColor: "#183B5C",
   },
-  optionSubtitle: {
-    fontSize: 12,
-    color: "#6B7280",
-    textAlign: "center",
-    marginTop: 2,
-  },
-  disabledCard: {
+  actionButtonDisabled: {
     opacity: 0.5,
   },
-  // Modal Styles
-  modalOverlay: {
+  actionIconWrapper: {
+    marginBottom: 8,
+  },
+  actionTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 2,
+  },
+  actionTitleLight: {
+    color: "#FFF",
+  },
+  actionSubtitle: {
+    fontSize: 11,
+    color: "#9CA3AF",
+  },
+  actionSubtitleLight: {
+    color: "#E5E7EB",
+  },
+  alertOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
   },
+  alertContainer: {
+    backgroundColor: "#FFF",
+    borderRadius: 24,
+    padding: 24,
+    width: SCREEN_WIDTH - 48,
+    maxWidth: 340,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  alertIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  alertTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+  alertMessage: {
+    fontSize: 14,
+    color: "#6B7280",
+    textAlign: "center",
+    marginBottom: 24,
+    lineHeight: 20,
+  },
+  alertButtons: {
+    flexDirection: "row",
+    gap: 12,
+    width: "100%",
+  },
+  alertButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  alertCancelButton: {
+    backgroundColor: "#F3F4F6",
+  },
+  alertCancelText: {
+    color: "#6B7280",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  alertConfirmButton: {
+    backgroundColor: "#183B5C",
+  },
+  alertConfirmText: {
+    color: "#FFF",
+    fontSize: 15,
+    fontWeight: "600",
+  },
+  toastContainer: {
+    position: "absolute",
+    bottom: 100,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 12,
+    zIndex: 1000,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  toastMessage: {
+    flex: 1,
+    color: "#FFF",
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalBackdrop: {
+    flex: 1,
+  },
   modalContent: {
     backgroundColor: "#FFF",
-    borderRadius: 20,
-    padding: 20,
-    width: "90%",
-    maxWidth: 400,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 32,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: "#E5E7EB",
+    borderRadius: 2,
+    alignSelf: "center",
+    marginBottom: 16,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 24,
   },
   modalTitle: {
     fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: "600",
+    color: "#111827",
   },
-  modalDescription: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  recommendationContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FEF3C7",
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 15,
-    gap: 8,
-  },
-  recommendationText: {
-    fontSize: 12,
-    color: "#92400E",
-    flex: 1,
+  modalClose: {
+    padding: 4,
   },
   radiusDisplay: {
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   radiusValue: {
-    fontSize: 36,
-    fontWeight: "bold",
+    fontSize: 56,
+    fontWeight: "700",
     color: "#183B5C",
+  },
+  radiusUnit: {
+    fontSize: 16,
+    color: "#9CA3AF",
+    marginTop: -8,
   },
   slider: {
     width: "100%",
     height: 40,
+    marginBottom: 24,
   },
-  distanceRecommendation: {
-    backgroundColor: "#F9FAFB",
-    padding: 12,
-    borderRadius: 12,
-    marginTop: 15,
-    marginBottom: 15,
-  },
-  distanceLevel: {
+  quickSelectGrid: {
     flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
+    gap: 12,
+    marginBottom: 24,
   },
-  distanceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  distanceText: {
-    fontSize: 12,
-    color: "#666",
-  },
-  currentDriversContainer: {
-    backgroundColor: "#F9FAFB",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  currentDriversLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 4,
-  },
-  currentDriversValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-  driversAvailable: {
-    color: "#10B981",
-  },
-  driversUnavailable: {
-    color: "#F59E0B",
-  },
-  quickSelectContainer: {
-    marginBottom: 20,
-  },
-  quickSelectLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 8,
-  },
-  quickSelectButtons: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  quickSelectButton: {
+  quickSelectChip: {
     flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
     backgroundColor: "#F3F4F6",
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: "center",
   },
-  quickSelectActive: {
+  quickSelectChipActive: {
     backgroundColor: "#183B5C",
   },
   quickSelectText: {
     fontSize: 14,
-    color: "#333",
+    color: "#374151",
     fontWeight: "500",
   },
-  modalButtons: {
-    flexDirection: "row",
-    gap: 10,
+  quickSelectTextActive: {
+    color: "#FFF",
   },
-  modalButton: {
-    flex: 1,
-    padding: 15,
+  driverStats: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#F9FAFB",
+    paddingVertical: 12,
     borderRadius: 12,
+    marginBottom: 24,
+  },
+  driverStatsText: {
+    fontSize: 14,
+    color: "#6B7280",
+  },
+  applyButton: {
+    backgroundColor: "#183B5C",
+    paddingVertical: 16,
+    borderRadius: 16,
     alignItems: "center",
   },
-  cancelModalButton: {
-    backgroundColor: "#F3F4F6",
-  },
-  cancelModalButtonText: {
-    color: "#666",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  saveModalButton: {
-    backgroundColor: "#183B5C",
-  },
-  saveModalButtonText: {
+  applyButtonText: {
     color: "#FFF",
     fontSize: 16,
     fontWeight: "600",
   },
-  // Scanner Styles
   scannerHeader: {
-    backgroundColor: "#183B5C",
-    paddingTop: 60,
-    paddingBottom: 20,
-    paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 60,
+    paddingBottom: 20,
+    backgroundColor: "#000",
   },
   scannerBackButton: {
     width: 40,
@@ -2145,7 +2553,7 @@ const styles = StyleSheet.create({
   },
   scannerTitle: {
     fontSize: 18,
-    fontWeight: "bold",
+    fontWeight: "600",
     color: "#FFF",
   },
   scannerContainer: {
@@ -2157,7 +2565,7 @@ const styles = StyleSheet.create({
   },
   scannerOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(0,0,0,0.6)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -2171,8 +2579,8 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderColor: "#FFF",
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
     top: 0,
     left: 0,
   },
@@ -2180,13 +2588,13 @@ const styles = StyleSheet.create({
     right: 0,
     left: "auto",
     borderLeftWidth: 0,
-    borderRightWidth: 4,
+    borderRightWidth: 3,
   },
   scanCornerBottomLeft: {
     bottom: 0,
     top: "auto",
     borderTopWidth: 0,
-    borderBottomWidth: 4,
+    borderBottomWidth: 3,
   },
   scanCornerBottomRight: {
     bottom: 0,
@@ -2195,140 +2603,40 @@ const styles = StyleSheet.create({
     left: "auto",
     borderTopWidth: 0,
     borderLeftWidth: 0,
-    borderRightWidth: 4,
-    borderBottomWidth: 4,
+    borderRightWidth: 3,
+    borderBottomWidth: 3,
   },
   scannerInstruction: {
     color: "#FFF",
-    fontSize: 16,
+    fontSize: 14,
     marginTop: 30,
     textAlign: "center",
   },
-  scannerFooter: {
-    backgroundColor: "#183B5C",
-    padding: 20,
-    alignItems: "center",
-  },
-  scannerFooterText: {
-    color: "#FFF",
-    fontSize: 14,
-    textAlign: "center",
-  },
-  customAlertOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+  mapCurrentLocationButton: {
+    position: "absolute",
+    bottom: 30,
+    right: 16,
+    backgroundColor: "#FFF",
+    width: 48,
+    height: 48,
+    borderRadius: 15,
     justifyContent: "center",
     alignItems: "center",
-  },
-  customAlertContainer: {
-    backgroundColor: "#FFF",
-    borderRadius: 20,
-    padding: 24,
-    width: "80%",
-    maxWidth: 320,
-    alignItems: "center",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
     shadowRadius: 8,
-    elevation: 8,
-  },
-  customAlertIconContainer: {
-    marginBottom: 16,
-  },
-  customAlertTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  customAlertMessage: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  customAlertButtons: {
-    flexDirection: "row",
-    gap: 10,
-    width: "100%",
-  },
-  customAlertButton: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  customAlertCancelButton: {
-    backgroundColor: "#F3F4F6",
-  },
-  customAlertCancelText: {
-    color: "#666",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  customAlertConfirmButton: {
-    backgroundColor: "#183B5C",
-  },
-  customAlertConfirmText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  fareCard: {
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 16,
+    elevation: 5,
+    zIndex: 10,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: "#F0F0F0",
   },
-  fareHeader: {
-    marginBottom: 12,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  fareHeaderTitle: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#6B7280",
-    letterSpacing: 0.5,
-  },
-  fareRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  mapButtonInner: {
+    position: "absolute",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
     alignItems: "center",
-    marginBottom: 8,
-  },
-  fareLabel: {
-    fontSize: 14,
-    color: "#4B5563",
-  },
-  fareValue: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#1F2937",
-  },
-  fareDivider: {
-    height: 1,
-    backgroundColor: "#E5E7EB",
-    marginVertical: 12,
-  },
-  fareTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  fareTotalLabel: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#111827",
-  },
-  fareTotalValue: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#183B5C",
   },
 });
