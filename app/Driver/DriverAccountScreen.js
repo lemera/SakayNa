@@ -16,7 +16,6 @@ import {
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
-  Share,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -25,10 +24,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import QRCode from 'react-native-qrcode-svg';
-
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 export default function DriverAccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-
+  const tabBarHeight = useBottomTabBarHeight();
+  const bottomTabBarHeight = useBottomTabBarHeight();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState(null);
@@ -80,7 +80,7 @@ export default function DriverAccountScreen({ navigation }) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [language, setLanguage] = useState("english");
-
+  
   // Fetch driver ID
   useFocusEffect(
     useCallback(() => {
@@ -130,29 +130,6 @@ export default function DriverAccountScreen({ navigation }) {
           }
         }
       ]
-    );
-  };
-
-  // Share QR Code
-  const shareQRCode = async () => {
-    try {
-      const message = `🚲 SakayNa Driver QR Code\n\nDriver: ${driver?.first_name} ${driver?.last_name}\nVehicle: ${vehicle?.vehicle_type || 'N/A'} ${vehicle?.vehicle_color || ''}\nPlate: ${vehicle?.plate_number || 'N/A'}\n\nScan this QR code with the SakayNa app to book a ride directly!`;
-      
-      await Share.share({
-        message,
-        title: "My SakayNa Driver QR Code",
-      });
-    } catch (err) {
-      console.log("Error sharing QR code:", err);
-    }
-  };
-
-  // Print QR Code Instructions
-  const showPrintInstructions = () => {
-    Alert.alert(
-      "🖨️ Print QR Code",
-      "To print your QR code:\n\n1. Take a screenshot of this QR code\n2. Print the screenshot\n3. Cut and laminate the QR code\n4. Attach it to your vehicle where passengers can easily scan\n\nMake sure the QR code is clearly visible and not damaged.",
-      [{ text: "Got it!" }]
     );
   };
 
@@ -1021,27 +998,8 @@ export default function DriverAccountScreen({ navigation }) {
           <Pressable
             style={{
               flex: 1,
-              backgroundColor: "#10B981",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              flexDirection: "row",
-              justifyContent: "center",
-              gap: 6,
-            }}
-            onPress={shareQRCode}
-          >
-            <Ionicons name="share-outline" size={20} color="#FFF" />
-            <Text style={{ color: "#FFF", fontWeight: "600" }}>Share</Text>
-          </Pressable>
-        </View>
-
-        <View style={{ flexDirection: "row", gap: 10 }}>
-          <Pressable
-            style={{
-              flex: 1,
               backgroundColor: "#F3F4F6",
-              padding: 10,
+              padding: 12,
               borderRadius: 12,
               alignItems: "center",
               flexDirection: "row",
@@ -1052,23 +1010,6 @@ export default function DriverAccountScreen({ navigation }) {
           >
             <Ionicons name="refresh-outline" size={18} color="#183B5C" />
             <Text style={{ color: "#183B5C", fontWeight: "600" }}>Refresh</Text>
-          </Pressable>
-
-          <Pressable
-            style={{
-              flex: 1,
-              backgroundColor: "#F3F4F6",
-              padding: 10,
-              borderRadius: 12,
-              alignItems: "center",
-              flexDirection: "row",
-              justifyContent: "center",
-              gap: 6,
-            }}
-            onPress={showPrintInstructions}
-          >
-            <Ionicons name="print-outline" size={18} color="#183B5C" />
-            <Text style={{ color: "#183B5C", fontWeight: "600" }}>Print</Text>
           </Pressable>
         </View>
 
@@ -1084,7 +1025,7 @@ export default function DriverAccountScreen({ navigation }) {
         >
           <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
           <Text style={{ fontSize: 12, color: "#666", marginLeft: 6, flex: 1 }}>
-            Print and attach this QR code to your vehicle. Passengers can scan it to book directly with you!
+            Show this QR code to passengers so they can book directly with you!
           </Text>
         </View>
       </View>
@@ -1216,17 +1157,44 @@ export default function DriverAccountScreen({ navigation }) {
             borderTopColor: "#F3F4F6",
           }}
         >
-          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-            <View>
-              <Text style={{ fontSize: 12, color: "#666" }}>Withdrawal PIN</Text>
-              <Text style={{ fontSize: 14, fontWeight: "600", color: withdrawalSettings?.withdrawal_pin ? "#10B981" : "#F59E0B" }}>
-                {withdrawalSettings?.withdrawal_pin ? "✓ Enabled" : "Not Set"}
-              </Text>
-            </View>
-            <Text style={{ fontSize: 11, color: "#9CA3AF" }}>
-              Extra security for withdrawals
-            </Text>
-          </View>
+          <View
+  style={{
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  }}
+>
+  {/* LEFT */}
+  <View style={{ flex: 1 }}>
+    <Text style={{ fontSize: 12, color: "#666" }}>Withdrawal PIN</Text>
+
+    <Text
+      style={{
+        fontSize: 18,
+        fontWeight: "700",
+        color: "#111",
+        letterSpacing: 4,
+        marginTop: 2,
+      }}
+    >
+      {withdrawalSettings?.withdrawal_pin ? "••••" : "Not Set"}
+    </Text>
+  </View>
+
+  {/* RIGHT */}
+  <Text
+    style={{
+      fontSize: 11,
+      color: "#9CA3AF",
+      marginLeft: 10,
+      maxWidth: 120,
+      textAlign: "right",
+    }}
+    numberOfLines={2}
+  >
+    Extra security for withdrawals
+  </Text>
+</View>
         </View>
 
         <Pressable
@@ -1847,21 +1815,6 @@ export default function DriverAccountScreen({ navigation }) {
               <Pressable
                 style={{
                   backgroundColor: "#183B5C",
-                  padding: 15,
-                  borderRadius: 30,
-                  width: 60,
-                  height: 60,
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-                onPress={shareQRCode}
-              >
-                <Ionicons name="share-outline" size={30} color="#FFF" />
-              </Pressable>
-
-              <Pressable
-                style={{
-                  backgroundColor: "#10B981",
                   padding: 15,
                   borderRadius: 30,
                   width: 60,

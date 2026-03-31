@@ -2054,7 +2054,7 @@ export default function DriverHomeScreen() {
         windowSize={5}
         contentContainerStyle={{
     paddingTop: rs(10), // adjust mo depende sa design
-    paddingBottom: insets.bottom + rs(90),
+    paddingBottom: insets.bottom
   }}
       >
         

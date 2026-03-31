@@ -6,7 +6,7 @@ export const navStyles = StyleSheet.create({
     height: 95,
     paddingBottom: 40,
     paddingTop: 10,
-    marginBottom: 0,
+    marginBottom: -35,
     marginLeft: 0,
     marginRight: 0,
     borderRadius: 0,

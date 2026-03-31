@@ -4,7 +4,7 @@
     "slug": "SakayNa",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/iconss.png",
+    "icon": "./assets/icon_app.png",
     "userInterfaceStyle": "light",
     "scheme": "sakayna",
     "splash": {
@@ -32,7 +32,7 @@
       "package": "com.lemera.sakayna",
       "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/sakayna_icon.png",
+        "foregroundImage": "./assets/icon_app.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
