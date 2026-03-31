@@ -112,11 +112,11 @@ const checkSessionAndNavigate = async () => {
         source={require('../assets/logo-sakayna.png')}
         style={[styles.logo, { opacity: fadeAnim }]}
       />
-      <Animated.View style={{ opacity: fadeAnim, flexDirection: 'row', marginTop: 10}}>
+      {/* <Animated.View style={{ opacity: fadeAnim, flexDirection: 'row', marginTop: 10}}>
         <Text style={styles.rideText}>Ride Smarter</Text>
         <Text style={styles.commaText}>, </Text>
         <Text style={styles.travelText}>Travel Safer</Text>
-      </Animated.View>
+      </Animated.View> */}
     </View>
   );
 }

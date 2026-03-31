@@ -37,8 +37,7 @@ import FloatingMenu from './app/components/FloatingMenu.js';
 import MenuButton from './app/components/MenuButton.js';
 import FoodStoreScreen from './app/commuter/FoodStoreScreen';
 import WithdrawalDetailsScreen from './app/commuter/WithdrawalDetailsScreen.js';
-import RateDriverScreen from './app/commuter/RateDriverScreen.js';
-import TopRatedDriversScreen from './app/commuter/TopRatedDrivers';
+
 
 // Driver Flow
 import DriverLoginScreen from './app/Driver/DriverLogin.js';
@@ -52,7 +51,11 @@ import TripDetailsScreen from './app/Driver/TripDetailsScreen';
 import ActiveRideScreen from './app/Driver/ActiveRideScreen';
 import PaymentWebView from './app/Driver/PaymentWebView.js';
 import PaymentSuccess from './app/Driver/PaymentSuccess.js';
-
+import DriverInboxScreen from "./app/Driver/DriverInboxScreen.js";
+import DriverAccountScreen from "./app/Driver/DriverAccountScreen.js";
+import RateDriverScreen from './app/commuter/RateDriverScreen.js';
+import TopRatedDriversScreen from './app/commuter/TopRatedDrivers';
+import AllTripsScreen from "./app/Driver/AllTripsScreen.js";
 import {
   configureNotificationHandler,
   setupNotificationChannels,
@@ -205,6 +208,9 @@ const notificationSub = useRef(null);
           <Stack.Screen name="ActiveRideScreen" component={ActiveRideScreen} />
           <Stack.Screen name="PaymentWebView" component={PaymentWebView} />
           <Stack.Screen name="PaymentSuccess" component={PaymentSuccess} />
+          <Stack.Screen name="inbox" component={DriverInboxScreen} />
+          <Stack.Screen name="account" component={DriverAccountScreen} />
+          <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </GestureHandlerRootView>

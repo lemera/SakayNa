@@ -687,18 +687,19 @@ export default function TripDetailsScreen({ navigation }) {
       <View style={{ marginHorizontal: 20, marginTop: 30 }}>
         {trip.status === 'completed' && (
           <Pressable
-            style={{
-              backgroundColor: "#183B5C",
-              padding: 15,
-              borderRadius: 12,
-              alignItems: "center",
-              marginBottom: 10,
-            }}
-          >
-            <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
-              View Earnings Breakdown
-            </Text>
-          </Pressable>
+  onPress={() => navigation.goBack()}
+  style={{
+    backgroundColor: "#183B5C",
+    padding: 15,
+    borderRadius: 12,
+    alignItems: "center",
+    marginBottom: 10,
+  }}
+>
+  <Text style={{ color: "#FFF", fontWeight: "600", fontSize: 16 }}>
+    ← Back to Trips
+  </Text>
+</Pressable>
         )}
 
         {trip.status === 'cancelled' && trip.cancellation_reason && (

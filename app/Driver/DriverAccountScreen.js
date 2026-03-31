@@ -697,7 +697,7 @@ export default function DriverAccountScreen({ navigation }) {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: "#F5F7FA" }}
-      contentContainerStyle={{ paddingBottom: 30 }}
+      contentContainerStyle={{ paddingBottom: 0 }}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
       }

@@ -505,7 +505,30 @@ export default function DriverTrackRideScreen({ navigation }) {
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
   const REQUEST_EXPIRY_SECONDS = 30;
+  const spinAnim = useRef(new Animated.Value(0)).current;
 
+useEffect(() => {
+  if (loading) {
+    Animated.loop(
+      Animated.timing(spinAnim, {
+        toValue: 1,
+        duration: 900,
+        useNativeDriver: true,
+      })
+    ).start();
+  }
+}, [loading]);
+
+const spinStyle = {
+  transform: [
+    {
+      rotate: spinAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ["0deg", "360deg"],
+      }),
+    },
+  ],
+};
   // ── Keep refs in sync with state ────────────────────────────────────────────
   useEffect(() => { activeBookingRef.current   = activeBooking;      }, [activeBooking]);
   useEffect(() => { hasArrivedRef.current      = hasArrivedAtPickup; }, [hasArrivedAtPickup]);
@@ -1372,17 +1395,22 @@ useEffect(() => {
   );
 
   // ── Loading ──────────────────────────────────────────────────────────────────
-  if (loading) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar barStyle="dark-content" />
-        <View style={styles.loadingCard}>
-          <ActivityIndicator size="large" color={COLORS.navyLight} />
-          <Text style={styles.loadingText}>Loading your dashboard…</Text>
-        </View>
+if (loading) {
+  return (
+    <View style={styles.loadingScreen}>
+      <StatusBar barStyle="dark-content" />
+
+      <View style={styles.spinnerContainer}>
+        <Animated.View style={[styles.spinnerCircle, spinStyle]}>
+          <View style={styles.spinnerInner} />
+        </Animated.View>
+
+        <Text style={styles.loadingTitle}>Loading</Text>
+        <Text style={styles.loadingSubtitle}>Preparing your dashboard</Text>
       </View>
-    );
-  }
+    </View>
+  );
+}
 
   // ── Shared Header ─────────────────────────────────────────────────────────────
   const Header = ({ subtitle, title }) => (
@@ -1614,7 +1642,7 @@ useEffect(() => {
 
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={{ paddingBottom: SPACING.xxl + (insets.bottom || 0) }}
+          // contentContainerStyle={{ paddingBottom: SPACING.xxl + (insets.bottom || 0) }}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.navyLight} />}
         >
@@ -1888,4 +1916,37 @@ const styles = StyleSheet.create({
   alertBtnSecondaryText: { fontSize: FONT.md, fontWeight: "700", color: COLORS.gray600 },
   alertBtnPrimary:   { flex: 1, paddingVertical: SPACING.md, borderRadius: RADIUS.md, alignItems: "center" },
   alertBtnPrimaryText:   { fontSize: FONT.md, fontWeight: "700", color: COLORS.white },
+
+  spinnerContainer: {
+  alignItems: "center",
+  justifyContent: "center",
+},
+
+spinnerCircle: {
+  width: 56,
+  height: 56,
+  borderRadius: 28,
+  borderWidth: 3,
+  borderColor: COLORS.gray200,
+  borderTopColor: COLORS.navyLight, // accent color
+  marginBottom: SPACING.lg,
+},
+
+spinnerInner: {
+  flex: 1,
+  borderRadius: 28,
+  backgroundColor: "transparent",
+},
+
+loadingTitle: {
+  fontSize: FONT.lg,
+  fontWeight: "700",
+  color: COLORS.gray800,
+},
+
+loadingSubtitle: {
+  fontSize: FONT.sm,
+  color: COLORS.gray400,
+  marginTop: 4,
+},
 });
