@@ -23,7 +23,7 @@ import WalletScreen from "./DriverWalletScreen";
 import InboxScreen from "./DriverInboxScreen";
 import AccountScreen from "./DriverAccountScreen";
 import DriverTrackRideScreen from "./DriverTrackRideScreen";
-
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { navStyles } from "../styles/Driver/NavStyles";
 
 const Tab = createBottomTabNavigator();
@@ -49,7 +49,7 @@ export default function HomePage() {
   const [hasPendingRequests, setHasPendingRequests] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [sound, setSound] = useState(null);
-
+  const insets = useSafeAreaInsets();
   // Animation values
   const glowAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -466,7 +466,14 @@ export default function HomePage() {
         headerShown: false, // This removes all headers globally
         tabBarActiveTintColor: "#E97A3E",
         tabBarInactiveTintColor: "#183B5C",
-        tabBarStyle: navStyles.tabBar,
+        tabBarStyle: [
+  navStyles.tabBar,
+  {
+    height: 60 + insets.bottom,
+    paddingBottom: Math.max(insets.bottom, 8),
+    paddingTop: 8,
+  },
+],
         tabBarLabelStyle: { fontSize: 12 },
         tabBarIcon: ({ focused, color, size }) => {
           let iconName;

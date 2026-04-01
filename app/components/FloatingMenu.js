@@ -125,7 +125,7 @@ const MENU_CATEGORIES = [
     items: [
       {
         id: "foodStore",
-        name: "Food Store",
+        name: "Food Hub",
         icon: "restaurant-outline",
         activeIcon: "restaurant",
         screen: FoodStoreScreen,

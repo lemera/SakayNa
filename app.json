@@ -8,7 +8,7 @@
     "userInterfaceStyle": "light",
     "scheme": "sakayna",
     "splash": {
-      "image": "./assets/sakayna_icon.png",
+      "image": "./assets/icon_app.png",
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },

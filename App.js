@@ -1,15 +1,18 @@
 import "react-native-gesture-handler";
 import React, { useEffect, useRef, useState } from "react";
-import { View, ActivityIndicator } from "react-native";
+import { View, ActivityIndicator, Alert } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Location from 'expo-location';
+import { supabase } from './lib/supabase'; // Make sure this path is correct
 
 /* ============================= */
 /* Screens Import */
 /* ============================= */
-import SplashScreen from './app/SplashScreen.js';
+// Remove SplashScreen import - we won't use it anymore
+// import SplashScreen from './app/SplashScreen.js';
 import UserTypeScreen from './app/UserTypeScreen.js';
 
 // Commuter Flow
@@ -83,19 +86,100 @@ const linking = {
 };
 
 export default function App() {
-const notificationSub = useRef(null);
+  const notificationSub = useRef(null);
   const [appReady, setAppReady] = useState(false);
+  const [initialRoute, setInitialRoute] = useState('UserType');
+
+  // Function to request location permission
+  const requestLocationPermission = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Denied',
+          'Location permission is required to use this app.'
+        );
+      }
+    } catch (error) {
+      console.log('Error requesting location permission:', error);
+    }
+  };
+
+  // Function to check session and determine initial route
+  const checkSessionAndNavigate = async () => {
+    try {
+      const userId = await AsyncStorage.getItem('user_id');
+
+      if (!userId) {
+        return 'UserType';
+      }
+
+      // Check users table
+      const { data: user } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!user) {
+        await AsyncStorage.removeItem('user_id');
+        return 'UserType';
+      }
+
+      // Commuter flow
+      if (user.user_type === 'commuter') {
+        const { data: commuter } = await supabase
+          .from('commuters')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (commuter) {
+          return 'HomePage';
+        } else {
+          return 'CommuterDetails';
+        }
+      }
+
+      // Driver flow
+      if (user.user_type === 'driver') {
+        const { data: driver } = await supabase
+          .from('drivers')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (driver) {
+          return 'DriverHomePage';
+        } else {
+          return 'DriverDetails';
+        }
+      }
+
+      return 'UserType';
+    } catch (error) {
+      console.log('Session check error:', error);
+      return 'UserType';
+    }
+  };
 
   useEffect(() => {
     const init = async () => {
       try {
-        // 1. ask permission FIRST
+        // 1. Request location permission
+        await requestLocationPermission();
+
+        // 2. Check session and get initial route
+        const route = await checkSessionAndNavigate();
+        setInitialRoute(route);
+
+        // 3. Setup notifications
         const granted = await requestNotificationPermission();
 
-        // 2. setup channels
+        // 4. Setup notification channels
         await setupNotificationChannels();
 
-        // 3. register token only if allowed
+        // 5. Register token only if allowed
         if (granted) {
           const driverId = await AsyncStorage.getItem("user_id");
           if (driverId) {
@@ -103,7 +187,7 @@ const notificationSub = useRef(null);
           }
         }
 
-        // 4. listen for notification taps
+        // 6. Listen for notification taps
         notificationSub.current = addNotificationResponseListener((response) => {
           const data = response?.notification?.request?.content?.data;
           if (data?.type === "booking_request") {
@@ -146,11 +230,10 @@ const notificationSub = useRef(null);
     <GestureHandlerRootView style={{ flex: 1 }}>
       <NavigationContainer linking={linking}>
         <Stack.Navigator
-          initialRouteName="Splash"
+          initialRouteName={initialRoute}
           screenOptions={{ headerShown: false }}
         >
-          {/* Splash & Auth */}
-          <Stack.Screen name="Splash" component={SplashScreen} />
+          {/* Auth Screens */}
           <Stack.Screen name="UserType" component={UserTypeScreen} />
 
           {/* Commuter Flow */}
