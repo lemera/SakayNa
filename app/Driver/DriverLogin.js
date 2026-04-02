@@ -14,6 +14,8 @@ import {
 } from "react-native";
 import { styles } from "../styles/LoginStyles";
 import { Ionicons } from "@expo/vector-icons";
+import { TEST_ACCOUNTS, isTestAccount, getUserTypeFromTestAccount } from "../config/testAccounts";
+import { saveUserSession } from "../utils/authStorage";
 
 export default function DriverLogin({ navigation }) {
   const [phone, setPhone] = useState("");
@@ -48,6 +50,35 @@ export default function DriverLogin({ navigation }) {
     try {
       const formattedPhone = `+63${raw}`;
 
+      // ✅ Check if test account using centralized function
+      if (isTestAccount(formattedPhone)) {
+        console.log("✅ Test account detected, skipping OTP");
+        
+        const userType = getUserTypeFromTestAccount(formattedPhone);
+        
+        // ✅ Save session for test account
+        const userData = {
+          phone: formattedPhone,
+          userType: userType,
+          isTestAccount: true,
+          loggedInAt: new Date().toISOString(),
+        };
+        
+        await saveUserSession(userData, true);
+        
+        setTimeout(() => {
+          if (userType === "driver") {
+            navigation.replace("DriverHomePage");
+          } else if (userType === "commuter") {
+            navigation.replace("HomePage");
+          }
+        }, 500);
+        
+        setLoading(false);
+        return;
+      }
+
+      // ✅ Normal flow for non-test accounts
       const response = await fetch(
         "https://riseunullhczomqxkcbn.supabase.co/functions/v1/send_otp",
         {
@@ -57,7 +88,7 @@ export default function DriverLogin({ navigation }) {
           },
           body: JSON.stringify({
             phone: formattedPhone,
-            role: "driver",   // ✅ REQUIRED
+            role: "driver",
           }),
         }
       );
@@ -84,6 +115,7 @@ export default function DriverLogin({ navigation }) {
 
   const rawNumber = phone.replace(/\s/g, "");
   const isValid = rawNumber.length === 10;
+  const isTest = isTestAccount(`+63${rawNumber}`);
 
   return (
     <KeyboardAvoidingView
@@ -108,7 +140,7 @@ export default function DriverLogin({ navigation }) {
           />
 
           <Text style={styles.title}>
-            Log in using your phone number
+            Driver Login
           </Text>
 
           <View style={styles.phoneContainer}>
@@ -123,6 +155,13 @@ export default function DriverLogin({ navigation }) {
               maxLength={12}
             />
           </View>
+
+          {/* ✅ Test account indicator */}
+          {isTest && rawNumber.length === 10 && (
+            <Text style={{ color: '#E97A3E', fontSize: 12, marginTop: 5, marginBottom: 10 }}>
+              🔧 Test account detected: OTP will be skipped
+            </Text>
+          )}
 
           <Pressable
             onPress={handleLogin}
@@ -140,7 +179,9 @@ export default function DriverLogin({ navigation }) {
             {loading ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.buttonText}>Verify Number</Text>
+              <Text style={styles.buttonText}>
+                {isTest ? "Login (Test Mode)" : "Verify Number"}
+              </Text>
             )}
           </Pressable>
 

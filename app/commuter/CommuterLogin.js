@@ -14,6 +14,8 @@ import {
 } from "react-native";
 import { styles } from "../styles/LoginStyles";
 import { Ionicons } from "@expo/vector-icons";
+import { TEST_ACCOUNTS, isTestAccount, getUserTypeFromTestAccount } from "../config/testAccounts";
+import { saveUserSession } from "../utils/authStorage";
 
 export default function CommuterLogin({ navigation }) {
   const [phone, setPhone] = useState("");
@@ -48,6 +50,35 @@ export default function CommuterLogin({ navigation }) {
     try {
       const formattedPhone = `+63${raw}`;
 
+      // ✅ Check if test account using centralized function
+      if (isTestAccount(formattedPhone)) {
+        console.log("✅ Test account detected, skipping OTP");
+        
+        const userType = getUserTypeFromTestAccount(formattedPhone);
+        
+        // ✅ Save session for test account
+        const userData = {
+          phone: formattedPhone,
+          userType: userType,
+          isTestAccount: true,
+          loggedInAt: new Date().toISOString(),
+        };
+        
+        await saveUserSession(userData, true);
+        
+        setTimeout(() => {
+          if (userType === "commuter") {
+            navigation.replace("HomePage");
+          } else if (userType === "driver") {
+            navigation.replace("DriverHomePage");
+          }
+        }, 500);
+        
+        setLoading(false);
+        return;
+      }
+
+      // ✅ Normal flow for non-test accounts
       const response = await fetch(
         "https://riseunullhczomqxkcbn.supabase.co/functions/v1/send_otp",
         {
@@ -57,7 +88,7 @@ export default function CommuterLogin({ navigation }) {
           },
           body: JSON.stringify({
             phone: formattedPhone,
-            role: "commuter",   // ✅ REQUIRED
+            role: "commuter",
           }),
         }
       );
@@ -84,6 +115,7 @@ export default function CommuterLogin({ navigation }) {
 
   const rawNumber = phone.replace(/\s/g, "");
   const isValid = rawNumber.length === 10;
+  const isTest = isTestAccount(`+63${rawNumber}`);
 
   return (
     <KeyboardAvoidingView
@@ -124,6 +156,13 @@ export default function CommuterLogin({ navigation }) {
             />
           </View>
 
+          {/* ✅ Test account indicator */}
+          {isTest && rawNumber.length === 10 && (
+            <Text style={{ color: '#E97A3E', fontSize: 12, marginTop: 5, marginBottom: 10 }}>
+              🔧 Test account detected: OTP will be skipped
+            </Text>
+          )}
+
           <Pressable
             onPress={handleLogin}
             onPressIn={() => setOtpPressed(true)}
@@ -140,7 +179,9 @@ export default function CommuterLogin({ navigation }) {
             {loading ? (
               <ActivityIndicator color="#fff" size="small" />
             ) : (
-              <Text style={styles.buttonText}>Verify Number</Text>
+              <Text style={styles.buttonText}>
+                {isTest ? "Login (Test Mode)" : "Verify Number"}
+              </Text>
             )}
           </Pressable>
 

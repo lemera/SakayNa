@@ -89,6 +89,13 @@ export default function DriverDetails({ navigation }) {
       return;
     }
 
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      Alert.alert("Invalid Email", "Please enter a valid email address.");
+      return;
+    }
+
     try {
       setLoading(true);
 
@@ -180,19 +187,21 @@ export default function DriverDetails({ navigation }) {
 
   return (
     <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={{ flex: 1, backgroundColor: "#fff" }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <ScrollView
           contentContainerStyle={{ flexGrow: 1, paddingBottom: 40 }}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
           <View style={[styles.container, { paddingBottom: 30 }]}>
 
             <Pressable
               style={{ position: "absolute", top: 60, left: 20, zIndex: 10 }}
               onPress={() => navigation.goBack()}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               <Ionicons name="arrow-back" size={28} color="#183B5C" />
             </Pressable>
@@ -200,46 +209,69 @@ export default function DriverDetails({ navigation }) {
             <Image
               source={require("../../assets/logo-sakayna.png")}
               style={styles.logo}
+              resizeMode="contain"
             />
 
             <Text style={styles.title}>Driver Registration</Text>
 
             <TextInput
               style={styles.input}
-              placeholder="First Name"
+              placeholder="First Name *"
+              placeholderTextColor="#999"
               value={firstName}
               onChangeText={setFirstName}
+              autoCapitalize="words"
+              returnKeyType="next"
+              blurOnSubmit={false}
             />
 
             <TextInput
               style={styles.input}
               placeholder="Middle Name (Optional)"
+              placeholderTextColor="#999"
               value={middleName}
               onChangeText={setMiddleName}
+              autoCapitalize="words"
+              returnKeyType="next"
+              blurOnSubmit={false}
             />
 
             <TextInput
               style={styles.input}
-              placeholder="Last Name"
+              placeholder="Last Name *"
+              placeholderTextColor="#999"
               value={lastName}
               onChangeText={setLastName}
+              autoCapitalize="words"
+              returnKeyType="next"
+              blurOnSubmit={false}
             />
 
             <TextInput
               style={styles.input}
-              placeholder="Email"
+              placeholder="Email *"
+              placeholderTextColor="#999"
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
               autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="next"
+              blurOnSubmit={false}
             />
             
             <TextInput
-              style={[styles.input, { backgroundColor: "#eee" }]}
+              style={[styles.input, { backgroundColor: "#f5f5f5", color: "#666" }]}
               placeholder="Phone Number"
+              placeholderTextColor="#999"
               value={phone}
               editable={false}
+              selectTextOnFocus={false}
             />
+            
+            <Text style={styles.helperText}>
+              * Required fields
+            </Text>
             
             <Pressable
               style={[
@@ -250,7 +282,7 @@ export default function DriverDetails({ navigation }) {
               disabled={loading}
             >
               {loading ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color="#fff" size="small" />
               ) : (
                 <Text style={styles.buttonText}>Submit</Text>
               )}

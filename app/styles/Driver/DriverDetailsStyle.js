@@ -22,11 +22,11 @@ export const styles = StyleSheet.create({
     textAlign: "center",
   },
   subtitle: {
-  fontSize: 16,
-  color: "#183B5C",
-  textAlign: "center",
-  marginBottom: 15,
-},
+    fontSize: 16,
+    color: "#183B5C",
+    textAlign: "center",
+    marginBottom: 15,
+  },
   input: {
     width: "100%",
     height: 50,
@@ -37,28 +37,37 @@ export const styles = StyleSheet.create({
     marginBottom: 15,
     fontSize: 16,
     color: "#183B5C",
+    backgroundColor: "#fff",
   },
-button: {
-  width: "100%",
-  height: 50,
-  borderRadius: 15,
-  justifyContent: "center",
-  alignItems: "center",
-  backgroundColor: "#183B5C",
-  marginTop: 20,
+  button: {
+    width: "100%",
+    height: 50,
+    borderRadius: 15,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#183B5C",
+    marginTop: 20,
 
-  // Android shadow
-  elevation: 3,
+    // Android shadow
+    elevation: 3,
 
-  // iOS shadow
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 2 },
-  shadowOpacity: 0.2,
-  shadowRadius: 3,
-},
+    // iOS shadow
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+  },
   buttonText: {
     color: "#fff",
     fontSize: 18,
     fontWeight: "bold",
+  },
+  helperText: {
+    fontSize: 12,
+    color: "#999",
+    textAlign: "left",
+    width: "100%",
+    marginTop: 5,
+    marginBottom: 10,
   },
 });

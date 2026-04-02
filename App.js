@@ -7,12 +7,11 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from 'expo-location';
 import { supabase } from './lib/supabase'; // Make sure this path is correct
+import { getUserSession, clearUserSession } from './app/utils/authStorage'; // ✅ Import auth storage
 
 /* ============================= */
 /* Screens Import */
 /* ============================= */
-// Remove SplashScreen import - we won't use it anymore
-// import SplashScreen from './app/SplashScreen.js';
 import UserTypeScreen from './app/UserTypeScreen.js';
 
 // Commuter Flow
@@ -85,6 +84,12 @@ const linking = {
   },
 };
 
+// ✅ Test accounts list (same as in config/testAccounts.js)
+const TEST_ACCOUNTS = {
+  commuter: '+639171234567',
+  driver: '+639178765432',
+};
+
 export default function App() {
   const notificationSub = useRef(null);
   const [appReady, setAppReady] = useState(false);
@@ -105,9 +110,24 @@ export default function App() {
     }
   };
 
-  // Function to check session and determine initial route
+  // ✅ Updated function to check session and determine initial route (with test account support)
   const checkSessionAndNavigate = async () => {
     try {
+      // ✅ First check if there's a saved test account session
+      const savedSession = await getUserSession();
+      
+      if (savedSession && savedSession.isTestAccount) {
+        console.log("✅ Test account session found:", savedSession.phone);
+        
+        // For test accounts, directly return the appropriate screen
+        if (savedSession.userType === 'commuter') {
+          return 'HomePage';
+        } else if (savedSession.userType === 'driver') {
+          return 'DriverHomePage';
+        }
+      }
+
+      // ✅ Check for normal user session
       const userId = await AsyncStorage.getItem('user_id');
 
       if (!userId) {
@@ -123,6 +143,7 @@ export default function App() {
 
       if (!user) {
         await AsyncStorage.removeItem('user_id');
+        await clearUserSession(); // Clear test session too
         return 'UserType';
       }
 
@@ -179,10 +200,13 @@ export default function App() {
         // 4. Setup notification channels
         await setupNotificationChannels();
 
-        // 5. Register token only if allowed
+        // 5. Register token only if allowed (only for real users, not test accounts)
         if (granted) {
+          const savedSession = await getUserSession();
           const driverId = await AsyncStorage.getItem("user_id");
-          if (driverId) {
+          
+          // Only register if it's not a test account
+          if (driverId && !(savedSession && savedSession.isTestAccount)) {
             await registerForPushNotifications(driverId);
           }
         }
@@ -299,3 +323,21 @@ export default function App() {
     </GestureHandlerRootView>
   );
 }
+
+// ✅ Add missing requestNotificationPermission function
+const requestNotificationPermission = async () => {
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    
+    return finalStatus === 'granted';
+  } catch (error) {
+    console.log('Notification permission error:', error);
+    return false;
+  }
+};

@@ -1,5 +1,5 @@
-// OtpScreen.js
-import React, { useState, useRef } from "react";
+// DriverOtpScreen.js
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -16,16 +16,28 @@ import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
 import { verifyOtp, sendOtp } from "../../lib/otp";
 import { supabase } from '../../lib/supabase'; // adjust path if needed
-
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
 export default function OtpScreen({ route, navigation }) {
   const { phone, userType } = route.params;
 
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [countdown, setCountdown] = useState(0); // 👈 Add countdown state
 
   const inputs = useRef([]);
+
+  // 👇 Countdown effect
+  useEffect(() => {
+    let timer;
+    if (countdown > 0) {
+      timer = setTimeout(() => {
+        setCountdown(countdown - 1);
+      }, 1000);
+    }
+    return () => clearTimeout(timer);
+  }, [countdown]);
 
   const handleChange = (text, index) => {
     if (!/^\d*$/.test(text)) return;
@@ -45,80 +57,85 @@ export default function OtpScreen({ route, navigation }) {
     if (index < 5) inputs.current[index + 1].focus();
   };
 
-const handleVerify = async () => {
-  const pin = code.join("");
+  const handleVerify = async () => {
+    const pin = code.join("");
 
-  if (pin.length !== 6) {
-    Alert.alert("Invalid code", "Please enter the 6-digit code.");
-    return;
-  }
-
-  setLoading(true);
-
-  try {
-    const data = await verifyOtp(phone, pin, userType);
-
-    if (!data.success) {
-      throw new Error(data.error || "OTP verification failed");
+    if (pin.length !== 6) {
+      Alert.alert("Invalid code", "Please enter the 6-digit code.");
+      return;
     }
 
-    const user = data.user;
+    setLoading(true);
 
-    // ✅ SAVE SESSION LOCALLY
-    await AsyncStorage.setItem("user_id", user.id);
-    await AsyncStorage.setItem("user_phone", user.phone);
-    await AsyncStorage.setItem("user_type", user.user_type);
+    try {
+      const data = await verifyOtp(phone, pin, userType);
 
-    // 🔥 Navigate based on type
-    // After saving AsyncStorage
+      if (!data.success) {
+        throw new Error(data.error || "OTP verification failed");
+      }
 
-if (user.user_type === "driver") {
-  const { data: driver } = await supabase
-    .from("drivers")
-    .select("id")
-    .eq("id", user.id)
-    .maybeSingle();
+      const user = data.user;
 
-  if (driver) {
-    navigation.replace("DriverHomePage");
-  } else {
-    navigation.replace("DriverDetails");
-  }
+      // ✅ SAVE SESSION LOCALLY
+      await AsyncStorage.setItem("user_id", user.id);
+      await AsyncStorage.setItem("user_phone", user.phone);
+      await AsyncStorage.setItem("user_type", user.user_type);
 
-} else {
-  const { data: commuter } = await supabase
-    .from("commuters")
-    .select("id")
-    .eq("id", user.id)
-    .maybeSingle();
+      // 🔥 Navigate based on type
+      // After saving AsyncStorage
 
-  if (commuter) {
-    navigation.replace("HomePage");
-  } else {
-    navigation.replace("CommuterDetails");
-  }
-}
+      if (user.user_type === "driver") {
+        const { data: driver } = await supabase
+          .from("drivers")
+          .select("id")
+          .eq("id", user.id)
+          .maybeSingle();
 
-  } catch (err) {
-    Alert.alert("Verification Failed", err.message);
-  } finally {
-    setLoading(false);
-  }
-};
+        if (driver) {
+          navigation.replace("DriverHomePage");
+        } else {
+          navigation.replace("DriverDetails");
+        }
 
-const handleResend = async () => {
-  try {
-    await sendOtp(phone, userType);
+      } else {
+        const { data: commuter } = await supabase
+          .from("commuters")
+          .select("id")
+          .eq("id", user.id)
+          .maybeSingle();
 
-    // ✅ CLEAR OLD INPUTS
-    setCode(["", "", "", "", "", ""]);
-    inputs.current[0]?.focus();
+        if (commuter) {
+          navigation.replace("HomePage");
+        } else {
+          navigation.replace("CommuterDetails");
+        }
+      }
 
-    Alert.alert("Resent", "OTP has been sent again.");
-  } catch (err) {
-    Alert.alert("Error", err.message);
-  }
-};
+    } catch (err) {
+      Alert.alert("Verification Failed", err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (countdown > 0) return; // 👈 Prevent resend if countdown active
+
+    try {
+      await sendOtp(phone, userType);
+
+      // ✅ CLEAR OLD INPUTS
+      setCode(["", "", "", "", "", ""]);
+      inputs.current[0]?.focus();
+
+      // 👇 Start 60-second countdown
+      setCountdown(60);
+
+      Alert.alert("Resent", "OTP has been sent again.");
+    } catch (err) {
+      Alert.alert("Error", err.message);
+    }
+  };
 
   return (
     <KeyboardAvoidingView
@@ -177,11 +194,18 @@ const handleResend = async () => {
             )}
           </Pressable>
 
+          {/* 👇 Updated Resend Text with Countdown */}
           <Text style={styles.resend}>
-            Didn’t receive code?{" "}
-            <Text style={styles.resendLink} onPress={handleResend}>
-              Resend
-            </Text>
+            Didn't receive code?{" "}
+            {countdown > 0 ? (
+              <Text style={styles.resendDisabled}>
+                Resend available in {countdown}s
+              </Text>
+            ) : (
+              <Text style={styles.resendLink} onPress={handleResend}>
+                Resend
+              </Text>
+            )}
           </Text>
         </View>
       </ScrollView>

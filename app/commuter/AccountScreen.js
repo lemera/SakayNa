@@ -24,6 +24,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import packageJson from '../../package.json';
+import { getUserSession } from '../utils/authStorage'; // ✅ Import test account session
 
 const base64ToArrayBuffer = (base64) => {
   const binaryString = atob(base64);
@@ -43,6 +44,7 @@ export default function AccountScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState(null);
   const [userType, setUserType] = useState('commuter');
+  const [isTestAccount, setIsTestAccount] = useState(false); // ✅ Track if test account
   const [profile, setProfile] = useState(null);
   const [stats, setStats] = useState({
     totalTrips: 0,
@@ -84,27 +86,53 @@ export default function AccountScreen({ navigation }) {
   const [pinError, setPinError] = useState("");
   const [changingPin, setChangingPin] = useState(false);
 
-  // Fetch user ID
+  // Fetch user ID and check if test account
   useFocusEffect(
     useCallback(() => {
       const getUserId = async () => {
-        const id = await AsyncStorage.getItem("user_id");
-        const type = await AsyncStorage.getItem("user_type") || 'commuter';
-        setUserId(id);
-        setUserType(type);
+        // ✅ Check test account session first
+        const session = await getUserSession();
+        
+        if (session && session.isTestAccount) {
+          console.log("✅ Test account detected in AccountScreen");
+          setIsTestAccount(true);
+          setUserId(session.phone); // Use phone as identifier for test accounts
+          setUserType(session.userType);
+          
+          // Create mock profile for test account
+          const mockProfile = {
+            first_name: session.userType === 'commuter' ? 'Test' : 'Test',
+            last_name: session.userType === 'commuter' ? 'Commuter' : 'Driver',
+            phone: session.phone,
+            email: `${session.userType}@test.com`,
+            profile_picture: null,
+            created_at: new Date().toISOString(),
+          };
+          setProfile(mockProfile);
+          setEditPhone(mockProfile.phone);
+          setEditEmail(mockProfile.email);
+          setLoading(false);
+        } else {
+          // Normal user flow
+          const id = await AsyncStorage.getItem("user_id");
+          const type = await AsyncStorage.getItem("user_type") || 'commuter';
+          setUserId(id);
+          setUserType(type);
+          setIsTestAccount(false);
+        }
       };
       getUserId();
     }, [])
   );
 
-  // Fetch all user data
+  // Fetch all user data (only for normal users)
   useEffect(() => {
-    if (userId) {
+    if (userId && !isTestAccount) {
       loadUserData();
       loadWithdrawalSettings();
       loadPayoutMethods();
     }
-  }, [userId]);
+  }, [userId, isTestAccount]);
 
   const loadUserData = async () => {
     try {
@@ -121,6 +149,8 @@ export default function AccountScreen({ navigation }) {
   };
 
   const loadWithdrawalSettings = async () => {
+    if (isTestAccount) return; // Skip for test accounts
+    
     try {
       const { data, error } = await supabase
         .from("withdrawal_settings")
@@ -161,6 +191,8 @@ export default function AccountScreen({ navigation }) {
   };
 
   const loadPayoutMethods = async () => {
+    if (isTestAccount) return; // Skip for test accounts
+    
     try {
       const { data, error } = await supabase
         .from("user_payment_methods")
@@ -177,6 +209,11 @@ export default function AccountScreen({ navigation }) {
   };
 
   const updateWithdrawalSettings = async () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "This feature is disabled for test accounts.");
+      return;
+    }
+    
     try {
       const { error } = await supabase
         .from("withdrawal_settings")
@@ -204,6 +241,11 @@ export default function AccountScreen({ navigation }) {
   };
 
   const changePin = async () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "This feature is disabled for test accounts.");
+      return;
+    }
+    
     if (newPin.length !== 4) {
       setPinError("PIN must be exactly 4 digits");
       return;
@@ -255,6 +297,11 @@ export default function AccountScreen({ navigation }) {
   };
 
   const onRefresh = async () => {
+    if (isTestAccount) {
+      setRefreshing(false);
+      return;
+    }
+    
     setRefreshing(true);
     await Promise.all([
       loadUserData(),
@@ -281,7 +328,6 @@ export default function AccountScreen({ navigation }) {
       }
 
       setProfile(data);
-      // Only set phone and email for editing, not name
       setEditPhone(data.phone || "");
       setEditEmail(data.email || "");
     } catch (err) {
@@ -290,6 +336,18 @@ export default function AccountScreen({ navigation }) {
   };
 
   const fetchStats = async () => {
+    if (isTestAccount) {
+      // Set mock stats for test account
+      setStats({
+        totalTrips: 0,
+        totalPoints: 0,
+        totalSpent: 0,
+        memberSince: new Date().toISOString(),
+        referrals: 0,
+      });
+      return;
+    }
+    
     try {
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
@@ -342,12 +400,15 @@ export default function AccountScreen({ navigation }) {
     }
   };
 
-  // Updated handleUpdateProfile - name is no longer updated
   const handleUpdateProfile = async () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "Profile updates are disabled for test accounts.");
+      return;
+    }
+    
     try {
       const table = userType === 'commuter' ? 'commuters' : 'drivers';
       
-      // Only update phone and email, not name
       const { error } = await supabase
         .from(table)
         .update({
@@ -376,8 +437,15 @@ export default function AccountScreen({ navigation }) {
         style: "destructive",
         onPress: async () => {
           try {
-            await AsyncStorage.multiRemove(["user_id", "user_type", "session"]);
-            await supabase.auth.signOut();
+            // Clear test account session if exists
+            const session = await getUserSession();
+            if (session && session.isTestAccount) {
+              await AsyncStorage.removeItem('@sakayna_user_session');
+              await AsyncStorage.removeItem('@sakayna_test_account');
+            } else {
+              await AsyncStorage.multiRemove(["user_id", "user_type", "session"]);
+              await supabase.auth.signOut();
+            }
             navigation.replace("UserType");
           } catch (err) {
             console.log("Error signing out:", err.message);
@@ -388,6 +456,11 @@ export default function AccountScreen({ navigation }) {
   };
 
   const pickImage = async () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "Profile picture updates are disabled for test accounts.");
+      return;
+    }
+    
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       
@@ -461,11 +534,13 @@ export default function AccountScreen({ navigation }) {
   };
 
   const getDefaultPaymentMethod = () => {
+    if (isTestAccount) return null;
     if (!withdrawalSettings.default_payment_method_id) return null;
     return payoutMethods.find(m => m.id === withdrawalSettings.default_payment_method_id);
   };
 
-  if (loading && !refreshing) {
+  // Show loading only for normal users who are still loading
+  if (loading && !isTestAccount && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#183B5C" />
@@ -478,18 +553,25 @@ export default function AccountScreen({ navigation }) {
       style={styles.container}
       contentContainerStyle={{ paddingBottom: 30 }}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        !isTestAccount ? (
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        ) : undefined
       }
     >
+      {/* Test Account Banner */}
+      {isTestAccount && (
+        <View style={styles.testBanner}>
+          <Ionicons name="flask" size={20} color="#E97A3E" />
+          <Text style={styles.testBannerText}>Test Account Mode </Text>
+        </View>
+      )}
+
       {/* Header with Cover */}
       <View style={[styles.headerCover]}> 
         <View style={styles.headerRow}>
           <Pressable onPress={() => navigation.goBack()} style={styles.headerButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
           </Pressable>
-
-          {/* <Text style={styles.headerTitle}>My Account</Text> */}
-
           <View style={{ width: 40 }} />
         </View>
       </View>
@@ -498,7 +580,7 @@ export default function AccountScreen({ navigation }) {
       <View style={styles.profileCard}>
         <View style={{ alignItems: "center" }}>
           {/* Profile Picture */}
-          <Pressable onPress={pickImage} style={styles.avatarContainer}>
+          <Pressable onPress={pickImage} style={styles.avatarContainer} disabled={isTestAccount}>
             <View style={styles.avatarWrapper}>
               {profile?.profile_picture ? (
                 <Image
@@ -516,9 +598,11 @@ export default function AccountScreen({ navigation }) {
                 </LinearGradient>
               )}
             </View>
-            <View style={styles.cameraBadge}>
-              <Ionicons name="camera" size={16} color="#FFF" />
-            </View>
+            {!isTestAccount && (
+              <View style={styles.cameraBadge}>
+                <Ionicons name="camera" size={16} color="#FFF" />
+              </View>
+            )}
           </Pressable>
 
           <Text style={styles.profileName}>
@@ -527,13 +611,17 @@ export default function AccountScreen({ navigation }) {
 
           <View style={styles.userTypeBadge}>
             <Ionicons name="person" size={14} color="#666" />
-            <Text style={styles.userTypeText}>Passenger</Text>
+            <Text style={styles.userTypeText}>
+              {userType === 'commuter' ? 'Passenger' : 'Driver'}
+            </Text>
           </View>
 
-          <Pressable style={styles.editProfileButton} onPress={() => setEditProfileModal(true)}>
-            <Ionicons name="create-outline" size={16} color="#183B5C" />
-            <Text style={styles.editProfileText}>Edit Contact Info</Text>
-          </Pressable>
+          {!isTestAccount && (
+            <Pressable style={styles.editProfileButton} onPress={() => setEditProfileModal(true)}>
+              <Ionicons name="create-outline" size={16} color="#183B5C" />
+              <Text style={styles.editProfileText}>Edit Contact Info</Text>
+            </Pressable>
+          )}
         </View>
 
         {/* Stats Grid */}
@@ -588,40 +676,44 @@ export default function AccountScreen({ navigation }) {
             <Text style={styles.referralLabel}>Total Referrals</Text>
             <Text style={styles.referralValue}>{stats.referrals}</Text>
           </View>
-          <Pressable
-            style={styles.inviteButton}
-            onPress={() => navigation.navigate("ReferralScreen")}
-          >
-            <Text style={styles.inviteButtonText}>Invite</Text>
-          </Pressable>
+          {!isTestAccount && (
+            <Pressable
+              style={styles.inviteButton}
+              onPress={() => navigation.navigate("ReferralScreen")}
+            >
+              <Text style={styles.inviteButtonText}>Invite</Text>
+            </Pressable>
+          )}
         </View>
       </View>
 
-      {/* Withdrawal Settings Section */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>💰 Withdrawal Settings</Text>
+      {/* Withdrawal Settings Section - Hide for test accounts */}
+      {!isTestAccount && (
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>💰 Withdrawal Settings</Text>
 
-        <Pressable style={styles.menuItem} onPress={() => setShowWithdrawalSettingsModal(true)}>
-          <Ionicons name="settings-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Withdrawal Preferences</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+          <Pressable style={styles.menuItem} onPress={() => setShowWithdrawalSettingsModal(true)}>
+            <Ionicons name="settings-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+            <Text style={styles.menuText}>Withdrawal Preferences</Text>
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          </Pressable>
 
-        <Pressable style={styles.menuItem} onPress={() => setShowPinChangeModal(true)}>
-          <Ionicons name="key-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Change Withdrawal PIN</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+          <Pressable style={styles.menuItem} onPress={() => setShowPinChangeModal(true)}>
+            <Ionicons name="key-outline" size={22} color="#183B5C" style={styles.menuIcon} />
+            <Text style={styles.menuText}>Change Withdrawal PIN</Text>
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          </Pressable>
 
-        {getDefaultPaymentMethod() && (
-          <View style={styles.defaultMethodInfo}>
-            <Ionicons name="card-outline" size={16} color="#10B981" />
-            <Text style={styles.defaultMethodText}>
-              Default: {getDefaultPaymentMethod().payment_type.toUpperCase()} - {getDefaultPaymentMethod().account_number}
-            </Text>
-          </View>
-        )}
-      </View>
+          {getDefaultPaymentMethod() && (
+            <View style={styles.defaultMethodInfo}>
+              <Ionicons name="card-outline" size={16} color="#10B981" />
+              <Text style={styles.defaultMethodText}>
+                Default: {getDefaultPaymentMethod().payment_type.toUpperCase()} - {getDefaultPaymentMethod().account_number}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {/* Account Settings */}
       <View style={styles.sectionCard}>
@@ -677,328 +769,335 @@ export default function AccountScreen({ navigation }) {
         </Text>
       </View>
 
-      {/* Edit Profile Modal - Name field is read-only */}
-      <Modal
-        visible={editProfileModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setEditProfileModal(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.modalContainer}
+      {/* Edit Profile Modal - Only show for normal users */}
+      {!isTestAccount && (
+        <Modal
+          visible={editProfileModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setEditProfileModal(false)}
         >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Edit Contact Information</Text>
-                <Pressable onPress={() => setEditProfileModal(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
-                </Pressable>
-              </View>
-
-              <ScrollView keyboardShouldPersistTaps="handled">
-                {/* Name Display (Read-only) */}
-                <Text style={styles.inputLabel}>Full Name</Text>
-                <View style={styles.readOnlyField}>
-                  <Text style={styles.readOnlyText}>
-                    {profile ? `${profile.first_name} ${profile.last_name}` : "Loading..."}
-                  </Text>
-                </View>
-
-                {/* Phone Number */}
-                <Text style={styles.inputLabel}>Phone Number</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter phone number"
-                  keyboardType="phone-pad"
-                  value={editPhone}
-                  onChangeText={setEditPhone}
-                />
-
-                {/* Email Address */}
-                <Text style={styles.inputLabel}>Email Address</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter email address"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  value={editEmail}
-                  onChangeText={setEditEmail}
-                />
-
-                <View style={styles.modalButtons}>
-                  <Pressable
-                    style={styles.cancelButton}
-                    onPress={() => setEditProfileModal(false)}
-                  >
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={styles.saveButton}
-                    onPress={handleUpdateProfile}
-                  >
-                    <Text style={styles.saveButtonText}>Save</Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* Withdrawal Settings Modal */}
-      <Modal
-        visible={showWithdrawalSettingsModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowWithdrawalSettingsModal(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.modalContainer}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Withdrawal Preferences</Text>
-                <Pressable onPress={() => setShowWithdrawalSettingsModal(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
-                </Pressable>
-              </View>
-
-              <ScrollView keyboardShouldPersistTaps="handled">
-                {/* Default Payout Method */}
-                <Text style={styles.inputLabel}>Default Payout Method</Text>
-                <View style={styles.pickerContainer}>
-                  <Pressable
-                    style={styles.pickerButton}
-                  >
-                    <Text style={styles.pickerButtonText}>
-                      {getDefaultPaymentMethod() 
-                        ? `${getDefaultPaymentMethod().payment_type.toUpperCase()} - ${getDefaultPaymentMethod().account_number}`
-                        : "Select payout method"}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={20} color="#666" />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.modalContainer}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Edit Contact Information</Text>
+                  <Pressable onPress={() => setEditProfileModal(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
                   </Pressable>
                 </View>
 
-                {/* Auto Withdraw Toggle */}
-                <View style={styles.toggleContainer}>
-                  <View>
-                    <Text style={styles.inputLabel}>Auto Withdraw</Text>
-                    <Text style={styles.toggleDescription}>
-                      Automatically withdraw when balance reaches threshold
+                <ScrollView keyboardShouldPersistTaps="handled">
+                  {/* Name Display (Read-only) */}
+                  <Text style={styles.inputLabel}>Full Name</Text>
+                  <View style={styles.readOnlyField}>
+                    <Text style={styles.readOnlyText}>
+                      {profile ? `${profile.first_name} ${profile.last_name}` : "Loading..."}
                     </Text>
                   </View>
-                  <Pressable
-                    onPress={() => setTempSettings({
-                      ...tempSettings,
-                      auto_withdraw: !tempSettings.auto_withdraw
-                    })}
-                  >
-                    <View style={[styles.toggle, tempSettings.auto_withdraw && styles.toggleActive]}>
-                      <View style={[styles.toggleHandle, tempSettings.auto_withdraw && styles.toggleHandleActive]} />
-                    </View>
+
+                  {/* Phone Number */}
+                  <Text style={styles.inputLabel}>Phone Number</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter phone number"
+                    keyboardType="phone-pad"
+                    value={editPhone}
+                    onChangeText={setEditPhone}
+                  />
+
+                  {/* Email Address */}
+                  <Text style={styles.inputLabel}>Email Address</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Enter email address"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    value={editEmail}
+                    onChangeText={setEditEmail}
+                  />
+
+                  <View style={styles.modalButtons}>
+                    <Pressable
+                      style={styles.cancelButton}
+                      onPress={() => setEditProfileModal(false)}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.saveButton}
+                      onPress={handleUpdateProfile}
+                    >
+                      <Text style={styles.saveButtonText}>Save</Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
+
+      {/* Withdrawal Settings Modal - Only show for normal users */}
+      {!isTestAccount && (
+        <Modal
+          visible={showWithdrawalSettingsModal}
+          transparent={true}
+          animationType="slide"
+          onRequestClose={() => setShowWithdrawalSettingsModal(false)}
+        >
+          {/* ... existing withdrawal settings modal code ... */}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.modalContainer}
+          >
+            <View style={styles.modalOverlay}>
+              <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Withdrawal Preferences</Text>
+                  <Pressable onPress={() => setShowWithdrawalSettingsModal(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
                   </Pressable>
                 </View>
 
-                {/* Auto Withdraw Threshold */}
-                {tempSettings.auto_withdraw && (
-                  <>
-                    <Text style={styles.inputLabel}>Auto Withdraw Threshold (₱)</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g., 500"
-                      keyboardType="numeric"
-                      value={tempSettings.auto_withdraw_threshold?.toString() || ""}
-                      onChangeText={(text) => setTempSettings({
+                <ScrollView keyboardShouldPersistTaps="handled">
+                  {/* Default Payout Method */}
+                  <Text style={styles.inputLabel}>Default Payout Method</Text>
+                  <View style={styles.pickerContainer}>
+                    <Pressable style={styles.pickerButton}>
+                      <Text style={styles.pickerButtonText}>
+                        {getDefaultPaymentMethod() 
+                          ? `${getDefaultPaymentMethod().payment_type.toUpperCase()} - ${getDefaultPaymentMethod().account_number}`
+                          : "Select payout method"}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={20} color="#666" />
+                    </Pressable>
+                  </View>
+
+                  {/* Auto Withdraw Toggle */}
+                  <View style={styles.toggleContainer}>
+                    <View>
+                      <Text style={styles.inputLabel}>Auto Withdraw</Text>
+                      <Text style={styles.toggleDescription}>
+                        Automatically withdraw when balance reaches threshold
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => setTempSettings({
                         ...tempSettings,
-                        auto_withdraw_threshold: text ? parseFloat(text) : null
+                        auto_withdraw: !tempSettings.auto_withdraw
                       })}
-                    />
-                  </>
-                )}
-
-                {/* Withdrawal Limits */}
-                <Text style={styles.sectionSubtitle}>Withdrawal Limits</Text>
-                
-                <Text style={styles.inputLabel}>Daily Limit (₱)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 5000"
-                  keyboardType="numeric"
-                  value={tempSettings.daily_withdrawal_limit?.toString() || ""}
-                  onChangeText={(text) => setTempSettings({
-                    ...tempSettings,
-                    daily_withdrawal_limit: text ? parseFloat(text) : null
-                  })}
-                />
-
-                <Text style={styles.inputLabel}>Weekly Limit (₱)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 20000"
-                  keyboardType="numeric"
-                  value={tempSettings.weekly_withdrawal_limit?.toString() || ""}
-                  onChangeText={(text) => setTempSettings({
-                    ...tempSettings,
-                    weekly_withdrawal_limit: text ? parseFloat(text) : null
-                  })}
-                />
-
-                <Text style={styles.inputLabel}>Monthly Limit (₱)</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="e.g., 50000"
-                  keyboardType="numeric"
-                  value={tempSettings.monthly_withdrawal_limit?.toString() || ""}
-                  onChangeText={(text) => setTempSettings({
-                    ...tempSettings,
-                    monthly_withdrawal_limit: text ? parseFloat(text) : null
-                  })}
-                />
-
-                {/* Notification Toggle */}
-                <View style={styles.toggleContainer}>
-                  <View>
-                    <Text style={styles.inputLabel}>Withdrawal Notifications</Text>
-                    <Text style={styles.toggleDescription}>
-                      Receive notifications about your withdrawals
-                    </Text>
+                    >
+                      <View style={[styles.toggle, tempSettings.auto_withdraw && styles.toggleActive]}>
+                        <View style={[styles.toggleHandle, tempSettings.auto_withdraw && styles.toggleHandleActive]} />
+                      </View>
+                    </Pressable>
                   </View>
-                  <Pressable
-                    onPress={() => setTempSettings({
+
+                  {/* Auto Withdraw Threshold */}
+                  {tempSettings.auto_withdraw && (
+                    <>
+                      <Text style={styles.inputLabel}>Auto Withdraw Threshold (₱)</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="e.g., 500"
+                        keyboardType="numeric"
+                        value={tempSettings.auto_withdraw_threshold?.toString() || ""}
+                        onChangeText={(text) => setTempSettings({
+                          ...tempSettings,
+                          auto_withdraw_threshold: text ? parseFloat(text) : null
+                        })}
+                      />
+                    </>
+                  )}
+
+                  {/* Withdrawal Limits */}
+                  <Text style={styles.sectionSubtitle}>Withdrawal Limits</Text>
+                  
+                  <Text style={styles.inputLabel}>Daily Limit (₱)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., 5000"
+                    keyboardType="numeric"
+                    value={tempSettings.daily_withdrawal_limit?.toString() || ""}
+                    onChangeText={(text) => setTempSettings({
                       ...tempSettings,
-                      notifications_enabled: !tempSettings.notifications_enabled
+                      daily_withdrawal_limit: text ? parseFloat(text) : null
                     })}
-                  >
-                    <View style={[styles.toggle, tempSettings.notifications_enabled && styles.toggleActive]}>
-                      <View style={[styles.toggleHandle, tempSettings.notifications_enabled && styles.toggleHandleActive]} />
+                  />
+
+                  <Text style={styles.inputLabel}>Weekly Limit (₱)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., 20000"
+                    keyboardType="numeric"
+                    value={tempSettings.weekly_withdrawal_limit?.toString() || ""}
+                    onChangeText={(text) => setTempSettings({
+                      ...tempSettings,
+                      weekly_withdrawal_limit: text ? parseFloat(text) : null
+                    })}
+                  />
+
+                  <Text style={styles.inputLabel}>Monthly Limit (₱)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="e.g., 50000"
+                    keyboardType="numeric"
+                    value={tempSettings.monthly_withdrawal_limit?.toString() || ""}
+                    onChangeText={(text) => setTempSettings({
+                      ...tempSettings,
+                      monthly_withdrawal_limit: text ? parseFloat(text) : null
+                    })}
+                  />
+
+                  {/* Notification Toggle */}
+                  <View style={styles.toggleContainer}>
+                    <View>
+                      <Text style={styles.inputLabel}>Withdrawal Notifications</Text>
+                      <Text style={styles.toggleDescription}>
+                        Receive notifications about your withdrawals
+                      </Text>
                     </View>
-                  </Pressable>
-                </View>
+                    <Pressable
+                      onPress={() => setTempSettings({
+                        ...tempSettings,
+                        notifications_enabled: !tempSettings.notifications_enabled
+                      })}
+                    >
+                      <View style={[styles.toggle, tempSettings.notifications_enabled && styles.toggleActive]}>
+                        <View style={[styles.toggleHandle, tempSettings.notifications_enabled && styles.toggleHandleActive]} />
+                      </View>
+                    </Pressable>
+                  </View>
 
-                <View style={styles.modalButtons}>
-                  <Pressable
-                    style={styles.cancelButton}
-                    onPress={() => setShowWithdrawalSettingsModal(false)}
-                  >
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                  </Pressable>
+                  <View style={styles.modalButtons}>
+                    <Pressable
+                      style={styles.cancelButton}
+                      onPress={() => setShowWithdrawalSettingsModal(false)}
+                    >
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </Pressable>
 
-                  <Pressable
-                    style={styles.saveButton}
-                    onPress={updateWithdrawalSettings}
-                  >
-                    <Text style={styles.saveButtonText}>Save Settings</Text>
-                  </Pressable>
-                </View>
-              </ScrollView>
+                    <Pressable
+                      style={styles.saveButton}
+                      onPress={updateWithdrawalSettings}
+                    >
+                      <Text style={styles.saveButtonText}>Save Settings</Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
+              </View>
             </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+          </KeyboardAvoidingView>
+        </Modal>
+      )}
 
-      {/* Change PIN Modal */}
-      <Modal
-        visible={showPinChangeModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowPinChangeModal(false)}
-      >
-        <View style={styles.modalOverlayCenter}>
-          <View style={styles.modalCenterContent}>
-            <View style={styles.modalCenterHeader}>
-              <Ionicons name="key" size={48} color="#183B5C" />
-              <Text style={styles.modalCenterTitle}>Change Withdrawal PIN</Text>
-              <Text style={styles.modalCenterSubtitle}>
-                Enter your current PIN and create a new one
-              </Text>
-            </View>
+      {/* Change PIN Modal - Only show for normal users */}
+      {!isTestAccount && (
+        <Modal
+          visible={showPinChangeModal}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setShowPinChangeModal(false)}
+        >
+          <View style={styles.modalOverlayCenter}>
+            <View style={styles.modalCenterContent}>
+              <View style={styles.modalCenterHeader}>
+                <Ionicons name="key" size={48} color="#183B5C" />
+                <Text style={styles.modalCenterTitle}>Change Withdrawal PIN</Text>
+                <Text style={styles.modalCenterSubtitle}>
+                  Enter your current PIN and create a new one
+                </Text>
+              </View>
 
-            {withdrawalSettings.withdrawal_pin && (
-              <>
-                <Text style={styles.inputLabel}>Current PIN</Text>
-                <TextInput
-                  style={[styles.pinInput, pinError && styles.pinInputError]}
-                  placeholder="****"
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  secureTextEntry
-                  value={currentPin}
-                  onChangeText={(text) => {
-                    setCurrentPin(text);
-                    setPinError("");
-                  }}
-                />
-              </>
-            )}
+              {withdrawalSettings.withdrawal_pin && (
+                <>
+                  <Text style={styles.inputLabel}>Current PIN</Text>
+                  <TextInput
+                    style={[styles.pinInput, pinError && styles.pinInputError]}
+                    placeholder="****"
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    secureTextEntry
+                    value={currentPin}
+                    onChangeText={(text) => {
+                      setCurrentPin(text);
+                      setPinError("");
+                    }}
+                  />
+                </>
+              )}
 
-            <Text style={styles.inputLabel}>New PIN</Text>
-            <TextInput
-              style={[styles.pinInput, pinError && styles.pinInputError]}
-              placeholder="****"
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-              value={newPin}
-              onChangeText={(text) => {
-                setNewPin(text);
-                setPinError("");
-              }}
-            />
-
-            <Text style={styles.inputLabel}>Confirm New PIN</Text>
-            <TextInput
-              style={[styles.pinInput, pinError && styles.pinInputError]}
-              placeholder="****"
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-              value={confirmPin}
-              onChangeText={(text) => {
-                setConfirmPin(text);
-                setPinError("");
-              }}
-            />
-
-            {pinError ? (
-              <Text style={styles.pinErrorText}>{pinError}</Text>
-            ) : null}
-
-            <View style={styles.modalCenterActions}>
-              <Pressable
-                style={styles.modalCenterCancel}
-                onPress={() => {
-                  setShowPinChangeModal(false);
-                  setCurrentPin("");
-                  setNewPin("");
-                  setConfirmPin("");
+              <Text style={styles.inputLabel}>New PIN</Text>
+              <TextInput
+                style={[styles.pinInput, pinError && styles.pinInputError]}
+                placeholder="****"
+                keyboardType="number-pad"
+                maxLength={4}
+                secureTextEntry
+                value={newPin}
+                onChangeText={(text) => {
+                  setNewPin(text);
                   setPinError("");
                 }}
-              >
-                <Text style={styles.modalCenterCancelText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={styles.modalCenterConfirm}
-                onPress={changePin}
-                disabled={changingPin}
-              >
-                {changingPin ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Text style={styles.modalCenterConfirmText}>Change PIN</Text>
-                )}
-              </Pressable>
+              />
+
+              <Text style={styles.inputLabel}>Confirm New PIN</Text>
+              <TextInput
+                style={[styles.pinInput, pinError && styles.pinInputError]}
+                placeholder="****"
+                keyboardType="number-pad"
+                maxLength={4}
+                secureTextEntry
+                value={confirmPin}
+                onChangeText={(text) => {
+                  setConfirmPin(text);
+                  setPinError("");
+                }}
+              />
+
+              {pinError ? (
+                <Text style={styles.pinErrorText}>{pinError}</Text>
+              ) : null}
+
+              <View style={styles.modalCenterActions}>
+                <Pressable
+                  style={styles.modalCenterCancel}
+                  onPress={() => {
+                    setShowPinChangeModal(false);
+                    setCurrentPin("");
+                    setNewPin("");
+                    setConfirmPin("");
+                    setPinError("");
+                  }}
+                >
+                  <Text style={styles.modalCenterCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.modalCenterConfirm}
+                  onPress={changePin}
+                  disabled={changingPin}
+                >
+                  {changingPin ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text style={styles.modalCenterConfirmText}>Change PIN</Text>
+                  )}
+                </Pressable>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </ScrollView>
   );
 }
+
+
 
 const styles = StyleSheet.create({
   container: {
@@ -1477,5 +1576,20 @@ const styles = StyleSheet.create({
   },
   toggleHandleActive: {
     transform: [{ translateX: 22 }],
+  },
+  testBanner: {
+    backgroundColor: "#FFF3E0",
+    padding: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#FFE0B5",
+  },
+  testBannerText: {
+    color: "#E97A3E",
+    fontSize: 12,
+    fontWeight: "500",
   },
 });

@@ -21,6 +21,7 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import { LineChart } from "react-native-chart-kit";
+import { getUserSession } from '../utils/authStorage'; // ✅ Import test account session
 
 export default function DriverWalletScreen({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -29,6 +30,7 @@ export default function DriverWalletScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState(null);
+  const [isTestAccount, setIsTestAccount] = useState(false); // ✅ Track if test account
   const [driverName, setDriverName] = useState("");
 
   // Loading states for buttons
@@ -114,13 +116,49 @@ export default function DriverWalletScreen({ navigation }) {
     setPinError("");
   };
 
-  // Fetch driver ID
+  // Fetch driver ID and check if test account
   useFocusEffect(
     useCallback(() => {
       const getDriverId = async () => {
         try {
+          // ✅ Check test account session first
+          const session = await getUserSession();
+          
+          if (session && session.isTestAccount && session.userType === 'driver') {
+            console.log("✅ Test driver account detected in WalletScreen");
+            setIsTestAccount(true);
+            setDriverId(session.phone);
+            setDriverName("Test Driver");
+            
+            // Set mock data for test account
+            setPointsData({
+              total_points: 5000,
+              points_from_rides: 3500,
+              points_from_referrals: 1000,
+              points_from_bonuses: 500,
+              points_value: 500,
+            });
+            
+            setEarningsData({
+              cash_earnings: 0,
+              gcash_earnings: 0,
+              wallet_earnings: 0,
+              total_earnings: 0,
+            });
+            
+            setWeeklyPoints([100, 200, 150, 300, 250, 400, 350]);
+            setMonthlyPoints(1750);
+            setTotalTrips(0);
+            
+            setLoading(false);
+            return;
+          }
+          
+          // Normal user flow
           const id = await AsyncStorage.getItem("user_id");
           setDriverId(id);
+          setIsTestAccount(false);
+          
           if (id) {
             await fetchDriverName(id);
             await loadPayoutMethods(id);
@@ -135,12 +173,14 @@ export default function DriverWalletScreen({ navigation }) {
     }, [])
   );
 
-  // Fetch all data when driverId changes
+  // Fetch all data when driverId changes (only for normal users)
   useEffect(() => {
-    if (driverId) loadPointsData(driverId);
-  }, [driverId]);
+    if (driverId && !isTestAccount) loadPointsData(driverId);
+  }, [driverId, isTestAccount]);
 
   const fetchDriverName = async (id) => {
+    if (isTestAccount) return;
+    
     try {
       const { data, error } = await supabase
         .from("drivers")
@@ -156,6 +196,8 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const checkPinStatus = async (userId) => {
+    if (isTestAccount) return;
+    
     try {
       const { data, error } = await supabase
         .from("withdrawal_settings")
@@ -170,10 +212,13 @@ export default function DriverWalletScreen({ navigation }) {
     }
   };
 
-  // ─── BUG FIX: setupPin now correctly handles change-PIN flow (pinConfirm
-  //     only required when !hasPin) and processes any pending withdrawal after
-  //     a first-time PIN setup. ───────────────────────────────────────────────
+  // ─── BUG FIX: setupPin now correctly handles change-PIN flow ───────────────
   const setupPin = async () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "PIN setup is disabled for test accounts.");
+      return;
+    }
+    
     if (pinInput.length !== 4) {
       setPinError("PIN must be exactly 4 digits");
       return;
@@ -238,8 +283,7 @@ export default function DriverWalletScreen({ navigation }) {
 
       Alert.alert("Success", "Withdrawal PIN has been set successfully!");
 
-      // BUG FIX: After first-time PIN setup, continue with the pending
-      // withdrawal that triggered the PIN setup flow.
+      // After first-time PIN setup, continue with the pending withdrawal
       if (withdrawalPending) {
         const pending = withdrawalPending;
         setWithdrawalPending(null);
@@ -253,9 +297,12 @@ export default function DriverWalletScreen({ navigation }) {
     }
   };
 
-  // ─── BUG FIX: verifyPin now returns a boolean only; it no longer mutates
-  //     withdrawalPending so the caller can use it safely. ───────────────────
   const verifyPin = async (pin) => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "PIN verification is disabled for test accounts.");
+      return false;
+    }
+    
     setVerifyingPin(true);
 
     try {
@@ -291,6 +338,25 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const loadPayoutMethods = async (userId) => {
+    if (isTestAccount) {
+      // Set mock payout method for test account
+      setPayoutMethods([{
+        id: 'test-payout',
+        payment_type: 'gcash',
+        account_name: 'Test Driver',
+        account_number: '09123456789',
+        is_default: true,
+      }]);
+      setSelectedPayoutMethod({
+        id: 'test-payout',
+        payment_type: 'gcash',
+        account_name: 'Test Driver',
+        account_number: '09123456789',
+        is_default: true,
+      });
+      return;
+    }
+    
     try {
       const { data, error } = await supabase
         .from("user_payment_methods")
@@ -316,6 +382,11 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const loadWithdrawalHistory = async (userId) => {
+    if (isTestAccount) {
+      setWithdrawals([]);
+      return;
+    }
+    
     try {
       const { data, error } = await supabase
         .from("withdrawals")
@@ -341,9 +412,9 @@ export default function DriverWalletScreen({ navigation }) {
     }
   };
 
-  // BUG FIX: Accept driverId as parameter so it's never stale (especially
-  // during onRefresh where state updates may not have settled yet).
   const loadPointsData = async (id) => {
+    if (isTestAccount) return;
+    
     const uid = id || driverId;
     if (!uid) return;
 
@@ -364,6 +435,11 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const onRefresh = async () => {
+    if (isTestAccount) {
+      setRefreshing(false);
+      return;
+    }
+    
     if (!driverId) return;
     setRefreshing(true);
     await Promise.all([
@@ -418,17 +494,13 @@ export default function DriverWalletScreen({ navigation }) {
     }
   };
 
-  // BUG FIX: points_from_rides was double-counting because bookings.points_used
-  // is what the PASSENGER spent, not what the driver earned. Driver points come
-  // from driver_points_history only. Removed the bookings query for ride points
-  // and rely solely on driver_points_history source === "trip".
   const fetchPointsHistory = async (uid) => {
     try {
       const { data: pointsHistory, error: historyError } = await supabase
         .from("driver_points_history")
         .select("points, source, type, created_at")
         .eq("driver_id", uid)
-        .eq("type", "earned") // Only count earned, not converted
+        .eq("type", "earned")
         .order("created_at", { ascending: false });
 
       if (historyError) throw historyError;
@@ -636,6 +708,11 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const handleAddPayoutMethod = async () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "Adding payout methods is disabled for test accounts.");
+      return;
+    }
+    
     if (!newPayoutMethod.account_name || !newPayoutMethod.account_number) {
       Alert.alert("Error", "Please fill in all required fields");
       return;
@@ -706,6 +783,11 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const handleSetDefaultPayoutMethod = async (methodId) => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "This feature is disabled for test accounts.");
+      return;
+    }
+    
     setSettingDefault(true);
 
     try {
@@ -732,6 +814,11 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const handleDeletePayoutMethod = async (methodId) => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "This feature is disabled for test accounts.");
+      return;
+    }
+    
     Alert.alert(
       "Delete Payout Method",
       "Are you sure you want to remove this payout method?",
@@ -766,16 +853,14 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const handlePointsChange = (points) => {
-    // BUG FIX: Strip non-numeric characters to prevent NaN issues
     const cleaned = points.replace(/[^0-9]/g, "");
     const pointsNum = parseFloat(cleaned) || 0;
     setWithdrawPoints(cleaned);
     setPointsToCash(pointsNum * POINTS_CONVERSION_RATE);
   };
 
-  // BUG FIX: Extracted withdrawal button disabled logic into a clear helper so
-  // the button and the initiateWithdrawal guard are always in sync.
   const isWithdrawDisabled = () => {
+    if (isTestAccount) return true;
     const points = parseFloat(withdrawPoints);
     return (
       !withdrawPoints ||
@@ -788,6 +873,11 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const initiateWithdrawal = () => {
+    if (isTestAccount) {
+      Alert.alert("Test Account", "Withdrawals are disabled for test accounts.");
+      return;
+    }
+    
     const points = parseFloat(withdrawPoints);
 
     if (!withdrawPoints || isNaN(points) || points < MIN_POINTS_WITHDRAWAL) {
@@ -820,8 +910,6 @@ export default function DriverWalletScreen({ navigation }) {
     const withdrawalData = { points, cashAmount };
 
     if (hasPin) {
-      // BUG FIX: Reset pinInput before showing the PIN modal so the field is
-      // always empty — prevents the previous PIN value from lingering.
       resetPinFields();
       setWithdrawalPending(withdrawalData);
       setShowPinModal(true);
@@ -844,15 +932,13 @@ export default function DriverWalletScreen({ navigation }) {
     }
   };
 
-  // BUG FIX: handleWithdrawWithPin captures withdrawalPending into a local
-  // variable BEFORE any async work so it can't become null mid-flight.
   const handleWithdrawWithPin = async () => {
     if (pinInput.length !== 4) {
       Alert.alert("Error", "Please enter your 4-digit PIN");
       return;
     }
 
-    const pending = withdrawalPending; // capture before async
+    const pending = withdrawalPending;
     const isValid = await verifyPin(pinInput);
 
     if (isValid && pending) {
@@ -864,6 +950,8 @@ export default function DriverWalletScreen({ navigation }) {
   };
 
   const processPointsWithdrawal = async (points, cashAmount) => {
+    if (isTestAccount) return;
+    
     setProcessingWithdrawal(true);
 
     try {
@@ -882,10 +970,6 @@ export default function DriverWalletScreen({ navigation }) {
         );
       }
 
-      // BUG FIX: Use the driverName state variable — not a shadowing local
-      // const. The original code declared `const driverName = ...` which
-      // shadowed the state and caused the wrong (possibly empty) value to be
-      // used in the admin notification.
       const notificationDriverName = driverName || "Driver";
 
       // Create withdrawal request
@@ -1057,8 +1141,6 @@ export default function DriverWalletScreen({ navigation }) {
           `We have notified our admin team. You will receive a notification once processed.`
       );
 
-      // BUG FIX: Use resetWithdrawModal helper to ensure ALL withdrawal form
-      // state is cleared consistently, including pointsToCash.
       resetWithdrawModal();
 
       // Refresh all data
@@ -1141,7 +1223,8 @@ export default function DriverWalletScreen({ navigation }) {
     }
   };
 
-  if (loading && !refreshing) {
+  // Show loading only for normal users
+  if (loading && !refreshing && !isTestAccount) {
     return (
       <View
         style={{
@@ -1163,9 +1246,28 @@ export default function DriverWalletScreen({ navigation }) {
     <ScrollView
       style={{ flex: 1, backgroundColor: "#F5F7FA" }}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        !isTestAccount ? (
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        ) : undefined
       }
     >
+      {/* Test Account Banner */}
+      {isTestAccount && (
+        <View style={{
+          backgroundColor: "#FFF3E0",
+          padding: 10,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 8,
+        }}>
+          <Ionicons name="flask" size={20} color="#E97A3E" />
+          <Text style={{ color: "#E97A3E", fontSize: 12, fontWeight: "500" }}>
+            Test Account Mode - Withdrawals disabled
+          </Text>
+        </View>
+      )}
+
       {/* Header */}
       <View
         style={{
@@ -1192,9 +1294,6 @@ export default function DriverWalletScreen({ navigation }) {
           }}
         >
           Points Wallet
-        </Text>
-        <Text style={{ fontSize: 14, color: "#FFB37A", marginTop: 5 }}>
-          {driverName || "Driver"}
         </Text>
       </View>
 
@@ -1289,19 +1388,20 @@ export default function DriverWalletScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Action Buttons */}
+        {/* Action Buttons - Disabled for test accounts */}
         <View style={{ flexDirection: "row", marginTop: 20, gap: 10 }}>
           <Pressable
             style={{
               flex: 1,
-              backgroundColor: "#F59E0B",
+              backgroundColor: isTestAccount ? "#9CA3AF" : "#F59E0B",
               padding: 12,
               borderRadius: 12,
               alignItems: "center",
               flexDirection: "row",
               justifyContent: "center",
             }}
-            onPress={() => setShowWithdrawModal(true)}
+            onPress={() => !isTestAccount && setShowWithdrawModal(true)}
+            disabled={isTestAccount}
           >
             <Ionicons name="cash-outline" size={18} color="#FFF" />
             <Text
@@ -1314,14 +1414,15 @@ export default function DriverWalletScreen({ navigation }) {
           <Pressable
             style={{
               flex: 1,
-              backgroundColor: "#183B5C",
+              backgroundColor: isTestAccount ? "#9CA3AF" : "#183B5C",
               padding: 12,
               borderRadius: 12,
               alignItems: "center",
               flexDirection: "row",
               justifyContent: "center",
             }}
-            onPress={() => setShowPayoutMethodsModal(true)}
+            onPress={() => !isTestAccount && setShowPayoutMethodsModal(true)}
+            disabled={isTestAccount}
           >
             <Ionicons name="card-outline" size={18} color="#FFF" />
             <Text
@@ -1332,8 +1433,8 @@ export default function DriverWalletScreen({ navigation }) {
           </Pressable>
         </View>
 
-        {/* PIN Status Indicator */}
-        {!hasPin && (
+        {/* PIN Status Indicator - Hide for test accounts */}
+        {!isTestAccount && !hasPin && (
           <View
             style={{
               marginTop: 12,
@@ -1369,8 +1470,8 @@ export default function DriverWalletScreen({ navigation }) {
         )}
       </View>
 
-      {/* Payout Methods Quick View */}
-      {payoutMethods.length > 0 && selectedPayoutMethod && (
+      {/* Payout Methods Quick View - Hide for test accounts */}
+      {!isTestAccount && payoutMethods.length > 0 && selectedPayoutMethod && (
         <Pressable
           onPress={() => setShowPayoutMethodsModal(true)}
           style={{
@@ -1420,6 +1521,49 @@ export default function DriverWalletScreen({ navigation }) {
           </View>
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
+      )}
+
+      {/* For test accounts, show a demo payout method info */}
+      {isTestAccount && payoutMethods.length > 0 && selectedPayoutMethod && (
+        <View
+          style={{
+            marginHorizontal: 20,
+            marginTop: 15,
+            backgroundColor: "#FFF",
+            borderRadius: 16,
+            padding: 15,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            opacity: 0.7,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: "#E6F0FF",
+                justifyContent: "center",
+                alignItems: "center",
+                marginRight: 12,
+              }}
+            >
+              <Ionicons name="phone-portrait" size={20} color="#00579F" />
+            </View>
+            <View>
+              <Text
+                style={{ fontSize: 14, fontWeight: "600", color: "#333" }}
+              >
+                GCASH: 09123456789 (Demo)
+              </Text>
+              <Text style={{ fontSize: 12, color: "#666" }}>
+                Test Driver
+              </Text>
+            </View>
+          </View>
+        </View>
       )}
 
       {/* Points Chart */}
@@ -1616,11 +1760,13 @@ export default function DriverWalletScreen({ navigation }) {
           <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
             Recent Activity
           </Text>
-          <Pressable onPress={() => setShowWithdrawalHistory(true)}>
-            <Text style={{ fontSize: 12, color: "#183B5C" }}>
-              Conversion History →
-            </Text>
-          </Pressable>
+          {!isTestAccount && (
+            <Pressable onPress={() => setShowWithdrawalHistory(true)}>
+              <Text style={{ fontSize: 12, color: "#183B5C" }}>
+                Conversion History →
+              </Text>
+            </Pressable>
+          )}
         </View>
         {recentTransactions.length === 0 ? (
           <View style={{ padding: 30, alignItems: "center" }}>
@@ -1724,314 +1870,317 @@ export default function DriverWalletScreen({ navigation }) {
       </View>
       <View style={{ height: 30 }} />
 
-      {/* ─── PIN Setup Modal ──────────────────────────────────────────────── */}
-      <Modal visible={showPinSetupModal} transparent animationType="slide">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
+      {/* All modals remain the same, just wrapped with !isTestAccount condition */}
+      {/* PIN Setup Modal - Hide for test accounts */}
+      {!isTestAccount && (
+        <Modal visible={showPinSetupModal} transparent animationType="slide">
+          {/* ... existing modal content ... */}
           <View
             style={{
-              backgroundColor: "#FFF",
-              borderRadius: 24,
-              padding: 20,
-              width: "90%",
-              maxWidth: 350,
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "center",
+              alignItems: "center",
             }}
           >
-            <View style={{ alignItems: "center", marginBottom: 20 }}>
-              <Ionicons name="shield-checkmark" size={48} color="#183B5C" />
-              <Text
-                style={{
-                  fontSize: 20,
-                  fontWeight: "bold",
-                  color: "#333",
-                  marginTop: 10,
-                }}
-              >
-                {hasPin ? "Change Withdrawal PIN" : "Set Withdrawal PIN"}
-              </Text>
-              <Text
-                style={{
-                  fontSize: 14,
-                  color: "#666",
-                  textAlign: "center",
-                  marginTop: 5,
-                }}
-              >
-                {hasPin
-                  ? "Enter your new 4-digit PIN"
-                  : "Create a 4-digit PIN for withdrawals"}
-              </Text>
-            </View>
-
-            {/* BUG FIX: Label updated to reflect whether this is new/confirm */}
-            <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-              {hasPin ? "New PIN" : "Enter PIN"}
-            </Text>
-            <TextInput
+            <View
               style={{
-                borderWidth: 1,
-                borderColor: pinError ? "#EF4444" : "#E5E7EB",
-                borderRadius: 12,
-                padding: 12,
-                fontSize: 24,
-                textAlign: "center",
-                letterSpacing: 8,
-                marginBottom: 16,
+                backgroundColor: "#FFF",
+                borderRadius: 24,
+                padding: 20,
+                width: "90%",
+                maxWidth: 350,
               }}
-              placeholder="****"
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-              value={pinInput}
-              onChangeText={(text) => {
-                setPinInput(text.replace(/[^0-9]/g, ""));
-                setPinError("");
-              }}
-            />
-
-            {/* BUG FIX: Confirm PIN field only shown for first-time setup */}
-            {!hasPin && (
-              <>
-                <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
-                  Confirm PIN
-                </Text>
-                <TextInput
+            >
+              <View style={{ alignItems: "center", marginBottom: 20 }}>
+                <Ionicons name="shield-checkmark" size={48} color="#183B5C" />
+                <Text
                   style={{
-                    borderWidth: 1,
-                    borderColor: pinError ? "#EF4444" : "#E5E7EB",
-                    borderRadius: 12,
-                    padding: 12,
-                    fontSize: 24,
-                    textAlign: "center",
-                    letterSpacing: 8,
-                    marginBottom: 16,
+                    fontSize: 20,
+                    fontWeight: "bold",
+                    color: "#333",
+                    marginTop: 10,
                   }}
-                  placeholder="****"
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  secureTextEntry
-                  value={pinConfirm}
-                  onChangeText={(text) => {
-                    setPinConfirm(text.replace(/[^0-9]/g, ""));
-                    setPinError("");
-                  }}
-                />
-              </>
-            )}
-
-            {pinError ? (
-              <Text
-                style={{
-                  color: "#EF4444",
-                  fontSize: 12,
-                  marginBottom: 16,
-                  textAlign: "center",
-                }}
-              >
-                {pinError}
-              </Text>
-            ) : null}
-
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <Pressable
-                style={{
-                  flex: 1,
-                  padding: 12,
-                  borderRadius: 12,
-                  backgroundColor: "#F3F4F6",
-                }}
-                onPress={() => {
-                  setShowPinSetupModal(false);
-                  resetPinFields();
-                  // BUG FIX: Also clear pending withdrawal if user cancels
-                  // PIN setup so the app doesn't show a stale pending state.
-                  setWithdrawalPending(null);
-                }}
-              >
-                <Text style={{ textAlign: "center", color: "#666" }}>
-                  Cancel
+                >
+                  {hasPin ? "Change Withdrawal PIN" : "Set Withdrawal PIN"}
                 </Text>
-              </Pressable>
-              <Pressable
+                <Text
+                  style={{
+                    fontSize: 14,
+                    color: "#666",
+                    textAlign: "center",
+                    marginTop: 5,
+                  }}
+                >
+                  {hasPin
+                    ? "Enter your new 4-digit PIN"
+                    : "Create a 4-digit PIN for withdrawals"}
+                </Text>
+              </View>
+
+              <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+                {hasPin ? "New PIN" : "Enter PIN"}
+              </Text>
+              <TextInput
                 style={{
-                  flex: 1,
-                  padding: 12,
+                  borderWidth: 1,
+                  borderColor: pinError ? "#EF4444" : "#E5E7EB",
                   borderRadius: 12,
-                  backgroundColor: "#183B5C",
+                  padding: 12,
+                  fontSize: 24,
+                  textAlign: "center",
+                  marginBottom: 16,
+                  backgroundColor: "#FFF",
                 }}
-                onPress={setupPin}
-                disabled={settingPin}
-              >
-                {settingPin ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Text
-                    style={{
-                      textAlign: "center",
-                      color: "#FFF",
-                      fontWeight: "600",
-                    }}
-                  >
-                    {hasPin ? "Update PIN" : "Set PIN"}
+                placeholder="••••"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="number-pad"
+                maxLength={4}
+                secureTextEntry={true}
+                value={pinInput}
+                onChangeText={(text) => {
+                  setPinInput(text.replace(/[^0-9]/g, ""));
+                  setPinError("");
+                }}
+              />
+
+              {!hasPin && (
+                <>
+                  <Text style={{ fontSize: 12, color: "#666", marginBottom: 6 }}>
+                    Confirm PIN
                   </Text>
-                )}
-              </Pressable>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: pinError ? "#EF4444" : "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      fontSize: 24,
+                      textAlign: "center",
+                      marginBottom: 16,
+                      backgroundColor: "#FFF",
+                    }}
+                    placeholder="••••"
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    secureTextEntry={true}
+                    value={pinConfirm}
+                    onChangeText={(text) => {
+                      setPinConfirm(text.replace(/[^0-9]/g, ""));
+                      setPinError("");
+                    }}
+                  />
+                </>
+              )}
+
+              {pinError ? (
+                <Text
+                  style={{
+                    color: "#EF4444",
+                    fontSize: 12,
+                    marginBottom: 16,
+                    textAlign: "center",
+                  }}
+                >
+                  {pinError}
+                </Text>
+              ) : null}
+
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <Pressable
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: "#F3F4F6",
+                  }}
+                  onPress={() => {
+                    setShowPinSetupModal(false);
+                    resetPinFields();
+                    setWithdrawalPending(null);
+                  }}
+                >
+                  <Text style={{ textAlign: "center", color: "#666" }}>
+                    Cancel
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: "#183B5C",
+                  }}
+                  onPress={setupPin}
+                  disabled={settingPin}
+                >
+                  {settingPin ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text
+                      style={{
+                        textAlign: "center",
+                        color: "#FFF",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {hasPin ? "Update PIN" : "Set PIN"}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
 
-      {/* ─── PIN Verification Modal ───────────────────────────────────────── */}
-      <Modal visible={showPinModal} transparent animationType="slide">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
+      {/* PIN Verification Modal - Hide for test accounts */}
+      {!isTestAccount && (
+        <Modal visible={showPinModal} transparent animationType="slide">
+          {/* ... existing modal content ... */}
           <View
             style={{
-              backgroundColor: "#FFF",
-              borderRadius: 24,
-              padding: 20,
-              width: "90%",
-              maxWidth: 350,
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "center",
+              alignItems: "center",
             }}
           >
-            <View style={{ alignItems: "center", marginBottom: 20 }}>
-              <Ionicons name="lock-closed" size={48} color="#183B5C" />
-              <Text
-                style={{
-                  fontSize: 20,
-                  fontWeight: "bold",
-                  color: "#333",
-                  marginTop: 10,
-                }}
-              >
-                Verify PIN
-              </Text>
-              <Text
-                style={{
-                  fontSize: 14,
-                  color: "#666",
-                  textAlign: "center",
-                  marginTop: 5,
-                }}
-              >
-                Enter your 4-digit withdrawal PIN to continue
-              </Text>
-            </View>
-
-            <TextInput
+            <View
               style={{
-                borderWidth: 1,
-                borderColor: "#E5E7EB",
-                borderRadius: 12,
-                padding: 12,
-                fontSize: 24,
-                textAlign: "center",
-                letterSpacing: 8,
-                marginBottom: 20,
+                backgroundColor: "#FFF",
+                borderRadius: 24,
+                padding: 20,
+                width: "90%",
+                maxWidth: 350,
               }}
-              placeholder="****"
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-              value={pinInput}
-              onChangeText={(text) =>
-                setPinInput(text.replace(/[^0-9]/g, ""))
-              }
-              autoFocus
-            />
+            >
+              <View style={{ alignItems: "center", marginBottom: 20 }}>
+                <Ionicons name="lock-closed" size={48} color="#183B5C" />
+                <Text
+                  style={{
+                    fontSize: 20,
+                    fontWeight: "bold",
+                    color: "#333",
+                    marginTop: 10,
+                  }}
+                >
+                  Verify PIN
+                </Text>
+                <Text
+                  style={{
+                    fontSize: 14,
+                    color: "#666",
+                    textAlign: "center",
+                    marginTop: 5,
+                  }}
+                >
+                  Enter your 4-digit withdrawal PIN to continue
+                </Text>
+              </View>
 
-            <View style={{ flexDirection: "row", gap: 12 }}>
-              <Pressable
+              <TextInput
                 style={{
-                  flex: 1,
-                  padding: 12,
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
                   borderRadius: 12,
-                  backgroundColor: "#F3F4F6",
+                  padding: 12,
+                  fontSize: 24,
+                  textAlign: "center",
+                  marginBottom: 20,
+                  backgroundColor: "#FFF",
                 }}
+                placeholder="••••"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="number-pad"
+                maxLength={4}
+                secureTextEntry={true}
+                value={pinInput}
+                onChangeText={(text) =>
+                  setPinInput(text.replace(/[^0-9]/g, ""))
+                }
+                autoFocus
+              />
+
+              <View style={{ flexDirection: "row", gap: 12 }}>
+                <Pressable
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: "#F3F4F6",
+                  }}
+                  onPress={() => {
+                    setShowPinModal(false);
+                    resetPinFields();
+                    setWithdrawalPending(null);
+                  }}
+                >
+                  <Text style={{ textAlign: "center", color: "#666" }}>
+                    Cancel
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={{
+                    flex: 1,
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: "#F59E0B",
+                  }}
+                  onPress={handleWithdrawWithPin}
+                  disabled={verifyingPin}
+                >
+                  {verifyingPin ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <Text
+                      style={{
+                        textAlign: "center",
+                        color: "#FFF",
+                        fontWeight: "600",
+                      }}
+                    >
+                      Confirm
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+
+              <Pressable
+                style={{ marginTop: 12, padding: 8 }}
                 onPress={() => {
                   setShowPinModal(false);
                   resetPinFields();
-                  setWithdrawalPending(null);
+                  setShowPinSetupModal(true);
                 }}
               >
-                <Text style={{ textAlign: "center", color: "#666" }}>
-                  Cancel
+                <Text
+                  style={{
+                    textAlign: "center",
+                    color: "#183B5C",
+                    fontSize: 12,
+                  }}
+                >
+                  Forgot PIN? Reset it here
                 </Text>
               </Pressable>
-              <Pressable
-                style={{
-                  flex: 1,
-                  padding: 12,
-                  borderRadius: 12,
-                  backgroundColor: "#F59E0B",
-                }}
-                onPress={handleWithdrawWithPin}
-                disabled={verifyingPin}
-              >
-                {verifyingPin ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <Text
-                    style={{
-                      textAlign: "center",
-                      color: "#FFF",
-                      fontWeight: "600",
-                    }}
-                  >
-                    Confirm
-                  </Text>
-                )}
-              </Pressable>
             </View>
-
-            <Pressable
-              style={{ marginTop: 12, padding: 8 }}
-              onPress={() => {
-                setShowPinModal(false);
-                resetPinFields();
-                setShowPinSetupModal(true);
-              }}
-            >
-              <Text
-                style={{
-                  textAlign: "center",
-                  color: "#183B5C",
-                  fontSize: 12,
-                }}
-              >
-                Forgot PIN? Reset it here
-              </Text>
-            </Pressable>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
 
-      {/* ─── Payout Methods Modal ─────────────────────────────────────────── */}
-      <Modal
-        visible={showPayoutMethodsModal}
-        transparent
-        animationType="slide"
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "flex-end",
-          }}
-        >
-
+      {/* Payout Methods Modal - Hide for test accounts */}
+      {!isTestAccount && (
+        <Modal visible={showPayoutMethodsModal} transparent animationType="slide">
+          {/* ... existing modal content ... */}
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "flex-end",
+            }}
+          >
             <View
               style={{
                 backgroundColor: "#FFF",
@@ -2064,7 +2213,7 @@ export default function DriverWalletScreen({ navigation }) {
               </View>
 
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}
-  keyboardShouldPersistTaps="handled">
+                keyboardShouldPersistTaps="handled">
                 {payoutMethods.length === 0 ? (
                   <View style={{ alignItems: "center", padding: 40 }}>
                     <Ionicons
@@ -2287,267 +2436,271 @@ export default function DriverWalletScreen({ navigation }) {
                 )}
               </ScrollView>
             </View>
-          
-        </View>
-      </Modal>
+          </View>
+        </Modal>
+      )}
 
-      {/* ─── Add Payout Method Modal ──────────────────────────────────────── */}
-      <Modal visible={showAddPayoutModal} transparent animationType="slide">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "flex-end",
-          }}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
+      {/* Add Payout Method Modal - Hide for test accounts */}
+      {!isTestAccount && (
+        <Modal visible={showAddPayoutModal} transparent animationType="slide">
+          {/* ... existing modal content ... */}
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "flex-end",
+            }}
           >
-            <View
-              style={{
-                backgroundColor: "#FFF",
-                borderTopLeftRadius: 24,
-                borderTopRightRadius: 24,
-                padding: 20,
-                maxHeight: "90%",
-              }}
+            <KeyboardAvoidingView
+              behavior={Platform.OS === "ios" ? "padding" : "height"}
             >
               <View
                 style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 20,
+                  backgroundColor: "#FFF",
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  padding: 20,
+                  maxHeight: "90%",
                 }}
               >
-                <Text
-                  style={{
-                    fontSize: 20,
-                    fontWeight: "bold",
-                    color: "#333",
-                  }}
-                >
-                  Add Payout Method
-                </Text>
-                <Pressable onPress={() => setShowAddPayoutModal(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
-                </Pressable>
-              </View>
-
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}
-  keyboardShouldPersistTaps="handled">
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#333",
-                    marginBottom: 8,
-                  }}
-                >
-                  Payment Type
-                </Text>
                 <View
                   style={{
                     flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
                     marginBottom: 20,
-                    gap: 10,
                   }}
                 >
-                  <Pressable
-                    style={[
-                      {
-                        flex: 1,
-                        padding: 12,
-                        borderRadius: 12,
-                        borderWidth: 2,
-                        alignItems: "center",
-                      },
-                      newPayoutMethod.payment_type === "gcash"
-                        ? {
-                            borderColor: "#00579F",
-                            backgroundColor: "#E6F0FF",
-                          }
-                        : { borderColor: "#E5E7EB" },
-                    ]}
-                    onPress={() =>
-                      setNewPayoutMethod({
-                        ...newPayoutMethod,
-                        payment_type: "gcash",
-                      })
-                    }
+                  <Text
+                    style={{
+                      fontSize: 20,
+                      fontWeight: "bold",
+                      color: "#333",
+                    }}
                   >
-                    <Ionicons
-                      name="phone-portrait"
-                      size={24}
-                      color={
-                        newPayoutMethod.payment_type === "gcash"
-                          ? "#00579F"
-                          : "#9CA3AF"
-                      }
-                    />
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color:
-                          newPayoutMethod.payment_type === "gcash"
-                            ? "#00579F"
-                            : "#666",
-                      }}
-                    >
-                      GCash
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[
-                      {
-                        flex: 1,
-                        padding: 12,
-                        borderRadius: 12,
-                        borderWidth: 2,
-                        alignItems: "center",
-                      },
-                      newPayoutMethod.payment_type === "paymaya"
-                        ? {
-                            borderColor: "#00579F",
-                            backgroundColor: "#E6F0FF",
-                          }
-                        : { borderColor: "#E5E7EB" },
-                    ]}
-                    onPress={() =>
-                      setNewPayoutMethod({
-                        ...newPayoutMethod,
-                        payment_type: "paymaya",
-                      })
-                    }
-                  >
-                    <Ionicons
-                      name="card"
-                      size={24}
-                      color={
-                        newPayoutMethod.payment_type === "paymaya"
-                          ? "#00579F"
-                          : "#9CA3AF"
-                      }
-                    />
-                    <Text
-                      style={{
-                        fontSize: 12,
-                        color:
-                          newPayoutMethod.payment_type === "paymaya"
-                            ? "#00579F"
-                            : "#666",
-                      }}
-                    >
-                      PayMaya
-                    </Text>
+                    Add Payout Method
+                  </Text>
+                  <Pressable onPress={() => setShowAddPayoutModal(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
                   </Pressable>
                 </View>
 
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#333",
-                    marginBottom: 8,
-                  }}
-                >
-                  Account Name
-                </Text>
-                <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#E5E7EB",
-                    borderRadius: 12,
-                    padding: 12,
-                    marginBottom: 16,
-                  }}
-                  placeholder="Full name as per GCash/PayMaya"
-                  value={newPayoutMethod.account_name}
-                  onChangeText={(text) =>
-                    setNewPayoutMethod({
-                      ...newPayoutMethod,
-                      account_name: text,
-                    })
-                  }
-                />
-
-                <Text
-                  style={{
-                    fontSize: 14,
-                    fontWeight: "600",
-                    color: "#333",
-                    marginBottom: 8,
-                  }}
-                >
-                  {newPayoutMethod.payment_type === "gcash"
-                    ? "GCash Number"
-                    : "PayMaya Number"}
-                </Text>
-                <TextInput
-                  style={{
-                    borderWidth: 1,
-                    borderColor: "#E5E7EB",
-                    borderRadius: 12,
-                    padding: 12,
-                    marginBottom: 16,
-                  }}
-                  placeholder={
-                    newPayoutMethod.payment_type === "gcash"
-                      ? "0917XXXXXXX"
-                      : "0999XXXXXXX"
-                  }
-                  keyboardType="phone-pad"
-                  value={newPayoutMethod.account_number}
-                  onChangeText={(text) =>
-                    setNewPayoutMethod({
-                      ...newPayoutMethod,
-                      account_number: text,
-                    })
-                  }
-                  maxLength={11}
-                />
-
-                <Pressable
-                  style={{
-                    backgroundColor: "#183B5C",
-                    padding: 16,
-                    borderRadius: 12,
-                    alignItems: "center",
-                    marginTop: 10,
-                  }}
-                  onPress={handleAddPayoutMethod}
-                  disabled={addingPayout}
-                >
-                  {addingPayout ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Text
-                      style={{
-                        color: "#FFF",
-                        fontWeight: "600",
-                        fontSize: 16,
-                      }}
+                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}
+                  keyboardShouldPersistTaps="handled">
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Payment Type
+                  </Text>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      marginBottom: 20,
+                      gap: 10,
+                    }}
+                  >
+                    <Pressable
+                      style={[
+                        {
+                          flex: 1,
+                          padding: 12,
+                          borderRadius: 12,
+                          borderWidth: 2,
+                          alignItems: "center",
+                        },
+                        newPayoutMethod.payment_type === "gcash"
+                          ? {
+                              borderColor: "#00579F",
+                              backgroundColor: "#E6F0FF",
+                            }
+                          : { borderColor: "#E5E7EB" },
+                      ]}
+                      onPress={() =>
+                        setNewPayoutMethod({
+                          ...newPayoutMethod,
+                          payment_type: "gcash",
+                        })
+                      }
                     >
-                      Add Payout Method
-                    </Text>
-                  )}
-                </Pressable>
-              </ScrollView>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+                      <Ionicons
+                        name="phone-portrait"
+                        size={24}
+                        color={
+                          newPayoutMethod.payment_type === "gcash"
+                            ? "#00579F"
+                            : "#9CA3AF"
+                        }
+                      />
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color:
+                            newPayoutMethod.payment_type === "gcash"
+                              ? "#00579F"
+                              : "#666",
+                        }}
+                      >
+                        GCash
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        {
+                          flex: 1,
+                          padding: 12,
+                          borderRadius: 12,
+                          borderWidth: 2,
+                          alignItems: "center",
+                        },
+                        newPayoutMethod.payment_type === "paymaya"
+                          ? {
+                              borderColor: "#00579F",
+                              backgroundColor: "#E6F0FF",
+                            }
+                          : { borderColor: "#E5E7EB" },
+                      ]}
+                      onPress={() =>
+                        setNewPayoutMethod({
+                          ...newPayoutMethod,
+                          payment_type: "paymaya",
+                        })
+                      }
+                    >
+                      <Ionicons
+                        name="card"
+                        size={24}
+                        color={
+                          newPayoutMethod.payment_type === "paymaya"
+                            ? "#00579F"
+                            : "#9CA3AF"
+                        }
+                      />
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          color:
+                            newPayoutMethod.payment_type === "paymaya"
+                              ? "#00579F"
+                              : "#666",
+                        }}
+                      >
+                        PayMaya
+                      </Text>
+                    </Pressable>
+                  </View>
 
-      {/* ─── Withdrawal / Convert Points Modal ───────────────────────────── */}
-      <Modal visible={showWithdrawModal} transparent animationType="slide">
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "flex-end",
-          }}
-        >
-         
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Account Name
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      marginBottom: 16,
+                    }}
+                    placeholder="Full name as per GCash/PayMaya"
+                    value={newPayoutMethod.account_name}
+                    onChangeText={(text) =>
+                      setNewPayoutMethod({
+                        ...newPayoutMethod,
+                        account_name: text,
+                      })
+                    }
+                  />
+
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: "600",
+                      color: "#333",
+                      marginBottom: 8,
+                    }}
+                  >
+                    {newPayoutMethod.payment_type === "gcash"
+                      ? "GCash Number"
+                      : "PayMaya Number"}
+                  </Text>
+                  <TextInput
+                    style={{
+                      borderWidth: 1,
+                      borderColor: "#E5E7EB",
+                      borderRadius: 12,
+                      padding: 12,
+                      marginBottom: 16,
+                    }}
+                    placeholder={
+                      newPayoutMethod.payment_type === "gcash"
+                        ? "0917XXXXXXX"
+                        : "0999XXXXXXX"
+                    }
+                    keyboardType="phone-pad"
+                    value={newPayoutMethod.account_number}
+                    onChangeText={(text) =>
+                      setNewPayoutMethod({
+                        ...newPayoutMethod,
+                        account_number: text,
+                      })
+                    }
+                    maxLength={11}
+                  />
+
+                  <Pressable
+                    style={{
+                      backgroundColor: "#183B5C",
+                      padding: 16,
+                      borderRadius: 12,
+                      alignItems: "center",
+                      marginTop: 10,
+                    }}
+                    onPress={handleAddPayoutMethod}
+                    disabled={addingPayout}
+                  >
+                    {addingPayout ? (
+                      <ActivityInflater size="small" color="#FFF" />
+                    ) : (
+                      <Text
+                        style={{
+                          color: "#FFF",
+                          fontWeight: "600",
+                          fontSize: 16,
+                        }}
+                      >
+                        Add Payout Method
+                      </Text>
+                    )}
+                  </Pressable>
+                </ScrollView>
+              </View>
+            </KeyboardAvoidingView>
+          </View>
+        </Modal>
+      )}
+
+      {/* Withdrawal / Convert Points Modal - Hide for test accounts */}
+      {!isTestAccount && (
+        <Modal visible={showWithdrawModal} transparent animationType="slide">
+          {/* ... existing modal content ... */}
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "flex-end",
+            }}
+          >
             <View
               style={{
                 backgroundColor: "#FFF",
@@ -2580,8 +2733,8 @@ export default function DriverWalletScreen({ navigation }) {
               </View>
 
               <ScrollView showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 24 }}
-  keyboardShouldPersistTaps="handled">
+                contentContainerStyle={{ paddingBottom: 24 }}
+                keyboardShouldPersistTaps="handled">
                 <View
                   style={{
                     backgroundColor: "#FEF3C7",
@@ -2864,182 +3017,180 @@ export default function DriverWalletScreen({ navigation }) {
                 </Text>
               </ScrollView>
             </View>
-          
-        </View>
-      </Modal>
+          </View>
+        </Modal>
+      )}
 
-      {/* ─── Withdrawal History Modal ─────────────────────────────────────── */}
-      <Modal
-        visible={showWithdrawalHistory}
-        transparent
-        animationType="slide"
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.5)",
-            justifyContent: "flex-end",
-          }}
-        >
+      {/* Withdrawal History Modal - Hide for test accounts */}
+      {!isTestAccount && (
+        <Modal visible={showWithdrawalHistory} transparent animationType="slide">
           <View
             style={{
-              backgroundColor: "#FFF",
-              borderTopLeftRadius: 24,
-              borderTopRightRadius: 24,
-              padding: 20,
-              maxHeight: "90%",
+              flex: 1,
+              backgroundColor: "rgba(0,0,0,0.5)",
+              justifyContent: "flex-end",
             }}
           >
             <View
               style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 20,
+                backgroundColor: "#FFF",
+                borderTopLeftRadius: 24,
+                borderTopRightRadius: 24,
+                padding: 20,
+                maxHeight: "90%",
               }}
             >
-              <Text
-                style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 20,
+                }}
               >
-                Conversion History
-              </Text>
-              <Pressable onPress={() => setShowWithdrawalHistory(false)}>
-                <Ionicons name="close" size={24} color="#666" />
-              </Pressable>
-            </View>
+                <Text
+                  style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
+                >
+                  Conversion History
+                </Text>
+                <Pressable onPress={() => setShowWithdrawalHistory(false)}>
+                  <Ionicons name="close" size={24} color="#666" />
+                </Pressable>
+              </View>
 
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}
-  keyboardShouldPersistTaps="handled">
-              {withdrawals.length === 0 ? (
-                <View style={{ alignItems: "center", padding: 40 }}>
-                  <Ionicons
-                    name="time-outline"
-                    size={60}
-                    color="#D1D5DB"
-                  />
-                  <Text
-                    style={{
-                      marginTop: 10,
-                      color: "#666",
-                      textAlign: "center",
-                    }}
-                  >
-                    No conversion requests yet
-                  </Text>
-                </View>
-              ) : (
-                withdrawals.map((withdrawal) => {
-                  const pointsConverted =
-                    withdrawal.account_details?.points_converted || 0;
-                  return (
-                    <View
-                      key={withdrawal.id}
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}
+                keyboardShouldPersistTaps="handled">
+                {withdrawals.length === 0 ? (
+                  <View style={{ alignItems: "center", padding: 40 }}>
+                    <Ionicons
+                      name="time-outline"
+                      size={60}
+                      color="#D1D5DB"
+                    />
+                    <Text
                       style={{
-                        marginBottom: 12,
-                        padding: 15,
-                        backgroundColor: "#F9FAFB",
-                        borderRadius: 12,
+                        marginTop: 10,
+                        color: "#666",
+                        textAlign: "center",
                       }}
                     >
+                      No conversion requests yet
+                    </Text>
+                  </View>
+                ) : (
+                  withdrawals.map((withdrawal) => {
+                    const pointsConverted =
+                      withdrawal.account_details?.points_converted || 0;
+                    return (
                       <View
+                        key={withdrawal.id}
                         style={{
-                          flexDirection: "row",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          marginBottom: 8,
+                          marginBottom: 12,
+                          padding: 15,
+                          backgroundColor: "#F9FAFB",
+                          borderRadius: 12,
                         }}
                       >
-                        <View>
-                          <Text
-                            style={{
-                              fontSize: 16,
-                              fontWeight: "bold",
-                              color: "#333",
-                            }}
-                          >
-                            ₱{Number(withdrawal.amount).toFixed(2)}
-                          </Text>
-                          {pointsConverted > 0 && (
-                            <Text
-                              style={{ fontSize: 12, color: "#F59E0B" }}
-                            >
-                              {pointsConverted} points
-                            </Text>
-                          )}
-                        </View>
                         <View
                           style={{
-                            backgroundColor:
-                              getWithdrawalStatusColor(withdrawal.status) +
-                              "20",
-                            paddingHorizontal: 8,
-                            paddingVertical: 4,
-                            borderRadius: 12,
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 8,
                           }}
                         >
+                          <View>
+                            <Text
+                              style={{
+                                fontSize: 16,
+                                fontWeight: "bold",
+                                color: "#333",
+                              }}
+                            >
+                              ₱{Number(withdrawal.amount).toFixed(2)}
+                            </Text>
+                            {pointsConverted > 0 && (
+                              <Text
+                                style={{ fontSize: 12, color: "#F59E0B" }}
+                              >
+                                {pointsConverted} points
+                              </Text>
+                            )}
+                          </View>
+                          <View
+                            style={{
+                              backgroundColor:
+                                getWithdrawalStatusColor(withdrawal.status) +
+                                "20",
+                              paddingHorizontal: 8,
+                              paddingVertical: 4,
+                              borderRadius: 12,
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontSize: 11,
+                                color: getWithdrawalStatusColor(
+                                  withdrawal.status
+                                ),
+                              }}
+                            >
+                              {getWithdrawalStatusText(withdrawal.status)}
+                            </Text>
+                          </View>
+                        </View>
+
+                        <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
+                          {new Date(withdrawal.created_at).toLocaleDateString(
+                            "en-PH",
+                            {
+                              month: "long",
+                              day: "numeric",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            }
+                          )}
+                        </Text>
+
+                        <Text style={{ fontSize: 12, color: "#666" }}>
+                          Method:{" "}
+                          {withdrawal.payment_method?.toUpperCase() || "GCash"}
+                        </Text>
+
+                        {withdrawal.payment_reference && (
                           <Text
                             style={{
                               fontSize: 11,
-                              color: getWithdrawalStatusColor(
-                                withdrawal.status
-                              ),
+                              color: "#10B981",
+                              marginTop: 4,
                             }}
                           >
-                            {getWithdrawalStatusText(withdrawal.status)}
+                            Ref: {withdrawal.payment_reference}
                           </Text>
-                        </View>
-                      </View>
-
-                      <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-                        {new Date(withdrawal.created_at).toLocaleDateString(
-                          "en-PH",
-                          {
-                            month: "long",
-                            day: "numeric",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          }
                         )}
-                      </Text>
 
-                      <Text style={{ fontSize: 12, color: "#666" }}>
-                        Method:{" "}
-                        {withdrawal.payment_method?.toUpperCase() || "GCash"}
-                      </Text>
-
-                      {withdrawal.payment_reference && (
-                        <Text
-                          style={{
-                            fontSize: 11,
-                            color: "#10B981",
-                            marginTop: 4,
-                          }}
-                        >
-                          Ref: {withdrawal.payment_reference}
-                        </Text>
-                      )}
-
-                      {withdrawal.admin_notes && (
-                        <Text
-                          style={{
-                            fontSize: 11,
-                            color: "#9CA3AF",
-                            marginTop: 4,
-                            fontStyle: "italic",
-                          }}
-                        >
-                          Note: {withdrawal.admin_notes}
-                        </Text>
-                      )}
-                    </View>
-                  );
-                })
-              )}
-            </ScrollView>
+                        {withdrawal.admin_notes && (
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              color: "#9CA3AF",
+                              marginTop: 4,
+                              fontStyle: "italic",
+                            }}
+                          >
+                            Note: {withdrawal.admin_notes}
+                          </Text>
+                        )}
+                      </View>
+                    );
+                  })
+                )}
+              </ScrollView>
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </ScrollView>
   );
 }
