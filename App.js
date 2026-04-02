@@ -1,11 +1,12 @@
 import "react-native-gesture-handler";
 import React, { useEffect, useRef, useState } from "react";
-import { View, ActivityIndicator, Alert } from "react-native";
+import { View, ActivityIndicator, Alert, Modal, Text, TouchableOpacity } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 import { supabase } from './lib/supabase'; // Make sure this path is correct
 import { getUserSession, clearUserSession } from './app/utils/authStorage'; // ✅ Import auth storage
 
@@ -94,19 +95,106 @@ export default function App() {
   const notificationSub = useRef(null);
   const [appReady, setAppReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState('UserType');
+  
+  // State for prominent disclosure modal
+  const [showLocationDisclosure, setShowLocationDisclosure] = useState(false);
+  const [pendingLocationRequest, setPendingLocationRequest] = useState(false);
+  const [locationPermissionGranted, setLocationPermissionGranted] = useState(false);
 
-  // Function to request location permission
+  // Function to show prominent disclosure first
+  const showLocationProminentDisclosure = () => {
+    setShowLocationDisclosure(true);
+  };
+
+  // Function to request location permission after disclosure is accepted
   const requestLocationPermission = async () => {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
+      // Request foreground permission
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      
+      if (foregroundStatus !== 'granted') {
         Alert.alert(
           'Permission Denied',
-          'Location permission is required to use this app.'
+          'Location permission is required to use this app. Please enable it in settings.'
         );
+        return false;
       }
+      
+      // Request background permission (required for ride tracking when app is minimized)
+      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+      
+      if (backgroundStatus === 'granted') {
+        setLocationPermissionGranted(true);
+        console.log('✅ Background location permission granted');
+      } else {
+        console.log('⚠️ Background location permission not granted - app will still work but with limitations');
+      }
+      
+      return true;
     } catch (error) {
       console.log('Error requesting location permission:', error);
+      return false;
+    }
+  };
+
+  // Handle user accepting the disclosure
+  const handleAcceptDisclosure = async () => {
+    setShowLocationDisclosure(false);
+    setPendingLocationRequest(false);
+    await requestLocationPermission();
+  };
+
+  // Handle user declining the disclosure
+  const handleDeclineDisclosure = () => {
+    setShowLocationDisclosure(false);
+    setPendingLocationRequest(false);
+    Alert.alert(
+      'Location Access Required',
+      'You need to accept location access to use SakayNa. You can enable it later in settings.',
+      [
+        {
+          text: 'OK',
+          onPress: () => {
+            // App can still work but location features will be limited
+            console.log('User declined location permission');
+          }
+        }
+      ]
+    );
+  };
+
+  // Check if location permission is already granted
+  const checkLocationPermissionStatus = async () => {
+    try {
+      const { status: foregroundStatus } = await Location.getForegroundPermissionsAsync();
+      const { status: backgroundStatus } = await Location.getBackgroundPermissionsAsync();
+      
+      if (foregroundStatus === 'granted') {
+        setLocationPermissionGranted(true);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.log('Error checking location permission:', error);
+      return false;
+    }
+  };
+
+  // Function to request notification permission
+  const requestNotificationPermission = async () => {
+    try {
+      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      let finalStatus = existingStatus;
+      
+      if (existingStatus !== 'granted') {
+        const { status } = await Notifications.requestPermissionsAsync();
+        finalStatus = status;
+      }
+      
+      return finalStatus === 'granted';
+    } catch (error) {
+      console.log('Notification permission error:', error);
+      return false;
     }
   };
 
@@ -187,20 +275,26 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        // 1. Request location permission
-        await requestLocationPermission();
+        // 1. Check if location permission is already granted
+        const hasLocationPermission = await checkLocationPermissionStatus();
+        
+        // 2. If not granted, show prominent disclosure before requesting
+        if (!hasLocationPermission) {
+          setPendingLocationRequest(true);
+          showLocationProminentDisclosure();
+        }
 
-        // 2. Check session and get initial route
+        // 3. Check session and get initial route
         const route = await checkSessionAndNavigate();
         setInitialRoute(route);
 
-        // 3. Setup notifications
+        // 4. Setup notifications (don't wait for location permission)
         const granted = await requestNotificationPermission();
 
-        // 4. Setup notification channels
+        // 5. Setup notification channels
         await setupNotificationChannels();
 
-        // 5. Register token only if allowed (only for real users, not test accounts)
+        // 6. Register token only if allowed (only for real users, not test accounts)
         if (granted) {
           const savedSession = await getUserSession();
           const driverId = await AsyncStorage.getItem("user_id");
@@ -211,7 +305,7 @@ export default function App() {
           }
         }
 
-        // 6. Listen for notification taps
+        // 7. Listen for notification taps
         notificationSub.current = addNotificationResponseListener((response) => {
           const data = response?.notification?.request?.content?.data;
           if (data?.type === "booking_request") {
@@ -320,24 +414,114 @@ export default function App() {
           <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
+
+      {/* Prominent Disclosure Modal for Location */}
+      <Modal
+        visible={showLocationDisclosure}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowLocationDisclosure(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            padding: 20,
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: 'white',
+              borderRadius: 20,
+              padding: 24,
+              width: '100%',
+              maxWidth: 350,
+              elevation: 5,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.25,
+              shadowRadius: 4,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 20,
+                fontWeight: 'bold',
+                color: '#183B5C',
+                marginBottom: 16,
+                textAlign: 'center',
+              }}
+            >
+              📍 Location Access Needed
+            </Text>
+
+            <Text
+              style={{
+                fontSize: 14,
+                color: '#333',
+                lineHeight: 20,
+                marginBottom: 16,
+              }}
+            >
+              SakayNa needs access to your location even when you're not using the app to:
+            </Text>
+
+            <View style={{ marginBottom: 16 }}>
+              <Text style={{ fontSize: 14, color: '#555', marginBottom: 8 }}>
+                • Help your driver find your exact pickup location
+              </Text>
+              <Text style={{ fontSize: 14, color: '#555', marginBottom: 8 }}>
+                • Share your real-time location with your driver during an active ride
+              </Text>
+              <Text style={{ fontSize: 14, color: '#555', marginBottom: 8 }}>
+                • Ensure your safety by allowing location sharing until your ride is complete
+              </Text>
+            </View>
+
+            <Text
+              style={{
+                fontSize: 12,
+                color: '#888',
+                fontStyle: 'italic',
+                marginBottom: 20,
+                textAlign: 'center',
+              }}
+            >
+              Your location is only shared while you have an active booking. We do not track your location when you're not using the app.
+            </Text>
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: '#ccc',
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                }}
+                onPress={handleDeclineDisclosure}
+              >
+                <Text style={{ color: '#333', fontWeight: '600' }}>NOT NOW</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  backgroundColor: '#183B5C',
+                  paddingVertical: 12,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                }}
+                onPress={handleAcceptDisclosure}
+              >
+                <Text style={{ color: '#fff', fontWeight: '600' }}>CONTINUE</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </GestureHandlerRootView>
   );
 }
-
-// ✅ Add missing requestNotificationPermission function
-const requestNotificationPermission = async () => {
-  try {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    let finalStatus = existingStatus;
-    
-    if (existingStatus !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-    
-    return finalStatus === 'granted';
-  } catch (error) {
-    console.log('Notification permission error:', error);
-    return false;
-  }
-};
