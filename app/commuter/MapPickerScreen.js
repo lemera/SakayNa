@@ -1,5 +1,5 @@
 // screens/commuter/MapPickerScreen.js
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -24,6 +24,7 @@ import Constants from "expo-constants";
 import * as Haptics from "expo-haptics";
 
 const { height: SCREEN_HEIGHT } = Dimensions.get("window");
+const GEOCODE_DEBOUNCE_MS = 600;
 
 export default function MapPickerScreen() {
   const insets = useSafeAreaInsets();
@@ -31,8 +32,10 @@ export default function MapPickerScreen() {
   const route = useRoute();
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
+  const geocodeTimeout = useRef(null);
   const bottomSheetAnim = useRef(new Animated.Value(0)).current;
   const hasAutoCentered = useRef(false);
+  const geocodeAbortRef = useRef(null); // cancel stale geocode calls
 
   const { type, onSelect, initialLocation } = route.params || {};
 
@@ -46,10 +49,10 @@ export default function MapPickerScreen() {
   const [isLocating, setIsLocating] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [initialAutoLocating, setInitialAutoLocating] = useState(true);
-  const [mapInteracted, setMapInteracted] = useState(false);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
+  // ─── Bottom sheet entrance animation ───────────────────────────────────────
   useEffect(() => {
     Animated.spring(bottomSheetAnim, {
       toValue: 1,
@@ -59,6 +62,7 @@ export default function MapPickerScreen() {
     }).start();
   }, []);
 
+  // ─── Initial location setup ─────────────────────────────────────────────────
   useEffect(() => {
     let mounted = true;
 
@@ -66,8 +70,7 @@ export default function MapPickerScreen() {
       try {
         if (initialLocation) {
           setSelectedLocation(initialLocation);
-          await getAddressFromCoords(initialLocation);
-
+          await getAddressFromCoords(initialLocation, true); // immediate, no debounce
           setTimeout(() => {
             mapRef.current?.animateToRegion(
               {
@@ -79,7 +82,6 @@ export default function MapPickerScreen() {
               500
             );
           }, 250);
-
           hasAutoCentered.current = true;
         } else {
           await getCurrentLocation({ isInitial: true, forceRecenter: true });
@@ -94,9 +96,11 @@ export default function MapPickerScreen() {
     return () => {
       mounted = false;
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
+      if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
     };
   }, []);
 
+  // ─── Search debounce ────────────────────────────────────────────────────────
   useEffect(() => {
     if (searchQuery.length < 3) {
       setSearchResults([]);
@@ -105,222 +109,247 @@ export default function MapPickerScreen() {
     }
 
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-
-    searchTimeout.current = setTimeout(() => {
-      performSearch();
-    }, 500);
+    searchTimeout.current = setTimeout(performSearch, 500);
 
     return () => {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
     };
   }, [searchQuery]);
 
-  const getCurrentLocation = async ({ isInitial = false, forceRecenter = false } = {}) => {
-    try {
-      setIsLocating(true);
-      setErrorMessage("");
+  // ─── Geocode: debounced + cancellable ──────────────────────────────────────
+  // Pass immediate=true to skip debounce (e.g. search result select, initial load)
+  const getAddressFromCoords = useCallback(async (coords, immediate = false) => {
+    // cancel any pending debounce
+    if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
 
-      if (!isInitial) {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const run = async () => {
+      // signal stale calls to bail out
+      const token = {};
+      geocodeAbortRef.current = token;
+
+      try {
+        setLoading(true);
+        const addressArray = await Location.reverseGeocodeAsync(coords);
+        if (geocodeAbortRef.current !== token) return; // stale, discard
+
+        if (addressArray[0]) {
+          const addr = addressArray[0];
+          const parts = [];
+          if (addr.name) parts.push(addr.name);
+          else if (addr.street) parts.push(addr.street);
+          if (addr.district) parts.push(addr.district);
+          else if (addr.subregion) parts.push(addr.subregion);
+          if (addr.city) parts.push(addr.city);
+          else if (addr.region) parts.push(addr.region);
+
+          setAddress(parts.filter(Boolean).join(", ") || "Selected location");
+        } else {
+          setAddress("Selected location");
+        }
+      } catch {
+        if (geocodeAbortRef.current === token) setAddress("Selected location");
+      } finally {
+        if (geocodeAbortRef.current === token) setLoading(false);
       }
+    };
 
-      const { status } = await Location.requestForegroundPermissionsAsync();
-
-      if (status !== "granted") {
-        Alert.alert(
-          "Location Permission Required",
-          "Please enable location access to find your current location.",
-          [
-            { text: "Cancel", style: "cancel" },
-            { text: "Open Settings", onPress: () => Location.openSettings() },
-          ]
-        );
-        return;
-      }
-
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-
-      const coords = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-      };
-
-      const shouldMoveMap =
-        forceRecenter || !mapInteracted || !hasAutoCentered.current;
-
-      if (shouldMoveMap && mapRef.current) {
-        mapRef.current.animateToRegion(
-          {
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
-          },
-          900
-        );
-        hasAutoCentered.current = true;
-      }
-
-      if (isInitial || !initialLocation || forceRecenter) {
-        setSelectedLocation(coords);
-        await getAddressFromCoords(coords);
-      }
-
-      if (!isInitial) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (err) {
-      console.log("Error getting location:", err);
-      setErrorMessage("Unable to get your current location.");
-      setTimeout(() => setErrorMessage(""), 2500);
-    } finally {
-      setIsLocating(false);
+    if (immediate) {
+      run();
+    } else {
+      geocodeTimeout.current = setTimeout(run, GEOCODE_DEBOUNCE_MS);
     }
-  };
+  }, []);
 
-  const getAddressFromCoords = async (coords) => {
-    try {
-      setLoading(true);
-      const addressArray = await Location.reverseGeocodeAsync(coords);
+  // ─── Get device location ────────────────────────────────────────────────────
+  const getCurrentLocation = useCallback(
+    async ({ isInitial = false, forceRecenter = false } = {}) => {
+      try {
+        setIsLocating(true);
+        setErrorMessage("");
 
-      if (addressArray[0]) {
-        const addr = addressArray[0];
-        const addressParts = [];
+        if (!isInitial) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-        if (addr.name) addressParts.push(addr.name);
-        else if (addr.street) addressParts.push(addr.street);
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+          Alert.alert(
+            "Location Permission Required",
+            "Please enable location access to find your current location.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Open Settings", onPress: () => Location.openSettings() },
+            ]
+          );
+          return;
+        }
 
-        if (addr.district) addressParts.push(addr.district);
-        else if (addr.subregion) addressParts.push(addr.subregion);
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced, // faster than High, still accurate enough
+        });
 
-        if (addr.city) addressParts.push(addr.city);
-        else if (addr.region) addressParts.push(addr.region);
+        const coords = {
+          latitude: location.coords.latitude,
+          longitude: location.coords.longitude,
+        };
 
-        const fullAddress = addressParts.filter(Boolean).join(", ");
-        setAddress(fullAddress || "Selected location");
-      } else {
-        setAddress("Selected location");
+        if ((forceRecenter || !hasAutoCentered.current) && mapRef.current) {
+          mapRef.current.animateToRegion(
+            {
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+              latitudeDelta: 0.01,
+              longitudeDelta: 0.01,
+            },
+            900
+          );
+          hasAutoCentered.current = true;
+        }
+
+        if (isInitial || !initialLocation || forceRecenter) {
+          setSelectedLocation(coords);
+          await getAddressFromCoords(coords, true); // immediate on locate
+        }
+
+        if (!isInitial) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (err) {
+        console.log("Error getting location:", err);
+        setErrorMessage("Unable to get your current location.");
+        setTimeout(() => setErrorMessage(""), 2500);
+      } finally {
+        setIsLocating(false);
       }
-    } catch (err) {
-      console.log("Error getting address:", err);
-      setAddress("Selected location");
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [getAddressFromCoords, initialLocation]
+  );
 
-  const handleMapPress = (event) => {
-    if (isLocating || initialAutoLocating) return;
+  // ─── Map press ──────────────────────────────────────────────────────────────
+  const handleMapPress = useCallback(
+    (event) => {
+      if (isLocating || initialAutoLocating) return;
 
-    const coords = event.nativeEvent.coordinate;
-    setMapInteracted(true);
-    setSelectedLocation(coords);
-    getAddressFromCoords(coords);
+      const coords = event.nativeEvent.coordinate;
+      setSelectedLocation(coords);
+      getAddressFromCoords(coords); // debounced
 
-    setSearchQuery("");
-    setSearchResults([]);
-    setShowSearchResults(false);
-    Keyboard.dismiss();
+      setSearchQuery("");
+      setSearchResults([]);
+      setShowSearchResults(false);
+      Keyboard.dismiss();
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    },
+    [isLocating, initialAutoLocating, getAddressFromCoords]
+  );
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+  // ─── Marker drag end ────────────────────────────────────────────────────────
+  const handleMarkerDragEnd = useCallback(
+    (e) => {
+      if (isLocating || initialAutoLocating) return;
+      const coords = e.nativeEvent.coordinate;
+      setSelectedLocation(coords);
+      getAddressFromCoords(coords); // debounced — no spam on every drag tick
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    },
+    [isLocating, initialAutoLocating, getAddressFromCoords]
+  );
 
-  const performSearch = async () => {
+  // ─── Search ─────────────────────────────────────────────────────────────────
+  const performSearch = useCallback(async () => {
     if (!searchQuery.trim() || searchQuery.length < 3) return;
-
     try {
       setSearching(true);
-
       const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
         searchQuery
       )}&key=${googleApiKey}`;
-
       const response = await fetch(url);
       const data = await response.json();
 
       if (data.status === "OK") {
-        const results = data.results.map((result) => ({
-          id: result.place_id,
-          address: result.formatted_address,
-          location: result.geometry.location,
-        }));
-        setSearchResults(results);
+        setSearchResults(
+          data.results.map((r) => ({
+            id: r.place_id,
+            address: r.formatted_address,
+            location: r.geometry.location,
+          }))
+        );
         setShowSearchResults(true);
       } else {
         setSearchResults([]);
         setShowSearchResults(false);
       }
-    } catch (err) {
-      console.log("Search error:", err);
+    } catch {
       setSearchResults([]);
       setShowSearchResults(false);
     } finally {
       setSearching(false);
     }
-  };
+  }, [searchQuery, googleApiKey]);
 
-  const handleSelectSearchResult = (result) => {
-    const coords = {
-      latitude: result.location.lat,
-      longitude: result.location.lng,
-    };
+  const handleSelectSearchResult = useCallback(
+    (result) => {
+      const coords = {
+        latitude: result.location.lat,
+        longitude: result.location.lng,
+      };
 
-    setMapInteracted(true);
-    setSelectedLocation(coords);
-    setAddress(result.address);
-    setSearchQuery("");
-    setSearchResults([]);
-    setShowSearchResults(false);
-    Keyboard.dismiss();
+      setSelectedLocation(coords);
+      setAddress(result.address); // already have the address — skip geocode entirely
+      setSearchQuery("");
+      setSearchResults([]);
+      setShowSearchResults(false);
+      Keyboard.dismiss();
 
-    mapRef.current?.animateToRegion(
-      {
-        latitude: coords.latitude,
-        longitude: coords.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      },
-      500
-    );
+      mapRef.current?.animateToRegion(
+        {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        },
+        500
+      );
 
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    },
+    []
+  );
 
-  const handleConfirm = () => {
+  // ─── Confirm ────────────────────────────────────────────────────────────────
+  const handleConfirm = useCallback(() => {
     if (!selectedLocation) {
       Alert.alert("No Location Selected", "Please select a location first.");
       return;
     }
-
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-    if (onSelect) {
-      onSelect(selectedLocation, address);
-    }
-
+    if (onSelect) onSelect(selectedLocation, address);
     navigation.goBack();
-  };
+  }, [selectedLocation, address, onSelect, navigation]);
 
-  const renderSearchResult = ({ item }) => (
-    <TouchableOpacity
-      style={styles.searchResultItem}
-      onPress={() => handleSelectSearchResult(item)}
-      activeOpacity={0.75}
-    >
-      <View style={styles.searchResultIcon}>
-        <Ionicons name="location-outline" size={18} color="#183B5C" />
-      </View>
+  // ─── Clear search ───────────────────────────────────────────────────────────
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setShowSearchResults(false);
+  }, []);
 
-      <View style={styles.searchResultContent}>
-        <Text style={styles.searchResultText} numberOfLines={2}>
-          {item.address}
-        </Text>
-      </View>
-
-      <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
-    </TouchableOpacity>
+  // ─── Render search result ───────────────────────────────────────────────────
+  const renderSearchResult = useCallback(
+    ({ item }) => (
+      <TouchableOpacity
+        style={styles.searchResultItem}
+        onPress={() => handleSelectSearchResult(item)}
+        activeOpacity={0.75}
+      >
+        <View style={styles.searchResultIcon}>
+          <Ionicons name="location-outline" size={18} color="#183B5C" />
+        </View>
+        <View style={styles.searchResultContent}>
+          <Text style={styles.searchResultText} numberOfLines={2}>
+            {item.address}
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
+      </TouchableOpacity>
+    ),
+    [handleSelectSearchResult]
   );
 
   const bottomSheetTransform = {
@@ -334,6 +363,7 @@ export default function MapPickerScreen() {
     ],
   };
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
@@ -366,15 +396,7 @@ export default function MapPickerScreen() {
             title={type === "pickup" ? "Pickup Location" : "Dropoff Location"}
             description={address}
             draggable={!isLocating && !initialAutoLocating}
-            onDragEnd={(e) => {
-              if (isLocating || initialAutoLocating) return;
-
-              const coords = e.nativeEvent.coordinate;
-              setMapInteracted(true);
-              setSelectedLocation(coords);
-              getAddressFromCoords(coords);
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
+            onDragEnd={handleMarkerDragEnd}
           >
             <View
               style={[
@@ -392,6 +414,7 @@ export default function MapPickerScreen() {
         )}
       </MapView>
 
+      {/* ── Top overlay ── */}
       <View style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}>
         <View style={styles.topBar}>
           <TouchableOpacity
@@ -406,6 +429,7 @@ export default function MapPickerScreen() {
             {type === "pickup" ? "Pickup location" : "Dropoff location"}
           </Text>
 
+          {/* Single locate button in top bar only */}
           <TouchableOpacity
             onPress={() => getCurrentLocation({ forceRecenter: true })}
             style={styles.iconButton}
@@ -435,17 +459,10 @@ export default function MapPickerScreen() {
               onSubmitEditing={performSearch}
               editable={!initialAutoLocating}
             />
-
             {searching ? (
               <ActivityIndicator size="small" color="#183B5C" />
             ) : searchQuery.length > 0 ? (
-              <TouchableOpacity
-                onPress={() => {
-                  setSearchQuery("");
-                  setSearchResults([]);
-                  setShowSearchResults(false);
-                }}
-              >
+              <TouchableOpacity onPress={handleClearSearch}>
                 <Ionicons name="close-circle" size={18} color="#94A3B8" />
               </TouchableOpacity>
             ) : null}
@@ -472,6 +489,7 @@ export default function MapPickerScreen() {
         ) : null}
       </View>
 
+      {/* ── Map loading overlay ── */}
       {initialAutoLocating && (
         <View style={styles.mapLoadingOverlay} pointerEvents="auto">
           <View style={styles.loadingCard}>
@@ -484,19 +502,7 @@ export default function MapPickerScreen() {
         </View>
       )}
 
-      <TouchableOpacity
-        style={[styles.floatingLocateButton, { bottom: 250 }]}
-        onPress={() => getCurrentLocation({ forceRecenter: true })}
-        activeOpacity={0.8}
-        disabled={isLocating}
-      >
-        {isLocating ? (
-          <ActivityIndicator size="small" color="#183B5C" />
-        ) : (
-          <Ionicons name="locate" size={22} color="#183B5C" />
-        )}
-      </TouchableOpacity>
-
+      {/* ── Bottom card ── */}
       <Animated.View
         style={[
           styles.bottomCard,
@@ -541,7 +547,8 @@ export default function MapPickerScreen() {
         {selectedLocation && (
           <View style={styles.coordinatePill}>
             <Text style={styles.coordinateText}>
-              {selectedLocation.latitude.toFixed(6)}, {selectedLocation.longitude.toFixed(6)}
+              {selectedLocation.latitude.toFixed(6)},{" "}
+              {selectedLocation.longitude.toFixed(6)}
             </Text>
           </View>
         )}
@@ -569,13 +576,8 @@ export default function MapPickerScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F8FAFC",
-  },
-  map: {
-    flex: 1,
-  },
+  container: { flex: 1, backgroundColor: "#F8FAFC" },
+  map: { flex: 1 },
 
   topOverlay: {
     position: "absolute",
@@ -612,9 +614,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
 
-  searchWrapper: {
-    zIndex: 11,
-  },
+  searchWrapper: { zIndex: 11 },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -664,14 +664,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 10,
   },
-  searchResultContent: {
-    flex: 1,
-  },
-  searchResultText: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: "#0F172A",
-  },
+  searchResultContent: { flex: 1 },
+  searchResultText: { fontSize: 14, lineHeight: 20, color: "#0F172A" },
 
   errorChip: {
     marginTop: 10,
@@ -685,12 +679,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  errorChipText: {
-    marginLeft: 6,
-    fontSize: 12,
-    color: "#DC2626",
-    fontWeight: "500",
-  },
+  errorChipText: { marginLeft: 6, fontSize: 12, color: "#DC2626", fontWeight: "500" },
 
   marker: {
     width: 38,
@@ -706,12 +695,8 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 7,
   },
-  pickupMarker: {
-    backgroundColor: "#10B981",
-  },
-  dropoffMarker: {
-    backgroundColor: "#EF4444",
-  },
+  pickupMarker: { backgroundColor: "#10B981" },
+  dropoffMarker: { backgroundColor: "#EF4444" },
 
   mapLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -733,35 +718,13 @@ const styles = StyleSheet.create({
     shadowRadius: 22,
     elevation: 10,
   },
-  mapLoadingTitle: {
-    marginTop: 14,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#183B5C",
-  },
+  mapLoadingTitle: { marginTop: 14, fontSize: 16, fontWeight: "700", color: "#183B5C" },
   mapLoadingSubtext: {
     marginTop: 6,
     textAlign: "center",
     fontSize: 13,
     lineHeight: 19,
     color: "#64748B",
-  },
-
-  floatingLocateButton: {
-    position: "absolute",
-    right: 18,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: "#FFFFFF",
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 8,
-    zIndex: 12,
   },
 
   bottomCard: {
@@ -788,10 +751,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#E2E8F0",
     marginBottom: 16,
   },
-  locationRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-  },
+  locationRow: { flexDirection: "row", alignItems: "flex-start" },
   locationBadge: {
     width: 42,
     height: 42,
@@ -800,37 +760,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 12,
   },
-  pickupIconBg: {
-    backgroundColor: "#ECFDF5",
-  },
-  dropoffIconBg: {
-    backgroundColor: "#FEF2F2",
-  },
-  locationTextWrap: {
-    flex: 1,
-  },
-  locationLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#64748B",
-    marginBottom: 4,
-  },
-  locationAddress: {
-    fontSize: 15,
-    lineHeight: 21,
-    color: "#0F172A",
-    fontWeight: "500",
-  },
+  pickupIconBg: { backgroundColor: "#ECFDF5" },
+  dropoffIconBg: { backgroundColor: "#FEF2F2" },
+  locationTextWrap: { flex: 1 },
+  locationLabel: { fontSize: 12, fontWeight: "600", color: "#64748B", marginBottom: 4 },
+  locationAddress: { fontSize: 15, lineHeight: 21, color: "#0F172A", fontWeight: "500" },
 
-  inlineLoading: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  inlineLoadingText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: "#64748B",
-  },
+  inlineLoading: { flexDirection: "row", alignItems: "center" },
+  inlineLoadingText: { marginLeft: 8, fontSize: 14, color: "#64748B" },
 
   coordinatePill: {
     alignSelf: "flex-start",
@@ -848,12 +785,7 @@ const styles = StyleSheet.create({
     color: "#475569",
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
-  helperText: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: "#64748B",
-    marginBottom: 16,
-  },
+  helperText: { fontSize: 13, lineHeight: 19, color: "#64748B", marginBottom: 16 },
 
   confirmButton: {
     backgroundColor: "#183B5C",
@@ -862,12 +794,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  confirmButtonDisabled: {
-    backgroundColor: "#CBD5E1",
-  },
-  confirmButtonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-  },
+  confirmButtonDisabled: { backgroundColor: "#CBD5E1" },
+  confirmButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "700" },
 });
