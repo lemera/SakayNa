@@ -15,6 +15,8 @@ import { getUserSession, clearUserSession } from "./app/utils/authStorage";
 /* ============================= */
 import UserTypeScreen from "./app/UserTypeScreen.js";
 
+import TermsScreen from "./app/TermsScreen.js";
+import PrivacyScreen from "./app/PrivacyScreen.js";
 // Commuter Flow
 import CommuterLoginScreen from "./app/commuter/CommuterLogin.js";
 import OtpScreen from "./app/commuter/OtpScreen.js";
@@ -306,7 +308,9 @@ export default function App() {
           screenOptions={{ headerShown: false }}
         >
           <Stack.Screen name="UserType" component={UserTypeScreen} />
-
+          
+          <Stack.Screen name="TermsScreen" component={TermsScreen} />
+          <Stack.Screen name="PrivacyScreen" component={PrivacyScreen} />
           <Stack.Screen name="CommuterLogin" component={CommuterLoginScreen} />
           <Stack.Screen name="OtpScreen" component={OtpScreen} />
           <Stack.Screen name="CommuterDetails" component={CommuterDetails} />
