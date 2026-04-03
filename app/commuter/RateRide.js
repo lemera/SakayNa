@@ -143,15 +143,21 @@ export default function RateRide({ navigation, route }) {
       if (reviewError) throw reviewError;
 
       Alert.alert(
-        "Thank You!",
-        "Your feedback has been submitted. Thank you for riding with us!",
-        [
-          {
-            text: "OK",
-            onPress: () => navigation.navigate("HomePage")
-          }
-        ]
-      );
+  "Thank You!",
+  "Your feedback has been submitted. Thank you riding with us!",
+  [
+    {
+      text: "OK",
+      onPress: () => {
+        navigation.navigate("HomePage");
+        // If you need to specifically show the Home tab after navigating
+        setTimeout(() => {
+          navigation.navigate("HomePage", { screen: "Home" });
+        }, 100);
+      }
+    }
+  ]
+);
 
     } catch (err) {
       console.log("❌ Error submitting rating:", err);
@@ -230,7 +236,7 @@ export default function RateRide({ navigation, route }) {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Pressable onPress={() => navigation.navigate("HomePage", { screen: "Home" })} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#183B5C" />
           </Pressable>
           <Text style={styles.headerTitle}>Rate Your Ride</Text>

@@ -1,4 +1,4 @@
-// HomePage.js - Main navigation for commuter with custom TrackRide button and Floating Menu
+// HomePage.js - Main navigation for commuter with custom Home button (Booking) and Floating Menu
 import React, { useState, useEffect } from "react";
 import { View, Image, Pressable, StyleSheet, Text } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
@@ -22,15 +22,15 @@ import navStyles from "../styles/NavStyles";
 
 const Tab = createBottomTabNavigator();
 
-// Custom TrackRide button 
-const TrackRideButton = ({ accessibilityState }) => {
+// Custom Home button (formerly TrackRide) - now with Booking label
+const HomeButton = ({ accessibilityState }) => {
   const navigation = useNavigation();
   const [pressed, setPressed] = useState(false);
   const isActive = accessibilityState?.selected;
 
   return (
     <Pressable
-      onPress={() => navigation.navigate("TrackRide")}
+      onPress={() => navigation.navigate("Home")}
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}
       style={[
@@ -41,7 +41,8 @@ const TrackRideButton = ({ accessibilityState }) => {
         },
       ]}
     >
-      <Ionicons name="navigate" size={30} color="#fff" />
+      <Ionicons name="star" size={30} color="#fff" />
+      <Text style={styles.buttonLabel}>Start Ride</Text>
     </Pressable>
   );
 };
@@ -52,7 +53,7 @@ export default function HomePage() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [userId, setUserId] = useState(null);
   const [menuVisible, setMenuVisible] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState("Home");
+  const [currentScreen, setCurrentScreen] = useState("TrackRide");
 
   // Fetch user ID
   useEffect(() => {
@@ -69,7 +70,7 @@ export default function HomePage() {
       const routes = navigation.getState()?.routes;
       if (routes && routes.length > 0) {
         const currentRoute = routes[routes.length - 1];
-        setCurrentScreen(currentRoute?.name || "Home");
+        setCurrentScreen(currentRoute?.name || "TrackRide");
       }
     });
     return unsubscribe;
@@ -172,10 +173,10 @@ export default function HomePage() {
           tabBarIcon: ({ focused, color, size }) => {
             let iconName;
             switch (route.name) {
-              case "Home":
-                iconName = focused ? "home" : "home-outline";
+              case "TrackRide":
+                iconName = focused ? "navigate" : "navigate-outline";
                 break;
-              case "Wallet":
+              case "Earnings":
                 iconName = focused ? "wallet" : "wallet-outline";
                 break;
               case "Inbox":
@@ -184,6 +185,9 @@ export default function HomePage() {
               case "Account":
                 iconName = focused ? "person" : "person-outline";
                 break;
+              case "Home":
+                // Home tab now doesn't show icon in tab bar since it's a custom button
+                return null;
             }
             
             // Handle Inbox with notification badge
@@ -203,20 +207,21 @@ export default function HomePage() {
             }
             
             // For all other tabs, just return the icon
-            return route.name !== "TrackRide" ? <Ionicons name={iconName} size={size} color={color} /> : null;
+            return route.name !== "Home" ? <Ionicons name={iconName} size={size} color={color} /> : null;
           },
         })}
       >
-        <Tab.Screen name="Home" component={HomeScreen} />
-        <Tab.Screen name="Wallet" component={WalletScreen} />
+        {/* TrackRide is now first tab (replaces Home's position) */}
+        <Tab.Screen name="TrackRide" component={TrackRideScreen} />
+        <Tab.Screen name="Earnings" component={WalletScreen} />
 
-        {/* TrackRide button in center */}
+        {/* Home button in center with Booking label */}
         <Tab.Screen
-          name="TrackRide"
-          component={TrackRideScreen}
+          name="Home"
+          component={HomeScreen}
           options={{
             tabBarLabel: "",
-            tabBarButton: (props) => <TrackRideButton {...props} />,
+            tabBarButton: (props) => <HomeButton {...props} />,
             tabBarStyle: navStyles.tabBar,
           }}
         />
@@ -264,5 +269,11 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 12,
     fontWeight: 'bold',
+  },
+  buttonLabel: {
+    color: '#fff',
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '600',
   },
 });

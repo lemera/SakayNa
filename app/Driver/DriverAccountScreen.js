@@ -6,11 +6,9 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   Modal,
   TextInput,
   Image,
-  Switch,
   Linking,
   KeyboardAvoidingView,
   Platform,
@@ -23,19 +21,134 @@ import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
-import QRCode from 'react-native-qrcode-svg';
+import QRCode from "react-native-qrcode-svg";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
-import { getUserSession } from '../utils/authStorage'; // ✅ Import test account session
+import { getUserSession } from "../utils/authStorage";
+
+// Custom Alert Component
+const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText = "OK", cancelText = "Cancel", type = "info" }) => {
+  const getIcon = () => {
+    switch (type) {
+      case "success":
+        return <Ionicons name="checkmark-circle" size={50} color="#10B981" />;
+      case "error":
+        return <Ionicons name="close-circle" size={50} color="#EF4444" />;
+      case "warning":
+        return <Ionicons name="warning" size={50} color="#F59E0B" />;
+      default:
+        return <Ionicons name="information-circle" size={50} color="#183B5C" />;
+    }
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={onCancel}
+    >
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "rgba(0,0,0,0.5)",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <View
+          style={{
+            backgroundColor: "#FFF",
+            borderRadius: 24,
+            padding: 24,
+            width: "80%",
+            maxWidth: 320,
+            alignItems: "center",
+          }}
+        >
+          {getIcon()}
+          <Text
+            style={{
+              fontSize: 20,
+              fontWeight: "bold",
+              color: "#333",
+              marginTop: 16,
+              marginBottom: 8,
+              textAlign: "center",
+            }}
+          >
+            {title}
+          </Text>
+          <Text
+            style={{
+              fontSize: 14,
+              color: "#666",
+              textAlign: "center",
+              marginBottom: 24,
+              lineHeight: 20,
+            }}
+          >
+            {message}
+          </Text>
+          <View style={{ flexDirection: "row", gap: 12, width: "100%" }}>
+            {onCancel && (
+              <Pressable
+                style={{
+                  flex: 1,
+                  backgroundColor: "#F3F4F6",
+                  padding: 12,
+                  borderRadius: 12,
+                  alignItems: "center",
+                }}
+                onPress={onCancel}
+              >
+                <Text style={{ color: "#666", fontWeight: "600" }}>
+                  {cancelText}
+                </Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={{
+                flex: 1,
+                backgroundColor: "#183B5C",
+                padding: 12,
+                borderRadius: 12,
+                alignItems: "center",
+              }}
+              onPress={onConfirm}
+            >
+              <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                {confirmText}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
 
 export default function DriverAccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const tabBarHeight = useBottomTabBarHeight();
-  const bottomTabBarHeight = useBottomTabBarHeight();
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [driverId, setDriverId] = useState(null);
-  const [isTestAccount, setIsTestAccount] = useState(false); // ✅ Track if test account
+  const [isTestAccount, setIsTestAccount] = useState(false);
   const [driver, setDriver] = useState(null);
+
+  // Custom alert states
+  const [alertVisible, setAlertVisible] = useState(false);
+  const [alertConfig, setAlertConfig] = useState({
+    title: "",
+    message: "",
+    type: "info",
+    onConfirm: null,
+    onCancel: null,
+    confirmText: "OK",
+    cancelText: "Cancel",
+  });
+
   const [driverStats, setDriverStats] = useState({
     totalTrips: 0,
     totalEarnings: 0,
@@ -43,33 +156,16 @@ export default function DriverAccountScreen({ navigation }) {
     memberSince: null,
     referrals: 0,
   });
+
   const [vehicle, setVehicle] = useState(null);
   const [documents, setDocuments] = useState(null);
   const [activeSubscription, setActiveSubscription] = useState(null);
 
-  // Withdrawal Settings States
-  const [withdrawalSettings, setWithdrawalSettings] = useState(null);
-  const [showWithdrawalSettingsModal, setShowWithdrawalSettingsModal] = useState(false);
-  const [editWithdrawalSettings, setEditWithdrawalSettings] = useState({
-    auto_withdraw: false,
-    auto_withdraw_threshold: "",
-    daily_withdrawal_limit: "",
-    weekly_withdrawal_limit: "",
-    monthly_withdrawal_limit: "",
-    notifications_enabled: true,
-    withdrawal_pin: "",
-  });
-  const [showPinModal, setShowPinModal] = useState(false);
-  const [tempPin, setTempPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-
-  // QR Code States
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [qrValue, setQrValue] = useState(null);
   const [qrSize, setQrSize] = useState(250);
   const [qrLogo, setQrLogo] = useState(null);
 
-  // Modal states - REMOVED editName since name is not editable
   const [editProfileModal, setEditProfileModal] = useState(false);
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
@@ -83,35 +179,56 @@ export default function DriverAccountScreen({ navigation }) {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [language, setLanguage] = useState("english");
-  
-  // Fetch driver ID and check if test account
+
+  // Custom alert helper functions
+  const showAlert = (title, message, type = "info", onConfirm = null, onCancel = null, confirmText = "OK", cancelText = "Cancel") => {
+    setAlertConfig({
+      title,
+      message,
+      type,
+      onConfirm: () => {
+        setAlertVisible(false);
+        if (onConfirm) onConfirm();
+      },
+      onCancel: onCancel ? () => {
+        setAlertVisible(false);
+        onCancel();
+      } : null,
+      confirmText,
+      cancelText,
+    });
+    setAlertVisible(true);
+  };
+
+  const hideAlert = () => {
+    setAlertVisible(false);
+  };
+
   useFocusEffect(
     useCallback(() => {
       const getDriverId = async () => {
-        // ✅ Check test account session first
         const session = await getUserSession();
-        
-        if (session && session.isTestAccount && session.userType === 'driver') {
+
+        if (session && session.isTestAccount && session.userType === "driver") {
           console.log("✅ Test driver account detected");
           setIsTestAccount(true);
-          setDriverId(session.phone); // Use phone as identifier for test accounts
-          
-          // Create mock driver profile for test account
+          setDriverId(session.phone);
+
           const mockDriver = {
-            first_name: 'Test',
-            last_name: 'Driver',
+            first_name: "Test",
+            last_name: "Driver",
             phone: session.phone,
-            email: 'test.driver@example.com',
+            email: "test.driver@example.com",
             profile_picture: null,
-            status: 'approved',
+            status: "approved",
             is_active: true,
             created_at: new Date().toISOString(),
           };
+
           setDriver(mockDriver);
           setEditPhone(mockDriver.phone);
           setEditEmail(mockDriver.email);
-          
-          // Set mock stats
+
           setDriverStats({
             totalTrips: 0,
             totalEarnings: 0,
@@ -119,21 +236,20 @@ export default function DriverAccountScreen({ navigation }) {
             memberSince: new Date().toISOString(),
             referrals: 0,
           });
-          
+
           setLoading(false);
           generateQRCodeForTest();
         } else {
-          // Normal user flow
           const id = await AsyncStorage.getItem("user_id");
           setDriverId(id);
           setIsTestAccount(false);
         }
       };
+
       getDriverId();
-    }, []),
+    }, [])
   );
 
-  // Generate QR Code for test account
   const generateQRCodeForTest = () => {
     const qrData = {
       type: "driver_qr",
@@ -145,7 +261,6 @@ export default function DriverAccountScreen({ navigation }) {
     setQrValue(JSON.stringify(qrData));
   };
 
-  // Fetch all driver data (only for normal users)
   useEffect(() => {
     if (driverId && !isTestAccount) {
       loadDriverData();
@@ -155,10 +270,9 @@ export default function DriverAccountScreen({ navigation }) {
     }
   }, [driverId, isTestAccount]);
 
-  // Generate QR Code for normal user
   const generateQRCode = () => {
     if (!driverId) return;
-    
+
     const qrData = {
       type: "driver_qr",
       driver_id: driverId,
@@ -166,152 +280,33 @@ export default function DriverAccountScreen({ navigation }) {
       timestamp: new Date().toISOString(),
       expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
     };
-    
+
     setQrValue(JSON.stringify(qrData));
   };
 
-  // Refresh QR Code
   const refreshQRCode = () => {
     if (isTestAccount) {
-      Alert.alert("Test Account", "QR code refresh is disabled for test accounts.");
+      showAlert("Test Account", "QR code refresh is disabled for test accounts.", "warning");
       return;
     }
-    
-    Alert.alert(
+
+    showAlert(
       "Refresh QR Code",
       "Generating a new QR code will make the old one invalid. Continue?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Generate New",
-          onPress: () => {
-            generateQRCode();
-            Alert.alert("✅ Success", "New QR code has been generated!");
-          }
-        }
-      ]
+      "warning",
+      () => {
+        generateQRCode();
+        showAlert("Success", "New QR code has been generated!", "success");
+      },
+      null,
+      "Generate New",
+      "Cancel"
     );
   };
 
-  // Fetch Withdrawal Settings
-  const fetchWithdrawalSettings = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
-    try {
-      const { data, error } = await supabase
-        .from("withdrawal_settings")
-        .select("*")
-        .eq("user_id", driverId)
-        .eq("user_type", "driver")
-        .maybeSingle();
-
-      if (error) throw error;
-
-      if (data) {
-        setWithdrawalSettings(data);
-        setEditWithdrawalSettings({
-          auto_withdraw: data.auto_withdraw || false,
-          auto_withdraw_threshold: data.auto_withdraw_threshold?.toString() || "",
-          daily_withdrawal_limit: data.daily_withdrawal_limit?.toString() || "",
-          weekly_withdrawal_limit: data.weekly_withdrawal_limit?.toString() || "",
-          monthly_withdrawal_limit: data.monthly_withdrawal_limit?.toString() || "",
-          notifications_enabled: data.notifications_enabled !== false,
-          withdrawal_pin: "", // Don't load the actual PIN for security
-        });
-      } else {
-        // Create default settings if none exist
-        const { error: insertError } = await supabase
-          .from("withdrawal_settings")
-          .insert({
-            user_id: driverId,
-            user_type: "driver",
-            auto_withdraw: false,
-            notifications_enabled: true,
-            created_at: new Date(),
-            updated_at: new Date(),
-          });
-
-        if (insertError) throw insertError;
-
-        // Fetch again to get the created settings
-        await fetchWithdrawalSettings();
-      }
-    } catch (err) {
-      console.log("Error fetching withdrawal settings:", err.message);
-    }
-  };
-
-  // Save Withdrawal Settings
-  const saveWithdrawalSettings = async () => {
-    if (isTestAccount) {
-      Alert.alert("Test Account", "This feature is disabled for test accounts.");
-      return;
-    }
-    
-    try {
-      const updates = {
-        auto_withdraw: editWithdrawalSettings.auto_withdraw,
-        notifications_enabled: editWithdrawalSettings.notifications_enabled,
-        updated_at: new Date(),
-      };
-
-      // Only include numeric fields if they have values
-      if (editWithdrawalSettings.auto_withdraw_threshold) {
-        updates.auto_withdraw_threshold = parseFloat(editWithdrawalSettings.auto_withdraw_threshold);
-      } else {
-        updates.auto_withdraw_threshold = null;
-      }
-
-      if (editWithdrawalSettings.daily_withdrawal_limit) {
-        updates.daily_withdrawal_limit = parseFloat(editWithdrawalSettings.daily_withdrawal_limit);
-      } else {
-        updates.daily_withdrawal_limit = null;
-      }
-
-      if (editWithdrawalSettings.weekly_withdrawal_limit) {
-        updates.weekly_withdrawal_limit = parseFloat(editWithdrawalSettings.weekly_withdrawal_limit);
-      } else {
-        updates.weekly_withdrawal_limit = null;
-      }
-
-      if (editWithdrawalSettings.monthly_withdrawal_limit) {
-        updates.monthly_withdrawal_limit = parseFloat(editWithdrawalSettings.monthly_withdrawal_limit);
-      } else {
-        updates.monthly_withdrawal_limit = null;
-      }
-
-      // Handle PIN
-      if (editWithdrawalSettings.withdrawal_pin) {
-        if (editWithdrawalSettings.withdrawal_pin.length < 4) {
-          Alert.alert("Error", "PIN must be at least 4 digits");
-          return;
-        }
-        updates.withdrawal_pin = editWithdrawalSettings.withdrawal_pin;
-      } else if (withdrawalSettings?.withdrawal_pin && !editWithdrawalSettings.withdrawal_pin) {
-        updates.withdrawal_pin = null;
-      }
-
-      const { error } = await supabase
-        .from("withdrawal_settings")
-        .update(updates)
-        .eq("user_id", driverId)
-        .eq("user_type", "driver");
-
-      if (error) throw error;
-
-      Alert.alert("✅ Success", "Withdrawal settings updated successfully!");
-      setShowWithdrawalSettingsModal(false);
-      await fetchWithdrawalSettings();
-    } catch (err) {
-      console.log("Error saving withdrawal settings:", err.message);
-      Alert.alert("Error", "Failed to save withdrawal settings");
-    }
-  };
-
-  // Fetch Referrals
   const fetchReferrals = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { count, error } = await supabase
         .from("referrals")
@@ -321,7 +316,7 @@ export default function DriverAccountScreen({ navigation }) {
 
       if (error) throw error;
 
-      setDriverStats(prev => ({
+      setDriverStats((prev) => ({
         ...prev,
         referrals: count || 0,
       }));
@@ -330,10 +325,9 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
-  // Fetch Settings
   const fetchSettings = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { data, error } = await supabase
         .from("driver_settings")
@@ -372,6 +366,28 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
+  const updateSettings = async () => {
+    try {
+      const { error } = await supabase
+        .from("driver_settings")
+        .update({
+          notifications_enabled: notificationsEnabled,
+          dark_mode_enabled: darkModeEnabled,
+          language: language,
+          updated_at: new Date(),
+        })
+        .eq("driver_id", driverId);
+
+      if (error) throw error;
+
+      showAlert("Success", "Settings updated successfully!", "success");
+      setSettingsModal(false);
+    } catch (err) {
+      console.log("Error updating settings:", err.message);
+      showAlert("Error", "Failed to update settings", "error");
+    }
+  };
+
   const loadDriverData = async () => {
     try {
       setLoading(true);
@@ -382,7 +398,7 @@ export default function DriverAccountScreen({ navigation }) {
         fetchDocuments(),
         fetchActiveSubscription(),
         fetchReferrals(),
-        fetchWithdrawalSettings(),
+        fetchSettings(),
       ]);
     } catch (err) {
       console.log("Error loading driver data:", err);
@@ -396,7 +412,7 @@ export default function DriverAccountScreen({ navigation }) {
       setRefreshing(false);
       return;
     }
-    
+
     setRefreshing(true);
     await loadDriverData();
     generateQRCode();
@@ -404,25 +420,23 @@ export default function DriverAccountScreen({ navigation }) {
   };
 
   const fetchDriverProfile = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { data, error } = await supabase
         .from("drivers")
-        .select(
-          `
-        id,
-        first_name,
-        middle_name,
-        last_name,
-        phone,
-        email,
-        profile_picture,
-        status,
-        is_active,
-        created_at
-      `,
-        )
+        .select(`
+          id,
+          first_name,
+          middle_name,
+          last_name,
+          phone,
+          email,
+          profile_picture,
+          status,
+          is_active,
+          created_at
+        `)
         .eq("id", driverId)
         .single();
 
@@ -449,8 +463,8 @@ export default function DriverAccountScreen({ navigation }) {
   };
 
   const fetchDriverStats = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
@@ -465,15 +479,13 @@ export default function DriverAccountScreen({ navigation }) {
         bookings?.reduce((sum, b) => sum + (b.actual_fare || 0), 0) || 0;
 
       const ratings =
-        bookings
-          ?.filter((b) => b.commuter_rating)
-          .map((b) => b.commuter_rating) || [];
+        bookings?.filter((b) => b.commuter_rating).map((b) => b.commuter_rating) || [];
       const avgRating =
         ratings.length > 0
           ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
           : 0;
 
-      setDriverStats(prev => ({
+      setDriverStats((prev) => ({
         ...prev,
         totalTrips,
         totalEarnings,
@@ -486,8 +498,8 @@ export default function DriverAccountScreen({ navigation }) {
   };
 
   const fetchVehicleInfo = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { data, error } = await supabase
         .from("driver_vehicles")
@@ -509,8 +521,8 @@ export default function DriverAccountScreen({ navigation }) {
   };
 
   const fetchDocuments = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { data, error } = await supabase
         .from("driver_documents")
@@ -526,21 +538,19 @@ export default function DriverAccountScreen({ navigation }) {
   };
 
   const fetchActiveSubscription = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
+    if (isTestAccount) return;
+
     try {
       const { data, error } = await supabase
         .from("driver_subscriptions")
-        .select(
-          `
+        .select(`
           *,
           subscription_plans (
             plan_name,
             plan_type,
             price
           )
-        `,
-        )
+        `)
         .eq("driver_id", driverId)
         .eq("status", "active")
         .gte("end_date", new Date().toISOString())
@@ -555,13 +565,12 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
-  // Updated handleUpdateProfile - name is no longer updated
   const handleUpdateProfile = async () => {
     if (isTestAccount) {
-      Alert.alert("Test Account", "Profile updates are disabled for test accounts.");
+      showAlert("Test Account", "Profile updates are disabled for test accounts.", "warning");
       return;
     }
-    
+
     try {
       const { error } = await supabase
         .from("drivers")
@@ -574,21 +583,21 @@ export default function DriverAccountScreen({ navigation }) {
 
       if (error) throw error;
 
-      Alert.alert("Success", "Profile updated successfully");
+      showAlert("Success", "Profile updated successfully", "success");
       setEditProfileModal(false);
       fetchDriverProfile();
     } catch (err) {
       console.log("Error updating profile:", err.message);
-      Alert.alert("Error", "Failed to update profile");
+      showAlert("Error", "Failed to update profile", "error");
     }
   };
 
   const handleUpdateVehicle = async () => {
     if (isTestAccount) {
-      Alert.alert("Test Account", "Vehicle updates are disabled for test accounts.");
+      showAlert("Test Account", "Vehicle updates are disabled for test accounts.", "warning");
       return;
     }
-    
+
     try {
       if (vehicle) {
         const { error } = await supabase
@@ -615,52 +624,52 @@ export default function DriverAccountScreen({ navigation }) {
         if (error) throw error;
       }
 
-      Alert.alert("Success", "Vehicle information updated");
+      showAlert("Success", "Vehicle information updated", "success");
       setVehicleModal(false);
       fetchVehicleInfo();
     } catch (err) {
       console.log("Error updating vehicle:", err.message);
-      Alert.alert("Error", "Failed to update vehicle information");
+      showAlert("Error", "Failed to update vehicle information", "error");
     }
   };
 
-  const handleSignOut = async () => {
-    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Sign Out",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            // Clear test account session if exists
-            const session = await getUserSession();
-            if (session && session.isTestAccount) {
-              await AsyncStorage.removeItem('@sakayna_user_session');
-              await AsyncStorage.removeItem('@sakayna_test_account');
-            } else {
-              await AsyncStorage.removeItem("user_id");
-              await supabase.auth.signOut();
-            }
-            navigation.replace("UserType");
-          } catch (err) {
-            console.log("Error signing out:", err.message);
+  const handleSignOut = () => {
+    showAlert(
+      "Sign Out",
+      "Are you sure you want to sign out?",
+      "warning",
+      async () => {
+        try {
+          const session = await getUserSession();
+          if (session && session.isTestAccount) {
+            await AsyncStorage.removeItem("@sakayna_user_session");
+            await AsyncStorage.removeItem("@sakayna_test_account");
+          } else {
+            await AsyncStorage.removeItem("user_id");
+            await supabase.auth.signOut();
           }
-        },
+          navigation.replace("UserType");
+        } catch (err) {
+          console.log("Error signing out:", err.message);
+          showAlert("Error", "Failed to sign out", "error");
+        }
       },
-    ]);
+      null,
+      "Sign Out",
+      "Cancel"
+    );
   };
 
   const pickImage = async () => {
     if (isTestAccount) {
-      Alert.alert("Test Account", "Profile picture updates are disabled for test accounts.");
+      showAlert("Test Account", "Profile picture updates are disabled for test accounts.", "warning");
       return;
     }
-    
+
     try {
-      const { status } =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission Required", "Please enable photo access");
+        showAlert("Permission Required", "Please enable photo access", "warning");
         return;
       }
 
@@ -673,14 +682,13 @@ export default function DriverAccountScreen({ navigation }) {
 
       if (!result.canceled && result.assets && result.assets[0]) {
         const image = result.assets[0];
-
         const fileName = `${Date.now()}.jpg`;
         const filePath = `${driverId}/${fileName}`;
 
         const response = await fetch(image.uri);
         const arrayBuffer = await response.arrayBuffer();
 
-        const { data, error } = await supabase.storage
+        const { error } = await supabase.storage
           .from("driver-profiles")
           .upload(filePath, arrayBuffer, {
             contentType: "image/jpeg",
@@ -708,11 +716,11 @@ export default function DriverAccountScreen({ navigation }) {
           profile_picture: urlData.publicUrl + "?t=" + Date.now(),
         }));
 
-        Alert.alert("Success", "Profile picture updated!");
+        showAlert("Success", "Profile picture updated!", "success");
       }
     } catch (err) {
       console.log("Error:", err);
-      Alert.alert("Upload Failed", err.message);
+      showAlert("Upload Failed", err.message, "error");
     }
   };
 
@@ -775,362 +783,336 @@ export default function DriverAccountScreen({ navigation }) {
   }
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: "#F5F7FA" }}
-      contentContainerStyle={{ paddingBottom: 0 }}
-      refreshControl={
-        !isTestAccount ? (
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        ) : undefined
-      }
-    >
-      {/* Test Account Banner */}
-      {isTestAccount && (
-        <View style={{
-          backgroundColor: "#FFF3E0",
-          padding: 10,
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 8,
-          paddingTop: 40,
-        }}>
-          <Ionicons name="flask" size={20} color="#E97A3E" />
-          <Text style={{ color: "#E97A3E", fontSize: 12, fontWeight: "500" }}>
-            Test Account Mode 
-          </Text>
-        </View>
-      )}
-
-      {/* Header with Cover */}
-      <View
-        style={{
-          backgroundColor: "#183B5C",
-          paddingTop: insets.top + 20,
-          paddingBottom: 60,
-          paddingHorizontal: 20,
-          borderBottomLeftRadius: 30,
-          borderBottomRightRadius: 30,
-        }}
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: "#F5F7FA" }}
+        contentContainerStyle={{ paddingBottom: 0 }}
+        refreshControl={
+          !isTestAccount ? (
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          ) : undefined
+        }
       >
+        {isTestAccount && (
+          <View
+            style={{
+              backgroundColor: "#FFF3E0",
+              padding: 10,
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              paddingTop: 40,
+            }}
+          >
+            <Ionicons name="flask" size={20} color="#E97A3E" />
+            <Text style={{ color: "#E97A3E", fontSize: 12, fontWeight: "500" }}>
+              Test Account Mode
+            </Text>
+          </View>
+        )}
+
         <View
           style={{
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
+            backgroundColor: "#183B5C",
+            paddingTop: insets.top + 20,
+            paddingBottom: 60,
+            paddingHorizontal: 20,
+            borderBottomLeftRadius: 30,
+            borderBottomRightRadius: 30,
           }}
         >
-          <Pressable onPress={() => navigation.goBack()} style={{ width: 40 }}>
-            <Ionicons name="arrow-back" size={24} color="#FFF" />
-          </Pressable>
-
-          <Text style={{ fontSize: 20, fontWeight: "bold", color: "#FFF" }}>
-            My Account
-          </Text>
-
-          {!isTestAccount && (
-            <Pressable onPress={() => setSettingsModal(true)}>
-              <Ionicons name="settings-outline" size={24} color="#FFF" />
-            </Pressable>
-          )}
-          {isTestAccount && <View style={{ width: 40 }} />}
-        </View>
-      </View>
-
-      {/* Profile Section - Overlapping Card */}
-      <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: -40,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 4 },
-          shadowOpacity: 0.1,
-          shadowRadius: 12,
-          elevation: 5,
-        }}
-      >
-        <View style={{ alignItems: "center" }}>
-          <Pressable
-            onPress={pickImage}
-            disabled={isTestAccount}
-            style={{ position: "relative", marginBottom: 10 }}
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
           >
-            <View
-              style={{
-                width: 100,
-                height: 100,
-                borderRadius: 50,
-                backgroundColor: "#E5E7EB",
-                justifyContent: "center",
-                alignItems: "center",
-                borderWidth: 4,
-                borderColor: "#FFF",
-              }}
+            <Pressable onPress={() => navigation.goBack()} style={{ width: 40 }}>
+              <Ionicons name="arrow-back" size={24} color="#FFF" />
+            </Pressable>
+
+            <Text style={{ fontSize: 20, fontWeight: "bold", color: "#FFF" }}>
+              My Account
+            </Text>
+
+            {!isTestAccount ? (
+              <Pressable onPress={() => setSettingsModal(true)}>
+                <Ionicons name="settings-outline" size={24} color="#FFF" />
+              </Pressable>
+            ) : (
+              <View style={{ width: 40 }} />
+            )}
+          </View>
+        </View>
+
+        <View
+          style={{
+            marginHorizontal: 20,
+            marginTop: -40,
+            backgroundColor: "#FFF",
+            borderRadius: 24,
+            padding: 20,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.1,
+            shadowRadius: 12,
+            elevation: 5,
+          }}
+        >
+          <View style={{ alignItems: "center" }}>
+            <Pressable
+              onPress={pickImage}
+              disabled={isTestAccount}
+              style={{ position: "relative", marginBottom: 10 }}
             >
-              {driver?.profile_picture ? (
-                <Image
-                  source={{
-                    uri: driver.profile_picture,
-                  }}
-                  style={{ width: "100%", height: "100%", borderRadius: 50 }}
-                />
-              ) : (
-                <Ionicons name="person" size={50} color="#9CA3AF" />
-              )}
-            </View>
-            {!isTestAccount && (
               <View
                 style={{
-                  position: "absolute",
-                  bottom: 0,
-                  right: 0,
-                  backgroundColor: "#183B5C",
-                  width: 30,
-                  height: 30,
-                  borderRadius: 15,
+                  width: 100,
+                  height: 100,
+                  borderRadius: 50,
+                  backgroundColor: "#E5E7EB",
                   justifyContent: "center",
                   alignItems: "center",
-                  borderWidth: 2,
+                  borderWidth: 4,
                   borderColor: "#FFF",
                 }}
               >
-                <Ionicons name="camera" size={16} color="#FFF" />
+                {driver?.profile_picture ? (
+                  <Image
+                    source={{ uri: driver.profile_picture }}
+                    style={{ width: "100%", height: "100%", borderRadius: 50 }}
+                  />
+                ) : (
+                  <Ionicons name="person" size={50} color="#9CA3AF" />
+                )}
               </View>
-            )}
-          </Pressable>
 
-          <Text
-            style={{
-              fontSize: 22,
-              fontWeight: "bold",
-              color: "#333",
-              marginBottom: 5,
-            }}
-          >
-            {driver ? `${driver.first_name} ${driver.last_name}` : "Loading..."}
-          </Text>
+              {!isTestAccount && (
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    right: 0,
+                    backgroundColor: "#183B5C",
+                    width: 30,
+                    height: 30,
+                    borderRadius: 15,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    borderWidth: 2,
+                    borderColor: "#FFF",
+                  }}
+                >
+                  <Ionicons name="camera" size={16} color="#FFF" />
+                </View>
+              )}
+            </Pressable>
 
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: 15,
-            }}
-          >
+            <Text
+              style={{
+                fontSize: 22,
+                fontWeight: "bold",
+                color: "#333",
+                marginBottom: 5,
+              }}
+            >
+              {driver ? `${driver.first_name} ${driver.last_name}` : "Loading..."}
+            </Text>
+
             <View
               style={{
-                backgroundColor: getStatusColor(driver?.status) + "20",
-                paddingHorizontal: 12,
-                paddingVertical: 4,
-                borderRadius: 20,
                 flexDirection: "row",
                 alignItems: "center",
+                marginBottom: 15,
               }}
             >
-              <Ionicons
-                name={getStatusIcon(driver?.status)}
-                size={14}
-                color={getStatusColor(driver?.status)}
-                style={{ marginRight: 4 }}
-              />
-              <Text
+              <View
                 style={{
-                  color: getStatusColor(driver?.status),
-                  fontWeight: "600",
-                  textTransform: "capitalize",
+                  backgroundColor: getStatusColor(driver?.status) + "20",
+                  paddingHorizontal: 12,
+                  paddingVertical: 4,
+                  borderRadius: 20,
+                  flexDirection: "row",
+                  alignItems: "center",
                 }}
               >
-                {driver?.status || "Unknown"}
-              </Text>
+                <Ionicons
+                  name={getStatusIcon(driver?.status)}
+                  size={14}
+                  color={getStatusColor(driver?.status)}
+                  style={{ marginRight: 4 }}
+                />
+                <Text
+                  style={{
+                    color: getStatusColor(driver?.status),
+                    fontWeight: "600",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {driver?.status || "Unknown"}
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
 
-        {/* Stats Grid */}
-        <View style={{ flexDirection: "row", marginTop: 20, gap: 10 }}>
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: "#F9FAFB",
-              borderRadius: 16,
-              padding: 12,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}
-            >
-              {driverStats.totalTrips}
-            </Text>
-            <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-              Total Trips
-            </Text>
-          </View>
-
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: "#F9FAFB",
-              borderRadius: 16,
-              padding: 12,
-              alignItems: "center",
-            }}
-          >
-            <Text
-              style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}
-            >
-              ₱{driverStats.totalEarnings.toFixed(0)}
-            </Text>
-            <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-              Lifetime Earnings
-            </Text>
-          </View>
-
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: "#F9FAFB",
-              borderRadius: 16,
-              padding: 12,
-              alignItems: "center",
-            }}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text
-                style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}
-              >
-                {driverStats.avgRating.toFixed(1)}
-              </Text>
-              <Ionicons
-                name="star"
-                size={16}
-                color="#F59E0B"
-                style={{ marginLeft: 2 }}
-              />
-            </View>
-            <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-              Rating
-            </Text>
-          </View>
-        </View>
-
-        {/* Edit Profile Button */}
-        {!isTestAccount && (
-          <Pressable
-            style={{
-              backgroundColor: "#F3F4F6",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              marginTop: 15,
-            }}
-            onPress={() => setEditProfileModal(true)}
-          >
-            <Text style={{ color: "#183B5C", fontWeight: "600" }}>
-              Edit Contact Information
-            </Text>
-          </Pressable>
-        )}
-      </View>
-
-      {/* QR Code Section */}
-      <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: 20,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: "bold",
-            color: "#333",
-            marginBottom: 15,
-          }}
-        >
-          📱 My QR Code
-        </Text>
-
-        <Text style={{ fontSize: 14, color: "#666", marginBottom: 15 }}>
-          Let passengers scan your QR code to book directly with you!
-        </Text>
-
-        <View style={{ alignItems: "center", marginBottom: 20 }}>
-          {qrValue ? (
+          <View style={{ flexDirection: "row", marginTop: 20, gap: 10 }}>
             <View
               style={{
-                padding: 20,
-                backgroundColor: "#FFF",
+                flex: 1,
+                backgroundColor: "#F9FAFB",
                 borderRadius: 16,
-                borderWidth: 1,
-                borderColor: "#E5E7EB",
-                shadowColor: "#000",
-                shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.1,
-                shadowRadius: 4,
-                elevation: 3,
-              }}
-            >
-              <QRCode
-                value={qrValue}
-                size={qrSize}
-                color="#183B5C"
-                backgroundColor="#FFF"
-                logo={qrLogo}
-                logoSize={50}
-                logoBorderRadius={25}
-              />
-            </View>
-          ) : (
-            <View
-              style={{
-                width: qrSize,
-                height: qrSize,
-                backgroundColor: "#F3F4F6",
-                borderRadius: 16,
-                justifyContent: "center",
+                padding: 12,
                 alignItems: "center",
               }}
             >
-              <ActivityIndicator size="large" color="#183B5C" />
+              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+                {driverStats.totalTrips}
+              </Text>
+              <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                Total Trips
+              </Text>
             </View>
-          )}
-        </View>
 
-        <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
-          <Pressable
-            style={{
-              flex: 1,
-              backgroundColor: "#183B5C",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              flexDirection: "row",
-              justifyContent: "center",
-              gap: 6,
-            }}
-            onPress={() => setQrModalVisible(true)}
-          >
-            <Ionicons name="qr-code-outline" size={20} color="#FFF" />
-            <Text style={{ color: "#FFF", fontWeight: "600" }}>View</Text>
-          </Pressable>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "#F9FAFB",
+                borderRadius: 16,
+                padding: 12,
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+                ₱{driverStats.totalEarnings.toFixed(0)}
+              </Text>
+              <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                Lifetime Earnings
+              </Text>
+            </View>
+
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "#F9FAFB",
+                borderRadius: 16,
+                padding: 12,
+                alignItems: "center",
+              }}
+            >
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+                  {driverStats.avgRating.toFixed(1)}
+                </Text>
+                <Ionicons
+                  name="star"
+                  size={16}
+                  color="#F59E0B"
+                  style={{ marginLeft: 2 }}
+                />
+              </View>
+              <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                Rating
+              </Text>
+            </View>
+          </View>
 
           {!isTestAccount && (
             <Pressable
               style={{
-                flex: 1,
                 backgroundColor: "#F3F4F6",
+                padding: 12,
+                borderRadius: 12,
+                alignItems: "center",
+                marginTop: 15,
+              }}
+              onPress={() => setEditProfileModal(true)}
+            >
+              <Text style={{ color: "#183B5C", fontWeight: "600" }}>
+                Edit Contact Information
+              </Text>
+            </Pressable>
+          )}
+        </View>
+
+        {/* QR Code Section */}
+        <View
+          style={{
+            marginHorizontal: 20,
+            marginTop: 20,
+            backgroundColor: "#FFF",
+            borderRadius: 24,
+            padding: 20,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.05,
+            shadowRadius: 8,
+            elevation: 2,
+          }}
+        >
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "bold",
+              color: "#333",
+              marginBottom: 15,
+            }}
+          >
+            📱 My QR Code
+          </Text>
+
+          <Text style={{ fontSize: 14, color: "#666", marginBottom: 15 }}>
+            Let passengers scan your QR code to book directly with you!
+          </Text>
+
+          <View style={{ alignItems: "center", marginBottom: 20 }}>
+            {qrValue ? (
+              <View
+                style={{
+                  padding: 20,
+                  backgroundColor: "#FFF",
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  borderColor: "#E5E7EB",
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.1,
+                  shadowRadius: 4,
+                  elevation: 3,
+                }}
+              >
+                <QRCode
+                  value={qrValue}
+                  size={qrSize}
+                  color="#183B5C"
+                  backgroundColor="#FFF"
+                  logo={qrLogo}
+                  logoSize={50}
+                  logoBorderRadius={25}
+                />
+              </View>
+            ) : (
+              <View
+                style={{
+                  width: qrSize,
+                  height: qrSize,
+                  backgroundColor: "#F3F4F6",
+                  borderRadius: 16,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <ActivityIndicator size="large" color="#183B5C" />
+              </View>
+            )}
+          </View>
+
+          <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+            <Pressable
+              style={{
+                flex: 1,
+                backgroundColor: "#183B5C",
                 padding: 12,
                 borderRadius: 12,
                 alignItems: "center",
@@ -1138,33 +1120,50 @@ export default function DriverAccountScreen({ navigation }) {
                 justifyContent: "center",
                 gap: 6,
               }}
-              onPress={refreshQRCode}
+              onPress={() => setQrModalVisible(true)}
             >
-              <Ionicons name="refresh-outline" size={18} color="#183B5C" />
-              <Text style={{ color: "#183B5C", fontWeight: "600" }}>Refresh</Text>
+              <Ionicons name="qr-code-outline" size={20} color="#FFF" />
+              <Text style={{ color: "#FFF", fontWeight: "600" }}>View</Text>
             </Pressable>
-          )}
+
+            {!isTestAccount && (
+              <Pressable
+                style={{
+                  flex: 1,
+                  backgroundColor: "#F3F4F6",
+                  padding: 12,
+                  borderRadius: 12,
+                  alignItems: "center",
+                  flexDirection: "row",
+                  justifyContent: "center",
+                  gap: 6,
+                }}
+                onPress={refreshQRCode}
+              >
+                <Ionicons name="refresh-outline" size={18} color="#183B5C" />
+                <Text style={{ color: "#183B5C", fontWeight: "600" }}>Refresh</Text>
+              </Pressable>
+            )}
+          </View>
+
+          <View
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              marginTop: 15,
+              paddingTop: 15,
+              borderTopWidth: 1,
+              borderTopColor: "#F3F4F6",
+            }}
+          >
+            <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
+            <Text style={{ fontSize: 12, color: "#666", marginLeft: 6, flex: 1 }}>
+              Show this QR code to passengers so they can book directly with you!
+            </Text>
+          </View>
         </View>
 
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            marginTop: 15,
-            paddingTop: 15,
-            borderTopWidth: 1,
-            borderTopColor: "#F3F4F6",
-          }}
-        >
-          <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
-          <Text style={{ fontSize: 12, color: "#666", marginLeft: 6, flex: 1 }}>
-            Show this QR code to passengers so they can book directly with you!
-          </Text>
-        </View>
-      </View>
-
-      {/* Withdrawal Settings Section - Hide for test accounts */}
-      {!isTestAccount && (
+        {/* Referrals Section */}
         <View
           style={{
             marginHorizontal: 20,
@@ -1179,7 +1178,6 @@ export default function DriverAccountScreen({ navigation }) {
             elevation: 2,
           }}
         >
-          {/* ... existing withdrawal settings content ... */}
           <Text
             style={{
               fontSize: 16,
@@ -1188,363 +1186,60 @@ export default function DriverAccountScreen({ navigation }) {
               marginBottom: 15,
             }}
           >
-            💰 Withdrawal Settings
+            🤝 Referrals
           </Text>
 
-          {/* Auto Withdraw Toggle */}
           <View
             style={{
               flexDirection: "row",
               justifyContent: "space-between",
               alignItems: "center",
-              marginBottom: 12,
             }}
           >
             <View>
-              <Text style={{ fontSize: 14, fontWeight: "600", color: "#333" }}>
-                Auto Withdraw
+              <Text style={{ fontSize: 14, color: "#666", marginBottom: 4 }}>
+                Total Referrals
               </Text>
-              <Text style={{ fontSize: 12, color: "#666" }}>
-                Auto-convert points when reaching threshold
-              </Text>
-            </View>
-            <Switch
-              value={withdrawalSettings?.auto_withdraw || false}
-              onValueChange={async (value) => {
-                const { error } = await supabase
-                  .from("withdrawal_settings")
-                  .update({ auto_withdraw: value, updated_at: new Date() })
-                  .eq("user_id", driverId)
-                  .eq("user_type", "driver");
-                
-                if (!error) {
-                  fetchWithdrawalSettings();
-                  Alert.alert("Success", `Auto withdraw ${value ? "enabled" : "disabled"}`);
-                }
-              }}
-              trackColor={{ false: "#E5E7EB", true: "#183B5C" }}
-            />
-          </View>
-
-          {/* Auto Withdraw Threshold */}
-          {withdrawalSettings?.auto_withdraw && (
-            <View style={{ marginBottom: 12, paddingLeft: 8 }}>
-              <Text style={{ fontSize: 12, color: "#666", marginBottom: 4 }}>
-                Auto Withdraw Threshold
-              </Text>
-              <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C" }}>
-                {withdrawalSettings?.auto_withdraw_threshold 
-                  ? `${withdrawalSettings.auto_withdraw_threshold} points` 
-                  : "Not set"}
-              </Text>
-            </View>
-          )}
-
-          <Pressable
-            style={{
-              backgroundColor: "#F3F4F6",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              marginTop: 15,
-            }}
-            onPress={() => setShowWithdrawalSettingsModal(true)}
-          >
-            <Text style={{ color: "#183B5C", fontWeight: "600" }}>
-              Configure Withdrawal Settings
-            </Text>
-          </Pressable>
-        </View>
-      )}
-
-      {/* Referrals Section */}
-      <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: 20,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: "bold",
-            color: "#333",
-            marginBottom: 15,
-          }}
-        >
-          🤝 Referrals
-        </Text>
-
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <View>
-            <Text style={{ fontSize: 14, color: "#666", marginBottom: 4 }}>
-              Total Referrals
-            </Text>
-            <Text
-              style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}
-            >
-              {driverStats.referrals}
-            </Text>
-          </View>
-          {!isTestAccount && (
-            <Pressable
-              style={{
-                backgroundColor: "#183B5C",
-                paddingHorizontal: 16,
-                paddingVertical: 8,
-                borderRadius: 20,
-              }}
-              onPress={() => navigation.navigate("ReferralScreen")}
-            >
-              <Text style={{ color: "#FFF", fontWeight: "600" }}>Invite</Text>
-            </Pressable>
-          )}
-        </View>
-
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            marginTop: 10,
-            paddingTop: 10,
-            borderTopWidth: 1,
-            borderTopColor: "#F3F4F6",
-          }}
-        >
-          <Ionicons name="gift-outline" size={18} color="#F59E0B" />
-          <Text style={{ fontSize: 12, color: "#666", marginLeft: 6 }}>
-            Earn rewards for every successful referral!
-          </Text>
-        </View>
-      </View>
-
-      {/* Contact Information */}
-      <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: 20,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text
-          style={{
-            fontSize: 16,
-            fontWeight: "bold",
-            color: "#333",
-            marginBottom: 15,
-          }}
-        >
-          📞 Contact Information
-        </Text>
-
-        <View style={{ marginBottom: 12 }}>
-          <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
-            Phone Number
-          </Text>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Ionicons
-              name="call-outline"
-              size={16}
-              color="#183B5C"
-              style={{ marginRight: 8 }}
-            />
-            <Text style={{ fontSize: 16, color: "#333" }}>
-              {driver?.phone || "Not provided"}
-            </Text>
-          </View>
-        </View>
-
-        <View>
-          <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
-            Email Address
-          </Text>
-          <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <Ionicons
-              name="mail-outline"
-              size={16}
-              color="#183B5C"
-              style={{ marginRight: 8 }}
-            />
-            <Text style={{ fontSize: 16, color: "#333" }}>
-              {driver?.email || "Not provided"}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Vehicle Information */}
-      <Pressable
-        style={{
-          marginHorizontal: 20,
-          marginTop: 20,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-        onPress={() => !isTestAccount && setVehicleModal(true)}
-        disabled={isTestAccount}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 15,
-          }}
-        >
-          <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
-            🚲 Vehicle Information
-          </Text>
-          {!isTestAccount && <Ionicons name="pencil" size={18} color="#183B5C" />}
-        </View>
-
-        {vehicle ? (
-          <>
-            <View style={{ flexDirection: "row", marginBottom: 10 }}>
-              <Text style={{ width: 100, color: "#666" }}>Plate Number</Text>
-              <Text style={{ color: "#333", fontWeight: "500" }}>
-                {vehicle.plate_number}
-              </Text>
-            </View>
-            <View style={{ flexDirection: "row", marginBottom: 10 }}>
-              <Text style={{ width: 100, color: "#666" }}>Vehicle Type</Text>
               <Text
-                style={{
-                  color: "#333",
-                  fontWeight: "500",
-                  textTransform: "capitalize",
-                }}
+                style={{ fontSize: 24, fontWeight: "bold", color: "#183B5C" }}
               >
-                {vehicle.vehicle_type}
+                {driverStats.referrals}
               </Text>
             </View>
-            <View style={{ flexDirection: "row" }}>
-              <Text style={{ width: 100, color: "#666" }}>Color</Text>
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <View
-                  style={{
-                    width: 16,
-                    height: 16,
-                    borderRadius: 8,
-                    backgroundColor: vehicle.vehicle_color || "#999",
-                    marginRight: 6,
-                  }}
-                />
-                <Text style={{ color: "#333", fontWeight: "500" }}>
-                  {vehicle.vehicle_color || "Not specified"}
-                </Text>
-              </View>
-            </View>
-          </>
-        ) : (
-          <View style={{ alignItems: "center", padding: 20 }}>
-            <Ionicons name="bicycle" size={40} color="#D1D5DB" />
-            <Text style={{ color: "#9CA3AF", marginTop: 10 }}>
-              {isTestAccount ? "Vehicle info not available in test mode" : "No vehicle information added"}
-            </Text>
+
             {!isTestAccount && (
-              <Text style={{ color: "#183B5C", marginTop: 5 }}>
-                Tap to add vehicle details
-              </Text>
+              <Pressable
+                style={{
+                  backgroundColor: "#183B5C",
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  borderRadius: 20,
+                }}
+                onPress={() => navigation.navigate("ReferralScreen")}
+              >
+                <Text style={{ color: "#FFF", fontWeight: "600" }}>Invite</Text>
+              </Pressable>
             )}
           </View>
-        )}
-      </Pressable>
-
-      {/* Documents Status - Hide for test accounts */}
-      {!isTestAccount && (
-        <View
-          style={{
-            marginHorizontal: 20,
-            marginTop: 20,
-            backgroundColor: "#FFF",
-            borderRadius: 24,
-            padding: 20,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.05,
-            shadowRadius: 8,
-            elevation: 2,
-          }}
-        >
-          {/* ... existing documents content ... */}
-          <Text
-            style={{
-              fontSize: 16,
-              fontWeight: "bold",
-              color: "#333",
-              marginBottom: 15,
-            }}
-          >
-            📄 Documents
-          </Text>
 
           <View
             style={{
               flexDirection: "row",
-              justifyContent: "space-between",
-              marginBottom: 12,
-            }}
-          >
-            <Text style={{ color: "#666" }}>License</Text>
-            {documents?.license_number ? (
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-                <Text style={{ color: "#10B981", marginLeft: 4 }}>Verified</Text>
-              </View>
-            ) : (
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Ionicons name="alert-circle" size={16} color="#F59E0B" />
-                <Text style={{ color: "#F59E0B", marginLeft: 4 }}>Pending</Text>
-              </View>
-            )}
-          </View>
-
-          <Pressable
-            style={{
-              backgroundColor: "#F3F4F6",
-              padding: 12,
-              borderRadius: 12,
               alignItems: "center",
-              marginTop: 15,
+              marginTop: 10,
+              paddingTop: 10,
+              borderTopWidth: 1,
+              borderTopColor: "#F3F4F6",
             }}
-            onPress={() => navigation.navigate("DriverVerificationScreen")}
           >
-            <Text style={{ color: "#183B5C", fontWeight: "600" }}>
-              Manage Documents
+            <Ionicons name="gift-outline" size={18} color="#F59E0B" />
+            <Text style={{ fontSize: 12, color: "#666", marginLeft: 6 }}>
+              Earn rewards for every successful referral!
             </Text>
-          </Pressable>
+          </View>
         </View>
-      )}
 
-      {/* Subscription Info - Hide for test accounts */}
-      {!isTestAccount && (
+        {/* Contact Information Section */}
         <View
           style={{
             marginHorizontal: 20,
@@ -1559,7 +1254,6 @@ export default function DriverAccountScreen({ navigation }) {
             elevation: 2,
           }}
         >
-          {/* ... existing subscription content ... */}
           <Text
             style={{
               fontSize: 16,
@@ -1568,91 +1262,326 @@ export default function DriverAccountScreen({ navigation }) {
               marginBottom: 15,
             }}
           >
-            ⭐ Subscription
+            📞 Contact Information
           </Text>
 
-          {activeSubscription ? (
+          <View style={{ marginBottom: 12 }}>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+              Phone Number
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Ionicons
+                name="call-outline"
+                size={16}
+                color="#183B5C"
+                style={{ marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 16, color: "#333" }}>
+                {driver?.phone || "Not provided"}
+              </Text>
+            </View>
+          </View>
+
+          <View>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+              Email Address
+            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Ionicons
+                name="mail-outline"
+                size={16}
+                color="#183B5C"
+                style={{ marginRight: 8 }}
+              />
+              <Text style={{ fontSize: 16, color: "#333" }}>
+                {driver?.email || "Not provided"}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Vehicle Information Section */}
+        <Pressable
+          style={{
+            marginHorizontal: 20,
+            marginTop: 20,
+            backgroundColor: "#FFF",
+            borderRadius: 24,
+            padding: 20,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.05,
+            shadowRadius: 8,
+            elevation: 2,
+          }}
+          onPress={() => !isTestAccount && setVehicleModal(true)}
+          disabled={isTestAccount}
+        >
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginBottom: 15,
+            }}
+          >
+            <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
+              🚲 Vehicle Information
+            </Text>
+            {!isTestAccount && <Ionicons name="pencil" size={18} color="#183B5C" />}
+          </View>
+
+          {vehicle ? (
             <>
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  marginBottom: 10,
-                }}
-              >
-                <Text style={{ color: "#666" }}>Current Plan</Text>
-                <Text style={{ color: "#333", fontWeight: "600" }}>
-                  {activeSubscription.subscription_plans?.plan_name}
+              <View style={{ flexDirection: "row", marginBottom: 10 }}>
+                <Text style={{ width: 100, color: "#666" }}>Plate Number</Text>
+                <Text style={{ color: "#333", fontWeight: "500" }}>
+                  {vehicle.plate_number}
                 </Text>
               </View>
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  marginBottom: 10,
-                }}
-              >
-                <Text style={{ color: "#666" }}>Valid Until</Text>
-                <Text style={{ color: "#333", fontWeight: "600" }}>
-                  {formatDate(activeSubscription.end_date)}
+              <View style={{ flexDirection: "row", marginBottom: 10 }}>
+                <Text style={{ width: 100, color: "#666" }}>Vehicle Type</Text>
+                <Text
+                  style={{
+                    color: "#333",
+                    fontWeight: "500",
+                    textTransform: "capitalize",
+                  }}
+                >
+                  {vehicle.vehicle_type}
                 </Text>
+              </View>
+              <View style={{ flexDirection: "row" }}>
+                <Text style={{ width: 100, color: "#666" }}>Color</Text>
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <View
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: 8,
+                      backgroundColor: vehicle.vehicle_color || "#999",
+                      marginRight: 6,
+                    }}
+                  />
+                  <Text style={{ color: "#333", fontWeight: "500" }}>
+                    {vehicle.vehicle_color || "Not specified"}
+                  </Text>
+                </View>
               </View>
             </>
           ) : (
-            <View style={{ alignItems: "center", padding: 15 }}>
-              <Ionicons name="card-outline" size={40} color="#D1D5DB" />
-              <Text
-                style={{ color: "#9CA3AF", marginTop: 10, textAlign: "center" }}
-              >
-                No active subscription
+            <View style={{ alignItems: "center", padding: 20 }}>
+              <Ionicons name="bicycle" size={40} color="#D1D5DB" />
+              <Text style={{ color: "#9CA3AF", marginTop: 10 }}>
+                {isTestAccount
+                  ? "Vehicle info not available in test mode"
+                  : "No vehicle information added"}
               </Text>
+              {!isTestAccount && (
+                <Text style={{ color: "#183B5C", marginTop: 5 }}>
+                  Tap to add vehicle details
+                </Text>
+              )}
             </View>
           )}
+        </Pressable>
 
-          <Pressable
+        {/* Documents Section */}
+        {!isTestAccount && (
+          <View
             style={{
-              backgroundColor: "#183B5C",
-              padding: 12,
-              borderRadius: 12,
-              alignItems: "center",
-              marginTop: 15,
+              marginHorizontal: 20,
+              marginTop: 20,
+              backgroundColor: "#FFF",
+              borderRadius: 24,
+              padding: 20,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.05,
+              shadowRadius: 8,
+              elevation: 2,
             }}
-            onPress={() => navigation.navigate("SubscriptionScreen")}
           >
-            <Text style={{ color: "#FFF", fontWeight: "600" }}>
-              {activeSubscription ? "Manage Subscription" : "Subscribe Now"}
+            <Text
+              style={{
+                fontSize: 16,
+                fontWeight: "bold",
+                color: "#333",
+                marginBottom: 15,
+              }}
+            >
+              📄 Documents
             </Text>
-          </Pressable>
-        </View>
-      )}
 
-      {/* Account Settings */}
-      <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: 20,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <Text style={{ color: "#666" }}>License</Text>
+              {documents?.license_number ? (
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+                  <Text style={{ color: "#10B981", marginLeft: 4 }}>Verified</Text>
+                </View>
+              ) : (
+                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                  <Ionicons name="alert-circle" size={16} color="#F59E0B" />
+                  <Text style={{ color: "#F59E0B", marginLeft: 4 }}>Pending</Text>
+                </View>
+              )}
+            </View>
+
+            <Pressable
+              style={{
+                backgroundColor: "#F3F4F6",
+                padding: 12,
+                borderRadius: 12,
+                alignItems: "center",
+                marginTop: 15,
+              }}
+              onPress={() => navigation.navigate("DriverVerificationScreen")}
+            >
+              <Text style={{ color: "#183B5C", fontWeight: "600" }}>
+                Manage Documents
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Subscription Section */}
+        {!isTestAccount && (
+          <View
+            style={{
+              marginHorizontal: 20,
+              marginTop: 20,
+              backgroundColor: "#FFF",
+              borderRadius: 24,
+              padding: 20,
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.05,
+              shadowRadius: 8,
+              elevation: 2,
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 16,
+                fontWeight: "bold",
+                color: "#333",
+                marginBottom: 15,
+              }}
+            >
+              ⭐ Subscription
+            </Text>
+
+            {activeSubscription ? (
+              <>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    marginBottom: 10,
+                  }}
+                >
+                  <Text style={{ color: "#666" }}>Current Plan</Text>
+                  <Text style={{ color: "#333", fontWeight: "600" }}>
+                    {activeSubscription.subscription_plans?.plan_name}
+                  </Text>
+                </View>
+
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    marginBottom: 10,
+                  }}
+                >
+                  <Text style={{ color: "#666" }}>Valid Until</Text>
+                  <Text style={{ color: "#333", fontWeight: "600" }}>
+                    {formatDate(activeSubscription.end_date)}
+                  </Text>
+                </View>
+              </>
+            ) : (
+              <View style={{ alignItems: "center", padding: 15 }}>
+                <Ionicons name="card-outline" size={40} color="#D1D5DB" />
+                <Text
+                  style={{ color: "#9CA3AF", marginTop: 10, textAlign: "center" }}
+                >
+                  No active subscription
+                </Text>
+              </View>
+            )}
+
+            <Pressable
+              style={{
+                backgroundColor: "#183B5C",
+                padding: 12,
+                borderRadius: 12,
+                alignItems: "center",
+                marginTop: 15,
+              }}
+              onPress={() => navigation.navigate("SubscriptionScreen")}
+            >
+              <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                {activeSubscription ? "Manage Subscription" : "Subscribe Now"}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Account Settings Section */}
+        <View
           style={{
-            fontSize: 16,
-            fontWeight: "bold",
-            color: "#333",
-            marginBottom: 15,
+            marginHorizontal: 20,
+            marginTop: 20,
+            backgroundColor: "#FFF",
+            borderRadius: 24,
+            padding: 20,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.05,
+            shadowRadius: 8,
+            elevation: 2,
           }}
         >
-          ⚙️ Account Settings
-        </Text>
+          <Text
+            style={{
+              fontSize: 16,
+              fontWeight: "bold",
+              color: "#333",
+              marginBottom: 15,
+            }}
+          >
+            ⚙️ Account Settings
+          </Text>
 
-        {!isTestAccount && (
+          {!isTestAccount && (
+            <Pressable
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                paddingVertical: 12,
+                borderBottomWidth: 1,
+                borderBottomColor: "#F3F4F6",
+              }}
+              onPress={() => navigation.navigate("DriverVerificationScreen")}
+            >
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={22}
+                color="#183B5C"
+                style={{ width: 30 }}
+              />
+              <Text style={{ flex: 1, color: "#333" }}>Verification Status</Text>
+              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            </Pressable>
+          )}
+
           <Pressable
             style={{
               flexDirection: "row",
@@ -1661,112 +1590,295 @@ export default function DriverAccountScreen({ navigation }) {
               borderBottomWidth: 1,
               borderBottomColor: "#F3F4F6",
             }}
-            onPress={() => navigation.navigate("DriverVerificationScreen")}
+            onPress={() => Linking.openURL("https://sakayna-v1.netlify.app/help")}
           >
             <Ionicons
-              name="shield-checkmark-outline"
+              name="help-circle-outline"
               size={22}
               color="#183B5C"
               style={{ width: 30 }}
             />
-            <Text style={{ flex: 1, color: "#333" }}>Verification Status</Text>
+            <Text style={{ flex: 1, color: "#333" }}>Help Center</Text>
             <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </Pressable>
-        )}
 
-        <Pressable
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: "#F3F4F6",
-          }}
-          onPress={() => Linking.openURL("https://sakayna.ph/help")}
-        >
-          <Ionicons
-            name="help-circle-outline"
-            size={22}
-            color="#183B5C"
-            style={{ width: 30 }}
-          />
-          <Text style={{ flex: 1, color: "#333" }}>Help Center</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+          <Pressable
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: "#F3F4F6",
+            }}
+            onPress={() => Linking.openURL("https://sakayna-v1.netlify.app/terms")}
+          >
+            <Ionicons
+              name="document-text-outline"
+              size={22}
+              color="#183B5C"
+              style={{ width: 30 }}
+            />
+            <Text style={{ flex: 1, color: "#333" }}>Terms & Conditions</Text>
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          </Pressable>
 
-        <Pressable
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: "#F3F4F6",
-          }}
-          onPress={() => Linking.openURL("https://sakayna.ph/terms")}
-        >
-          <Ionicons
-            name="document-text-outline"
-            size={22}
-            color="#183B5C"
-            style={{ width: 30 }}
-          />
-          <Text style={{ flex: 1, color: "#333" }}>Terms & Conditions</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+          <Pressable
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: "#F3F4F6",
+            }}
+            onPress={() => Linking.openURL("https://sakayna-v1.netlify.app/privacy")}
+          >
+            <Ionicons
+              name="lock-closed-outline"
+              size={22}
+              color="#183B5C"
+              style={{ width: 30 }}
+            />
+            <Text style={{ flex: 1, color: "#333" }}>Privacy Policy</Text>
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          </Pressable>
 
-        <Pressable
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: "#F3F4F6",
-          }}
-          onPress={() => Linking.openURL("https://sakayna.ph/privacy")}
-        >
-          <Ionicons
-            name="lock-closed-outline"
-            size={22}
-            color="#183B5C"
-            style={{ width: 30 }}
-          />
-          <Text style={{ flex: 1, color: "#333" }}>Privacy Policy</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+          <Pressable
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingVertical: 12,
+            }}
+            onPress={handleSignOut}
+          >
+            <Ionicons
+              name="log-out-outline"
+              size={22}
+              color="#EF4444"
+              style={{ width: 30 }}
+            />
+            <Text style={{ flex: 1, color: "#EF4444", fontWeight: "600" }}>
+              Sign Out
+            </Text>
+          </Pressable>
+        </View>
 
-        <Pressable
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            paddingVertical: 12,
-          }}
-          onPress={handleSignOut}
-        >
-          <Ionicons
-            name="log-out-outline"
-            size={22}
-            color="#EF4444"
-            style={{ width: 30 }}
-          />
-          <Text style={{ flex: 1, color: "#EF4444", fontWeight: "600" }}>
-            Sign Out
+        <View style={{ alignItems: "center", marginTop: 20, marginBottom: 10 }}>
+          <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
+            SakayNa Driver v1.0.0
           </Text>
-        </Pressable>
-      </View>
+          {!isTestAccount && (
+            <Text style={{ fontSize: 11, color: "#D1D5DB", marginTop: 2 }}>
+              Member since: {formatDate(driver?.created_at)}
+            </Text>
+          )}
+        </View>
+      </ScrollView>
 
-      {/* App Info */}
-      <View style={{ alignItems: "center", marginTop: 20, marginBottom: 10 }}>
-        <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
-          SakayNa Driver v1.0.0
-        </Text>
-        {!isTestAccount && (
-          <Text style={{ fontSize: 11, color: "#D1D5DB", marginTop: 2 }}>
-            Member since: {formatDate(driver?.created_at)}
-          </Text>
-        )}
-      </View>
+      {/* Settings Modal */}
+      <Modal
+        visible={settingsModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setSettingsModal(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={{ flex: 1 }}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View
+              style={{
+                flex: 1,
+                backgroundColor: "rgba(0,0,0,0.5)",
+                justifyContent: "flex-end",
+              }}
+            >
+              <View
+                style={{
+                  backgroundColor: "#FFF",
+                  borderTopLeftRadius: 24,
+                  borderTopRightRadius: 24,
+                  padding: 20,
+                  maxHeight: "80%",
+                }}
+              >
+                <View
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 20,
+                  }}
+                >
+                  <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
+                    Settings
+                  </Text>
+                  <Pressable onPress={() => setSettingsModal(false)}>
+                    <Ionicons name="close" size={24} color="#666" />
+                  </Pressable>
+                </View>
 
-      {/* QR Code Full View Modal */}
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  {/* Notifications */}
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      paddingVertical: 15,
+                      borderBottomWidth: 1,
+                      borderBottomColor: "#F3F4F6",
+                    }}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: "500", color: "#333" }}>
+                        Notifications
+                      </Text>
+                      <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                        Receive trip alerts and updates
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => setNotificationsEnabled(!notificationsEnabled)}
+                      style={{
+                        width: 50,
+                        height: 28,
+                        borderRadius: 14,
+                        backgroundColor: notificationsEnabled ? "#183B5C" : "#D1D5DB",
+                        padding: 2,
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 12,
+                          backgroundColor: "#FFF",
+                          transform: [{ translateX: notificationsEnabled ? 24 : 0 }],
+                        }}
+                      />
+                    </Pressable>
+                  </View>
+
+                  {/* Dark Mode */}
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      paddingVertical: 15,
+                      borderBottomWidth: 1,
+                      borderBottomColor: "#F3F4F6",
+                    }}
+                  >
+                    <View>
+                      <Text style={{ fontSize: 16, fontWeight: "500", color: "#333" }}>
+                        Dark Mode
+                      </Text>
+                      <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                        Use dark theme
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => setDarkModeEnabled(!darkModeEnabled)}
+                      style={{
+                        width: 50,
+                        height: 28,
+                        borderRadius: 14,
+                        backgroundColor: darkModeEnabled ? "#183B5C" : "#D1D5DB",
+                        padding: 2,
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: 24,
+                          height: 24,
+                          borderRadius: 12,
+                          backgroundColor: "#FFF",
+                          transform: [{ translateX: darkModeEnabled ? 24 : 0 }],
+                        }}
+                      />
+                    </Pressable>
+                  </View>
+
+                  {/* Language Selection */}
+                  <View
+                    style={{
+                      paddingVertical: 15,
+                      borderBottomWidth: 1,
+                      borderBottomColor: "#F3F4F6",
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, fontWeight: "500", color: "#333", marginBottom: 10 }}>
+                      Language
+                    </Text>
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      {["english", "tagalog", "cebuano"].map((lang) => (
+                        <Pressable
+                          key={lang}
+                          style={[
+                            {
+                              flex: 1,
+                              padding: 10,
+                              borderRadius: 12,
+                              borderWidth: 1,
+                              alignItems: "center",
+                            },
+                            language === lang
+                              ? { borderColor: "#183B5C", backgroundColor: "#E6E9F0" }
+                              : { borderColor: "#E5E7EB" },
+                          ]}
+                          onPress={() => setLanguage(lang)}
+                        >
+                          <Text
+                            style={{
+                              color: language === lang ? "#183B5C" : "#666",
+                              fontWeight: language === lang ? "600" : "400",
+                              textTransform: "capitalize",
+                            }}
+                          >
+                            {lang}
+                          </Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  </View>
+
+                  <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
+                    <Pressable
+                      style={{
+                        flex: 1,
+                        backgroundColor: "#F3F4F6",
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                      onPress={() => setSettingsModal(false)}
+                    >
+                      <Text style={{ color: "#333", fontWeight: "600" }}>Cancel</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={{
+                        flex: 1,
+                        backgroundColor: "#183B5C",
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: "center",
+                      }}
+                      onPress={updateSettings}
+                    >
+                      <Text style={{ color: "#FFF", fontWeight: "600" }}>Save Changes</Text>
+                    </Pressable>
+                  </View>
+                </ScrollView>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* QR Modal */}
       <Modal
         visible={qrModalVisible}
         transparent={true}
@@ -1844,339 +1956,7 @@ export default function DriverAccountScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* Withdrawal Settings Modal */}
-      {!isTestAccount && (
-        <Modal
-          visible={showWithdrawalSettingsModal}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowWithdrawalSettingsModal(false)}
-        >
-          {/* ... existing withdrawal settings modal content ... */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={{ flex: 1 }}
-          >
-            <View
-              style={{
-                flex: 1,
-                backgroundColor: "rgba(0,0,0,0.5)",
-                justifyContent: "flex-end",
-              }}
-            >
-              <View
-                style={{
-                  backgroundColor: "#FFF",
-                  borderTopLeftRadius: 24,
-                  borderTopRightRadius: 24,
-                  padding: 20,
-                  paddingBottom: Platform.OS === 'ios' ? 40 : 20,
-                  maxHeight: "85%",
-                }}
-              >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 20,
-                  }}
-                >
-                  <Text
-                    style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
-                  >
-                    Withdrawal Settings
-                  </Text>
-                  <Pressable onPress={() => setShowWithdrawalSettingsModal(false)}>
-                    <Ionicons name="close" size={24} color="#666" />
-                  </Pressable>
-                </View>
-
-                <ScrollView 
-                  showsVerticalScrollIndicator={true}
-                  contentContainerStyle={{ paddingBottom: 20 }}
-                >
-                  {/* Auto Withdraw Toggle */}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <View>
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          fontWeight: "600",
-                          color: "#333",
-                        }}
-                      >
-                        Auto Withdraw
-                      </Text>
-                      <Text style={{ fontSize: 12, color: "#666" }}>
-                        Automatically convert points to cash
-                      </Text>
-                    </View>
-                    <Switch
-                      value={editWithdrawalSettings.auto_withdraw}
-                      onValueChange={(value) =>
-                        setEditWithdrawalSettings({
-                          ...editWithdrawalSettings,
-                          auto_withdraw: value,
-                        })
-                      }
-                      trackColor={{ false: "#E5E7EB", true: "#183B5C" }}
-                    />
-                  </View>
-
-                  {/* Auto Withdraw Threshold */}
-                  {editWithdrawalSettings.auto_withdraw && (
-                    <View style={{ marginBottom: 20 }}>
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          fontWeight: "600",
-                          color: "#333",
-                          marginBottom: 8,
-                        }}
-                      >
-                        Auto Withdraw Threshold (Points)
-                      </Text>
-                      <TextInput
-                        style={{
-                          borderWidth: 1,
-                          borderColor: "#E5E7EB",
-                          borderRadius: 12,
-                          padding: 12,
-                          fontSize: 16,
-                        }}
-                        placeholder="e.g., 5000"
-                        keyboardType="numeric"
-                        value={editWithdrawalSettings.auto_withdraw_threshold}
-                        onChangeText={(text) =>
-                          setEditWithdrawalSettings({
-                            ...editWithdrawalSettings,
-                            auto_withdraw_threshold: text,
-                          })
-                        }
-                      />
-                    </View>
-                  )}
-
-                  {/* Daily Limit */}
-                  <View style={{ marginBottom: 20 }}>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Daily Withdrawal Limit (₱)
-                    </Text>
-                    <TextInput
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#E5E7EB",
-                        borderRadius: 12,
-                        padding: 12,
-                        fontSize: 16,
-                      }}
-                      placeholder="No limit"
-                      keyboardType="numeric"
-                      value={editWithdrawalSettings.daily_withdrawal_limit}
-                      onChangeText={(text) =>
-                        setEditWithdrawalSettings({
-                          ...editWithdrawalSettings,
-                          daily_withdrawal_limit: text,
-                        })
-                      }
-                    />
-                  </View>
-
-                  {/* Weekly Limit */}
-                  <View style={{ marginBottom: 20 }}>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Weekly Withdrawal Limit (₱)
-                    </Text>
-                    <TextInput
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#E5E7EB",
-                        borderRadius: 12,
-                        padding: 12,
-                        fontSize: 16,
-                      }}
-                      placeholder="No limit"
-                      keyboardType="numeric"
-                      value={editWithdrawalSettings.weekly_withdrawal_limit}
-                      onChangeText={(text) =>
-                        setEditWithdrawalSettings({
-                          ...editWithdrawalSettings,
-                          weekly_withdrawal_limit: text,
-                        })
-                      }
-                    />
-                  </View>
-
-                  {/* Monthly Limit */}
-                  <View style={{ marginBottom: 20 }}>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Monthly Withdrawal Limit (₱)
-                    </Text>
-                    <TextInput
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#E5E7EB",
-                        borderRadius: 12,
-                        padding: 12,
-                        fontSize: 16,
-                      }}
-                      placeholder="No limit"
-                      keyboardType="numeric"
-                      value={editWithdrawalSettings.monthly_withdrawal_limit}
-                      onChangeText={(text) =>
-                        setEditWithdrawalSettings({
-                          ...editWithdrawalSettings,
-                          monthly_withdrawal_limit: text,
-                        })
-                      }
-                    />
-                  </View>
-
-                  {/* Withdrawal PIN */}
-                  <View style={{ marginBottom: 20 }}>
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Withdrawal PIN
-                    </Text>
-                    <TextInput
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#E5E7EB",
-                        borderRadius: 12,
-                        padding: 12,
-                        fontSize: 16,
-                        backgroundColor: "#FFF",
-                      }}
-                      placeholder="••••••"
-                      placeholderTextColor="#9CA3AF"
-                      keyboardType="number-pad"
-                      secureTextEntry={true}
-                      maxLength={6}
-                      value={editWithdrawalSettings.withdrawal_pin}
-                      onChangeText={(text) =>
-                        setEditWithdrawalSettings({
-                          ...editWithdrawalSettings,
-                          withdrawal_pin: text,
-                        })
-                      }
-                    />
-                    <Text style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
-                      {withdrawalSettings?.withdrawal_pin
-                        ? "Leave blank to keep current PIN"
-                        : "Optional: Add extra security for withdrawals"}
-                    </Text>
-                  </View>
-
-                  {/* Notifications Toggle */}
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: 30,
-                    }}
-                  >
-                    <View>
-                      <Text
-                        style={{
-                          fontSize: 14,
-                          fontWeight: "600",
-                          color: "#333",
-                        }}
-                      >
-                        Withdrawal Notifications
-                      </Text>
-                      <Text style={{ fontSize: 12, color: "#666" }}>
-                        Receive alerts for withdrawal updates
-                      </Text>
-                    </View>
-                    <Switch
-                      value={editWithdrawalSettings.notifications_enabled}
-                      onValueChange={(value) =>
-                        setEditWithdrawalSettings({
-                          ...editWithdrawalSettings,
-                          notifications_enabled: value,
-                        })
-                      }
-                      trackColor={{ false: "#E5E7EB", true: "#183B5C" }}
-                    />
-                  </View>
-
-                  {/* Save Button */}
-                  <View style={{ flexDirection: "row", gap: 10, marginBottom: 20 }}>
-                    <Pressable
-                      style={{
-                        flex: 1,
-                        backgroundColor: "#F3F4F6",
-                        padding: 14,
-                        borderRadius: 12,
-                        alignItems: "center",
-                      }}
-                      onPress={() => setShowWithdrawalSettingsModal(false)}
-                    >
-                      <Text style={{ color: "#333", fontWeight: "600" }}>
-                        Cancel
-                      </Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={{
-                        flex: 1,
-                        backgroundColor: "#183B5C",
-                        padding: 14,
-                        borderRadius: 12,
-                        alignItems: "center",
-                      }}
-                      onPress={saveWithdrawalSettings}
-                    >
-                      <Text style={{ color: "#FFF", fontWeight: "600" }}>
-                        Save Settings
-                      </Text>
-                    </Pressable>
-                  </View>
-                </ScrollView>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-      )}
-
-      {/* Edit Profile Modal - Only show for normal users */}
+      {/* Edit Profile Modal */}
       {!isTestAccount && (
         <Modal
           visible={editProfileModal}
@@ -2222,7 +2002,6 @@ export default function DriverAccountScreen({ navigation }) {
                   </View>
 
                   <ScrollView showsVerticalScrollIndicator={true}>
-                    {/* Name Display (Read-only) */}
                     <Text
                       style={{
                         fontSize: 14,
@@ -2248,7 +2027,6 @@ export default function DriverAccountScreen({ navigation }) {
                       </Text>
                     </View>
 
-                    {/* Phone Number */}
                     <Text
                       style={{
                         fontSize: 14,
@@ -2274,7 +2052,6 @@ export default function DriverAccountScreen({ navigation }) {
                       onChangeText={setEditPhone}
                     />
 
-                    {/* Email Address */}
                     <Text
                       style={{
                         fontSize: 14,
@@ -2301,7 +2078,6 @@ export default function DriverAccountScreen({ navigation }) {
                       onChangeText={setEditEmail}
                     />
 
-                    {/* Buttons */}
                     <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
                       <Pressable
                         style={{
@@ -2339,7 +2115,7 @@ export default function DriverAccountScreen({ navigation }) {
         </Modal>
       )}
 
-      {/* Vehicle Modal - Only show for normal users */}
+      {/* Vehicle Modal */}
       {!isTestAccount && (
         <Modal
           visible={vehicleModal}
@@ -2376,9 +2152,7 @@ export default function DriverAccountScreen({ navigation }) {
                       marginBottom: 20,
                     }}
                   >
-                    <Text
-                      style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
-                    >
+                    <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
                       Vehicle Information
                     </Text>
                     <Pressable onPress={() => setVehicleModal(false)}>
@@ -2426,9 +2200,7 @@ export default function DriverAccountScreen({ navigation }) {
                     >
                       Vehicle Type
                     </Text>
-                    <View
-                      style={{ flexDirection: "row", marginBottom: 15, gap: 10 }}
-                    >
+                    <View style={{ flexDirection: "row", marginBottom: 15, gap: 10 }}>
                       {["motorcycle", "tricycle"].map((type) => (
                         <Pressable
                           key={type}
@@ -2441,22 +2213,13 @@ export default function DriverAccountScreen({ navigation }) {
                               alignItems: "center",
                             },
                             editVehicleType === type
-                              ? {
-                                  borderColor: "#183B5C",
-                                  backgroundColor: "#E6E9F0",
-                                }
+                              ? { borderColor: "#183B5C", backgroundColor: "#E6E9F0" }
                               : { borderColor: "#E5E7EB" },
                           ]}
                           onPress={() => setEditVehicleType(type)}
                         >
                           <Ionicons
-                            name={
-                              type === "motorcycle"
-                                ? "bicycle"
-                                : type === "tricycle"
-                                  ? "car-sport"
-                                  : "car"
-                            }
+                            name={type === "motorcycle" ? "bicycle" : "car-sport"}
                             size={20}
                             color={editVehicleType === type ? "#183B5C" : "#9CA3AF"}
                           />
@@ -2492,64 +2255,51 @@ export default function DriverAccountScreen({ navigation }) {
                         flexWrap: "wrap",
                       }}
                     >
-                      {[
-                        "Red",
-                        "Blue",
-                        "Black",
-                        "White",
-                        "Silver",
-                        "Gray",
-                        "Green",
-                        "Yellow",
-                      ].map((color) => (
-                        <Pressable
-                          key={color}
-                          style={[
-                            {
-                              paddingHorizontal: 16,
-                              paddingVertical: 8,
-                              borderRadius: 20,
-                              borderWidth: 1,
-                            },
-                            editVehicleColor.toLowerCase() === color.toLowerCase()
-                              ? {
-                                  borderColor: "#183B5C",
-                                  backgroundColor: "#E6E9F0",
-                                }
-                              : { borderColor: "#E5E7EB" },
-                          ]}
-                          onPress={() => setEditVehicleColor(color)}
-                        >
-                          <View style={{ flexDirection: "row", alignItems: "center" }}>
-                            <View
-                              style={{
-                                width: 12,
-                                height: 12,
-                                borderRadius: 6,
-                                backgroundColor: color.toLowerCase(),
-                                marginRight: 4,
-                              }}
-                            />
-                            <Text
-                              style={{
-                                fontSize: 12,
-                                color:
-                                  editVehicleColor.toLowerCase() ===
-                                  color.toLowerCase()
-                                    ? "#183B5C"
-                                    : "#666",
-                              }}
-                            >
-                              {color}
-                            </Text>
-                          </View>
-                        </Pressable>
-                      ))}
+                      {["Red", "Blue", "Black", "White", "Silver", "Gray", "Green", "Yellow"].map(
+                        (color) => (
+                          <Pressable
+                            key={color}
+                            style={[
+                              {
+                                paddingHorizontal: 16,
+                                paddingVertical: 8,
+                                borderRadius: 20,
+                                borderWidth: 1,
+                              },
+                              editVehicleColor.toLowerCase() === color.toLowerCase()
+                                ? { borderColor: "#183B5C", backgroundColor: "#E6E9F0" }
+                                : { borderColor: "#E5E7EB" },
+                            ]}
+                            onPress={() => setEditVehicleColor(color)}
+                          >
+                            <View style={{ flexDirection: "row", alignItems: "center" }}>
+                              <View
+                                style={{
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 6,
+                                  backgroundColor: color.toLowerCase(),
+                                  marginRight: 4,
+                                }}
+                              />
+                              <Text
+                                style={{
+                                  fontSize: 12,
+                                  color:
+                                    editVehicleColor.toLowerCase() === color.toLowerCase()
+                                      ? "#183B5C"
+                                      : "#666",
+                                }}
+                              >
+                                {color}
+                              </Text>
+                            </View>
+                          </Pressable>
+                        )
+                      )}
                     </View>
 
-                    <View
-                      style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}
-                    >
+                    <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
                       <Pressable
                         style={{
                           flex: 1,
@@ -2560,9 +2310,7 @@ export default function DriverAccountScreen({ navigation }) {
                         }}
                         onPress={() => setVehicleModal(false)}
                       >
-                        <Text style={{ color: "#333", fontWeight: "600" }}>
-                          Cancel
-                        </Text>
+                        <Text style={{ color: "#333", fontWeight: "600" }}>Cancel</Text>
                       </Pressable>
 
                       <Pressable
@@ -2575,9 +2323,7 @@ export default function DriverAccountScreen({ navigation }) {
                         }}
                         onPress={handleUpdateVehicle}
                       >
-                        <Text style={{ color: "#FFF", fontWeight: "600" }}>
-                          Save
-                        </Text>
+                        <Text style={{ color: "#FFF", fontWeight: "600" }}>Save</Text>
                       </Pressable>
                     </View>
                   </ScrollView>
@@ -2587,6 +2333,18 @@ export default function DriverAccountScreen({ navigation }) {
           </KeyboardAvoidingView>
         </Modal>
       )}
-    </ScrollView>
+
+      {/* Custom Alert */}
+      <CustomAlert
+        visible={alertVisible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        type={alertConfig.type}
+        onConfirm={alertConfig.onConfirm || hideAlert}
+        onCancel={alertConfig.onCancel}
+        confirmText={alertConfig.confirmText}
+        cancelText={alertConfig.cancelText}
+      />
+    </>
   );
 }

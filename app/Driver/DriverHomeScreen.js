@@ -2,10 +2,8 @@
 import React, { useState, useCallback, useRef, useEffect, memo } from "react";
 import * as RN from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
-import { LineChart } from "react-native-chart-kit";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
@@ -14,7 +12,6 @@ import { BlurView } from "expo-blur";
 const {
   View,
   Text,
-  Image,
   ScrollView,
   FlatList,
   Pressable,
@@ -34,24 +31,19 @@ const {
 // DESIGN TOKENS
 // ─────────────────────────────────────────────
 const COLORS = {
-  // Brand
-  navy: "#183B5C", // primary dark
-  navyLight: "#1E4A73", // hover / pressed navy
-  navyDim: "#EBF2FA", // navy tint bg
-  orange: "#E97A3E", // primary accent
-  orangeLight: "#FDF1EA", // orange tint bg
-  orangeDim: "#FBDECF", // orange progress fill bg
-
-  // Neutrals
-  ink: "#0F1923", // near-black text
-  inkMid: "#3D4D5C", // secondary text
-  gray500: "#6B7A8A", // muted text
-  gray300: "#BEC8D2", // borders / dividers
-  gray100: "#EEF1F4", // subtle bg
-  gray50: "#F6F8FA", // page bg
+  navy: "#183B5C",
+  navyLight: "#1E4A73",
+  navyDim: "#EBF2FA",
+  orange: "#E97A3E",
+  orangeLight: "#FDF1EA",
+  orangeDim: "#FBDECF",
+  ink: "#0F1923",
+  inkMid: "#3D4D5C",
+  gray500: "#6B7A8A",
+  gray300: "#BEC8D2",
+  gray100: "#EEF1F4",
+  gray50: "#F6F8FA",
   white: "#FFFFFF",
-
-  // Semantic
   green: "#16A34A",
   greenLight: "#DCFCE7",
   red: "#DC2626",
@@ -63,7 +55,7 @@ const COLORS = {
 // ─────────────────────────────────────────────
 // RESPONSIVE HELPERS
 // ─────────────────────────────────────────────
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const BASE_WIDTH = 390;
 const scale = SCREEN_WIDTH / BASE_WIDTH;
 const normalize = (size) => {
@@ -73,23 +65,15 @@ const normalize = (size) => {
 const rs = (size) => Math.round(size * Math.min(Math.max(scale, 0.8), 1.15));
 const isSmallScreen = SCREEN_WIDTH < 375;
 const isLargeScreen = SCREEN_WIDTH >= 768;
-const HP = isLargeScreen ? rs(40) : rs(20); // horizontal padding
-const BR = rs(16); // base border radius
+const HP = isLargeScreen ? rs(40) : rs(20);
+const BR = rs(16);
 const RECENT_TRIPS_DISPLAY_LIMIT = 3;
+
 // ─────────────────────────────────────────────
 // MODERN ALERT
 // ─────────────────────────────────────────────
 const ModernAlert = memo(
-  ({
-    visible,
-    title,
-    message,
-    type,
-    onClose,
-    onConfirm,
-    confirmText,
-    cancelText,
-  }) => {
+  ({ visible, title, message, type, onClose, onConfirm, confirmText, cancelText }) => {
     const slideAnim = useRef(new Animated.Value(60)).current;
     const opacityAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(0.94)).current;
@@ -97,23 +81,9 @@ const ModernAlert = memo(
     useEffect(() => {
       if (visible) {
         Animated.parallel([
-          Animated.spring(slideAnim, {
-            toValue: 0,
-            useNativeDriver: true,
-            damping: 18,
-            stiffness: 200,
-          }),
-          Animated.timing(opacityAnim, {
-            toValue: 1,
-            duration: 200,
-            useNativeDriver: true,
-          }),
-          Animated.spring(scaleAnim, {
-            toValue: 1,
-            useNativeDriver: true,
-            damping: 18,
-            stiffness: 200,
-          }),
+          Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, damping: 18, stiffness: 200 }),
+          Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+          Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, damping: 18, stiffness: 200 }),
         ]).start();
       } else {
         slideAnim.setValue(60);
@@ -123,48 +93,19 @@ const ModernAlert = memo(
     }, [visible]);
 
     const typeMap = {
-      success: {
-        icon: "checkmark-circle-outline",
-        bg: COLORS.greenLight,
-        fg: COLORS.green,
-      },
-      error: {
-        icon: "close-circle-outline",
-        bg: COLORS.redLight,
-        fg: COLORS.red,
-      },
-      warning: {
-        icon: "warning-outline",
-        bg: COLORS.orangeLight,
-        fg: COLORS.orange,
-      },
-      info: {
-        icon: "information-circle-outline",
-        bg: COLORS.navyDim,
-        fg: COLORS.navy,
-      },
+      success: { icon: "checkmark-circle-outline", bg: COLORS.greenLight, fg: COLORS.green },
+      error: { icon: "close-circle-outline", bg: COLORS.redLight, fg: COLORS.red },
+      warning: { icon: "warning-outline", bg: COLORS.orangeLight, fg: COLORS.orange },
+      info: { icon: "information-circle-outline", bg: COLORS.navyDim, fg: COLORS.navy },
     };
     const t = typeMap[type] || typeMap.info;
     const w = isLargeScreen ? 400 : Math.min(SCREEN_WIDTH * 0.88, 360);
 
     return (
-      <Modal
-        transparent
-        visible={visible}
-        animationType="none"
-        onRequestClose={onClose}
-      >
-        <BlurView
-          intensity={15}
-          style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }}
-        >
+      <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
+        <BlurView intensity={15} style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)" }}>
           <Animated.View
-            style={{
-              flex: 1,
-              justifyContent: "center",
-              alignItems: "center",
-              opacity: opacityAnim,
-            }}
+            style={{ flex: 1, justifyContent: "center", alignItems: "center", opacity: opacityAnim }}
           >
             <Animated.View
               style={{
@@ -180,66 +121,42 @@ const ModernAlert = memo(
                 elevation: 12,
               }}
             >
-              {/* Icon badge */}
               <View style={{ alignItems: "center", marginBottom: rs(20) }}>
                 <View
                   style={{
-                    width: rs(56),
-                    height: rs(56),
-                    borderRadius: rs(28),
-                    backgroundColor: t.bg,
-                    justifyContent: "center",
-                    alignItems: "center",
+                    width: rs(56), height: rs(56), borderRadius: rs(28),
+                    backgroundColor: t.bg, justifyContent: "center", alignItems: "center",
                   }}
                 >
                   <Ionicons name={t.icon} size={rs(32)} color={t.fg} />
                 </View>
               </View>
-
               <Text
                 style={{
-                  fontSize: normalize(18),
-                  fontWeight: "700",
-                  color: COLORS.navy,
-                  textAlign: "center",
-                  marginBottom: rs(8),
-                  letterSpacing: -0.3,
+                  fontSize: normalize(18), fontWeight: "700", color: COLORS.navy,
+                  textAlign: "center", marginBottom: rs(8), letterSpacing: -0.3,
                 }}
               >
                 {title}
               </Text>
               <Text
                 style={{
-                  fontSize: normalize(14),
-                  color: COLORS.gray500,
-                  textAlign: "center",
-                  marginBottom: rs(28),
-                  lineHeight: normalize(22),
+                  fontSize: normalize(14), color: COLORS.gray500, textAlign: "center",
+                  marginBottom: rs(28), lineHeight: normalize(22),
                 }}
               >
                 {message}
               </Text>
-
-              {/* Buttons */}
               <View style={{ flexDirection: "row", gap: rs(10) }}>
                 {cancelText && (
                   <TouchableOpacity
                     onPress={onClose}
                     style={{
-                      flex: 1,
-                      paddingVertical: rs(14),
-                      borderRadius: rs(12),
-                      backgroundColor: COLORS.gray100,
-                      alignItems: "center",
+                      flex: 1, paddingVertical: rs(14), borderRadius: rs(12),
+                      backgroundColor: COLORS.gray100, alignItems: "center",
                     }}
                   >
-                    <Text
-                      style={{
-                        fontSize: normalize(15),
-                        fontWeight: "600",
-                        color: COLORS.inkMid,
-                      }}
-                    >
+                    <Text style={{ fontSize: normalize(15), fontWeight: "600", color: COLORS.inkMid }}>
                       {cancelText}
                     </Text>
                   </TouchableOpacity>
@@ -248,20 +165,11 @@ const ModernAlert = memo(
                   <TouchableOpacity
                     onPress={onConfirm}
                     style={{
-                      flex: 1,
-                      paddingVertical: rs(14),
-                      borderRadius: rs(12),
-                      backgroundColor: COLORS.navy,
-                      alignItems: "center",
+                      flex: 1, paddingVertical: rs(14), borderRadius: rs(12),
+                      backgroundColor: COLORS.navy, alignItems: "center",
                     }}
                   >
-                    <Text
-                      style={{
-                        fontSize: normalize(15),
-                        fontWeight: "600",
-                        color: COLORS.white,
-                      }}
-                    >
+                    <Text style={{ fontSize: normalize(15), fontWeight: "600", color: COLORS.white }}>
                       {confirmText}
                     </Text>
                   </TouchableOpacity>
@@ -270,20 +178,11 @@ const ModernAlert = memo(
                   <TouchableOpacity
                     onPress={onClose}
                     style={{
-                      flex: 1,
-                      paddingVertical: rs(14),
-                      borderRadius: rs(12),
-                      backgroundColor: COLORS.navy,
-                      alignItems: "center",
+                      flex: 1, paddingVertical: rs(14), borderRadius: rs(12),
+                      backgroundColor: COLORS.navy, alignItems: "center",
                     }}
                   >
-                    <Text
-                      style={{
-                        fontSize: normalize(15),
-                        fontWeight: "600",
-                        color: COLORS.white,
-                      }}
-                    >
+                    <Text style={{ fontSize: normalize(15), fontWeight: "600", color: COLORS.white }}>
                       OK
                     </Text>
                   </TouchableOpacity>
@@ -301,89 +200,39 @@ const ModernAlert = memo(
 // PILL BADGE
 // ─────────────────────────────────────────────
 const Pill = ({ label, color, bg }) => (
-  <View
-    style={{
-      paddingHorizontal: rs(8),
-      paddingVertical: rs(3),
-      borderRadius: rs(20),
-      backgroundColor: bg,
-    }}
-  >
-    <Text
-      style={{
-        fontSize: normalize(10),
-        fontWeight: "700",
-        color,
-        letterSpacing: 0.5,
-      }}
-    >
+  <View style={{ paddingHorizontal: rs(8), paddingVertical: rs(3), borderRadius: rs(20), backgroundColor: bg }}>
+    <Text style={{ fontSize: normalize(10), fontWeight: "700", color, letterSpacing: 0.5 }}>
       {label}
     </Text>
   </View>
 );
 
 // ─────────────────────────────────────────────
-// WARNING BANNER  (minimal card style)
+// WARNING BANNER
 // ─────────────────────────────────────────────
-const WarningBanner = ({
-  icon,
-  title,
-  body,
-  buttonLabel,
-  onPress,
-  accentColor,
-  bgColor,
-}) => (
+const WarningBanner = ({ icon, title, body, buttonLabel, onPress, accentColor, bgColor }) => (
   <View
     style={{
-      marginHorizontal: HP,
-      marginTop: rs(12),
-      padding: rs(16),
-      borderRadius: BR,
-      backgroundColor: bgColor,
-      borderWidth: 1,
-      borderColor: accentColor + "30",
+      marginHorizontal: HP, marginTop: rs(12), padding: rs(16),
+      borderRadius: BR, backgroundColor: bgColor,
+      borderWidth: 1, borderColor: accentColor + "30",
     }}
   >
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "flex-start",
-        marginBottom: rs(8),
-      }}
-    >
+    <View style={{ flexDirection: "row", alignItems: "flex-start", marginBottom: rs(8) }}>
       <View
         style={{
-          width: rs(32),
-          height: rs(32),
-          borderRadius: rs(8),
-          backgroundColor: accentColor + "15",
-          justifyContent: "center",
-          alignItems: "center",
-          marginRight: rs(10),
-          marginTop: rs(1),
+          width: rs(32), height: rs(32), borderRadius: rs(8),
+          backgroundColor: accentColor + "15", justifyContent: "center",
+          alignItems: "center", marginRight: rs(10), marginTop: rs(1),
         }}
       >
         <Ionicons name={icon} size={rs(17)} color={accentColor} />
       </View>
       <View style={{ flex: 1 }}>
-        <Text
-          style={{
-            fontSize: normalize(13),
-            fontWeight: "700",
-            color: COLORS.navy,
-            marginBottom: rs(3),
-          }}
-        >
+        <Text style={{ fontSize: normalize(13), fontWeight: "700", color: COLORS.navy, marginBottom: rs(3) }}>
           {title}
         </Text>
-        <Text
-          style={{
-            fontSize: normalize(12),
-            color: COLORS.gray500,
-            lineHeight: normalize(18),
-          }}
-        >
+        <Text style={{ fontSize: normalize(12), color: COLORS.gray500, lineHeight: normalize(18) }}>
           {body}
         </Text>
       </View>
@@ -392,21 +241,11 @@ const WarningBanner = ({
       <Pressable
         onPress={onPress}
         style={({ pressed }) => ({
-          marginTop: rs(4),
-          paddingVertical: rs(10),
-          borderRadius: rs(10),
-          backgroundColor: pressed ? COLORS.navyLight : COLORS.navy,
-          alignItems: "center",
+          marginTop: rs(4), paddingVertical: rs(10), borderRadius: rs(10),
+          backgroundColor: pressed ? COLORS.navyLight : COLORS.navy, alignItems: "center",
         })}
       >
-        <Text
-          style={{
-            fontSize: normalize(13),
-            fontWeight: "600",
-            color: COLORS.white,
-            letterSpacing: 0.2,
-          }}
-        >
+        <Text style={{ fontSize: normalize(13), fontWeight: "600", color: COLORS.white, letterSpacing: 0.2 }}>
           {buttonLabel}
         </Text>
       </Pressable>
@@ -419,158 +258,68 @@ const WarningBanner = ({
 // ─────────────────────────────────────────────
 const TripItem = memo(({ item, navigation }) => {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-
   const onPressIn = () =>
-    Animated.spring(scaleAnim, {
-      toValue: 0.98,
-      useNativeDriver: true,
-      damping: 20,
-    }).start();
+    Animated.spring(scaleAnim, { toValue: 0.98, useNativeDriver: true, damping: 20 }).start();
   const onPressOut = () =>
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      useNativeDriver: true,
-      damping: 20,
-    }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, damping: 20 }).start();
 
   const pmColor =
-    item.paymentMethod === "gcash"
-      ? COLORS.navy
-      : item.paymentMethod === "cash"
-        ? COLORS.green
-        : COLORS.inkMid;
+    item.paymentMethod === "gcash" ? COLORS.navy :
+    item.paymentMethod === "cash" ? COLORS.green : COLORS.inkMid;
   const pmBg =
-    item.paymentMethod === "gcash"
-      ? COLORS.navyDim
-      : item.paymentMethod === "cash"
-        ? COLORS.greenLight
-        : COLORS.gray100;
+    item.paymentMethod === "gcash" ? COLORS.navyDim :
+    item.paymentMethod === "cash" ? COLORS.greenLight : COLORS.gray100;
 
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
       <Pressable
-        onPress={() =>
-          navigation.navigate("TripDetailsScreen", { tripId: item.id })
-        }
+        onPress={() => navigation.navigate("TripDetailsScreen", { tripId: item.id })}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
         style={{
-          backgroundColor: COLORS.white,
-          borderRadius: BR,
-          padding: rs(14),
-          marginBottom: rs(8),
-          flexDirection: "row",
-          alignItems: "center",
-          borderWidth: 1,
-          borderColor: COLORS.gray100,
+          backgroundColor: COLORS.white, borderRadius: BR, padding: rs(14),
+          marginBottom: rs(8), flexDirection: "row", alignItems: "center",
+          borderWidth: 1, borderColor: COLORS.gray100,
         }}
       >
-        {/* Payment icon */}
         <View
           style={{
-            width: rs(38),
-            height: rs(38),
-            borderRadius: rs(10),
-            backgroundColor: pmBg,
-            justifyContent: "center",
-            alignItems: "center",
-            marginRight: rs(12),
+            width: rs(38), height: rs(38), borderRadius: rs(10), backgroundColor: pmBg,
+            justifyContent: "center", alignItems: "center", marginRight: rs(12),
           }}
         >
           <Ionicons
             name={
-              item.paymentMethod === "gcash"
-                ? "logo-paypal"
-                : item.paymentMethod === "cash"
-                  ? "cash-outline"
-                  : "wallet-outline"
+              item.paymentMethod === "gcash" ? "logo-paypal" :
+              item.paymentMethod === "cash" ? "cash-outline" : "wallet-outline"
             }
             size={rs(18)}
             color={pmColor}
           />
         </View>
-
-        {/* Route */}
         <View style={{ flex: 1, marginRight: rs(12) }}>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginBottom: rs(3),
-            }}
-          >
-            <View
-              style={{
-                width: rs(6),
-                height: rs(6),
-                borderRadius: rs(3),
-                backgroundColor: COLORS.green,
-                marginRight: rs(6),
-              }}
-            />
-            <Text
-              style={{ fontSize: normalize(12), color: COLORS.inkMid, flex: 1 }}
-              numberOfLines={1}
-            >
+          <View style={{ flexDirection: "row", alignItems: "center", marginBottom: rs(3) }}>
+            <View style={{ width: rs(6), height: rs(6), borderRadius: rs(3), backgroundColor: COLORS.green, marginRight: rs(6) }} />
+            <Text style={{ fontSize: normalize(12), color: COLORS.inkMid, flex: 1 }} numberOfLines={1}>
               {item.from}
             </Text>
           </View>
-          <View
-            style={{
-              width: 1,
-              height: rs(8),
-              backgroundColor: COLORS.gray300,
-              marginLeft: rs(2.5),
-              marginBottom: rs(3),
-            }}
-          />
+          <View style={{ width: 1, height: rs(8), backgroundColor: COLORS.gray300, marginLeft: rs(2.5), marginBottom: rs(3) }} />
           <View style={{ flexDirection: "row", alignItems: "center" }}>
-            <View
-              style={{
-                width: rs(6),
-                height: rs(6),
-                borderRadius: rs(3),
-                backgroundColor: COLORS.red,
-                marginRight: rs(6),
-              }}
-            />
-            <Text
-              style={{ fontSize: normalize(12), color: COLORS.inkMid, flex: 1 }}
-              numberOfLines={1}
-            >
+            <View style={{ width: rs(6), height: rs(6), borderRadius: rs(3), backgroundColor: COLORS.red, marginRight: rs(6) }} />
+            <Text style={{ fontSize: normalize(12), color: COLORS.inkMid, flex: 1 }} numberOfLines={1}>
               {item.to}
             </Text>
           </View>
         </View>
-
-        {/* Meta */}
         <View style={{ alignItems: "flex-end" }}>
-          <Text
-            style={{
-              fontSize: normalize(15),
-              fontWeight: "700",
-              color: COLORS.navy,
-              letterSpacing: -0.3,
-            }}
-          >
+          <Text style={{ fontSize: normalize(15), fontWeight: "700", color: COLORS.navy, letterSpacing: -0.3 }}>
             {item.earnings}
           </Text>
-          <Text
-            style={{
-              fontSize: normalize(10),
-              color: COLORS.gray500,
-              marginTop: rs(2),
-            }}
-          >
+          <Text style={{ fontSize: normalize(10), color: COLORS.gray500, marginTop: rs(2) }}>
             {item.distance}
           </Text>
-          <Text
-            style={{
-              fontSize: normalize(10),
-              color: COLORS.gray300,
-              marginTop: rs(1),
-            }}
-          >
+          <Text style={{ fontSize: normalize(10), color: COLORS.gray300, marginTop: rs(1) }}>
             {item.time}
           </Text>
         </View>
@@ -585,45 +334,18 @@ const TripItem = memo(({ item, navigation }) => {
 const StatChip = ({ label, value, sub, accentColor }) => (
   <View
     style={{
-      flex: 1,
-      backgroundColor: COLORS.gray50,
-      padding: rs(14),
-      borderRadius: BR,
-      borderWidth: 1,
-      borderColor: COLORS.gray100,
+      flex: 1, backgroundColor: COLORS.gray50, padding: rs(14),
+      borderRadius: BR, borderWidth: 1, borderColor: COLORS.gray100,
     }}
   >
-    <Text
-      style={{
-        fontSize: normalize(11),
-        color: accentColor,
-        fontWeight: "600",
-        marginBottom: rs(4),
-        letterSpacing: 0.3,
-      }}
-    >
+    <Text style={{ fontSize: normalize(11), color: accentColor, fontWeight: "600", marginBottom: rs(4), letterSpacing: 0.3 }}>
       {label.toUpperCase()}
     </Text>
-    <Text
-      style={{
-        fontSize: normalize(22),
-        fontWeight: "800",
-        color: COLORS.navy,
-        letterSpacing: -0.5,
-      }}
-    >
+    <Text style={{ fontSize: normalize(22), fontWeight: "800", color: COLORS.navy, letterSpacing: -0.5 }}>
       {value}
     </Text>
     {sub ? (
-      <Text
-        style={{
-          fontSize: normalize(10),
-          color: COLORS.gray500,
-          marginTop: rs(2),
-        }}
-      >
-        {sub}
-      </Text>
+      <Text style={{ fontSize: normalize(10), color: COLORS.gray500, marginTop: rs(2) }}>{sub}</Text>
     ) : null}
   </View>
 );
@@ -632,43 +354,21 @@ const StatChip = ({ label, value, sub, accentColor }) => (
 // SECTION HEADER
 // ─────────────────────────────────────────────
 const SectionHeader = ({ icon, title, subtitle }) => (
-  <View
-    style={{ flexDirection: "row", alignItems: "center", marginBottom: rs(18) }}
-  >
+  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: rs(18) }}>
     <View
       style={{
-        width: rs(36),
-        height: rs(36),
-        borderRadius: rs(10),
-        backgroundColor: COLORS.navy,
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: rs(12),
+        width: rs(36), height: rs(36), borderRadius: rs(10), backgroundColor: COLORS.navy,
+        justifyContent: "center", alignItems: "center", marginRight: rs(12),
       }}
     >
       <Ionicons name={icon} size={rs(18)} color={COLORS.orange} />
     </View>
     <View style={{ flex: 1 }}>
-      <Text
-        style={{
-          fontSize: normalize(16),
-          fontWeight: "700",
-          color: COLORS.navy,
-          letterSpacing: -0.3,
-        }}
-      >
+      <Text style={{ fontSize: normalize(16), fontWeight: "700", color: COLORS.navy, letterSpacing: -0.3 }}>
         {title}
       </Text>
       {subtitle ? (
-        <Text
-          style={{
-            fontSize: normalize(11),
-            color: COLORS.gray500,
-            marginTop: rs(1),
-          }}
-        >
-          {subtitle}
-        </Text>
+        <Text style={{ fontSize: normalize(11), color: COLORS.gray500, marginTop: rs(1) }}>{subtitle}</Text>
       ) : null}
     </View>
   </View>
@@ -679,75 +379,26 @@ const SectionHeader = ({ icon, title, subtitle }) => (
 // ─────────────────────────────────────────────
 const MissionProgress = memo(({ missionProgress }) => {
   if (!missionProgress) return null;
-  const pct = Math.min(
-    (missionProgress.actual_rides / missionProgress.target_rides) * 100,
-    100,
-  );
+  const pct = Math.min((missionProgress.actual_rides / missionProgress.target_rides) * 100, 100);
   const done = pct >= 100;
-
   return (
     <View
       style={{
-        flex: 1,
-        backgroundColor: done ? COLORS.greenLight : COLORS.gray50,
-        padding: rs(12),
-        borderRadius: BR,
-        borderWidth: 1,
+        flex: 1, backgroundColor: done ? COLORS.greenLight : COLORS.gray50,
+        padding: rs(12), borderRadius: BR, borderWidth: 1,
         borderColor: done ? COLORS.green + "30" : COLORS.gray100,
       }}
     >
-      <View
-        style={{
-          flexDirection: "row",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: rs(8),
-        }}
-      >
-        <Text
-          style={{
-            fontSize: normalize(12),
-            fontWeight: "700",
-            color: COLORS.navy,
-          }}
-        >
-          🎯 Mission
-        </Text>
-        <Text
-          style={{
-            fontSize: normalize(11),
-            fontWeight: "700",
-            color: done ? COLORS.green : COLORS.gray500,
-          }}
-        >
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: rs(8) }}>
+        <Text style={{ fontSize: normalize(12), fontWeight: "700", color: COLORS.navy }}>🎯 Mission</Text>
+        <Text style={{ fontSize: normalize(11), fontWeight: "700", color: done ? COLORS.green : COLORS.gray500 }}>
           {missionProgress.actual_rides}/{missionProgress.target_rides}
         </Text>
       </View>
-      {/* Progress bar */}
-      <View
-        style={{
-          height: rs(4),
-          backgroundColor: COLORS.gray100,
-          borderRadius: rs(2),
-          overflow: "hidden",
-          marginBottom: rs(8),
-        }}
-      >
-        <View
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            backgroundColor: done ? COLORS.green : COLORS.orange,
-            borderRadius: rs(2),
-          }}
-        />
+      <View style={{ height: rs(4), backgroundColor: COLORS.gray100, borderRadius: rs(2), overflow: "hidden", marginBottom: rs(8) }}>
+        <View style={{ width: `${pct}%`, height: "100%", backgroundColor: done ? COLORS.green : COLORS.orange, borderRadius: rs(2) }} />
       </View>
-      <Text
-        style={{
-          fontSize: normalize(11),
-          color: done ? COLORS.green : COLORS.gray500,
-        }}
-      >
+      <Text style={{ fontSize: normalize(11), color: done ? COLORS.green : COLORS.gray500 }}>
         {done
           ? `₱${missionProgress.bonus_amount} bonus earned!`
           : `${missionProgress.target_rides - missionProgress.actual_rides} rides → ₱${missionProgress.bonus_amount}`}
@@ -756,9 +407,9 @@ const MissionProgress = memo(({ missionProgress }) => {
   );
 });
 
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════
 // MAIN COMPONENT
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════
 export default function DriverHomeScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -768,44 +419,33 @@ export default function DriverHomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
-  const [locationSubscription, setLocationSubscription] = useState(null);
   const [locationPermission, setLocationPermission] = useState(false);
-
-  const appState = useRef(AppState.currentState);
-
   const [hasActiveSubscription, setHasActiveSubscription] = useState(false);
-  const [subscriptionCheckInProgress, setSubscriptionCheckInProgress] =
-    useState(false);
-  const [heartbeatInterval, setHeartbeatInterval] = useState(null);
-  const [subscriptionExpiryCheckInterval, setSubscriptionExpiryCheckInterval] =
-    useState(null);
+  const [subscriptionCheckInProgress, setSubscriptionCheckInProgress] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
   const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
 
-  const autoRefreshInterval = useRef(null);
+  // ── Refs (stable across renders, no stale-closure issues) ──
+  const appState = useRef(AppState.currentState);
   const isScreenFocused = useRef(true);
   const initialLoadComplete = useRef(false);
   const isFetching = useRef(false);
+  const autoRefreshInterval = useRef(null);
+  // FIX: use refs for heartbeat/location so interval/subscription never goes stale in closures
+  const locationSubscriptionRef = useRef(null);
+  const heartbeatTimerRef = useRef(null);
+  const subscriptionExpiryIntervalRef = useRef(null);
+  const driverRef = useRef(null); // mirrors driver state for use inside callbacks/AppState
+  const isOnlineRef = useRef(false); // mirrors isOnline for use inside AppState listener
 
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState({
-    title: "",
-    message: "",
-    type: "info",
-    onConfirm: null,
-    confirmText: null,
-    cancelText: null,
+    title: "", message: "", type: "info", onConfirm: null, confirmText: null, cancelText: null,
   });
 
   const dataCache = useRef({
-    today: null,
-    recent: null,
-    weekly: null,
-    subscription: null,
-    mission: null,
-    notifications: null,
-    rank: null,
-    timestamp: null,
+    today: null, recent: null, weekly: null, subscription: null,
+    mission: null, notifications: null, rank: null, timestamp: null,
   });
 
   const [todayEarnings, setTodayEarnings] = useState(0);
@@ -819,33 +459,30 @@ export default function DriverHomeScreen() {
   const [activeSubscription, setActiveSubscription] = useState(null);
   const [missionProgress, setMissionProgress] = useState(null);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const [driverRank, setDriverRank] = useState({
-    currentRank: 1,
-    level: "Bronze",
-    points: 0,
-  });
-
+  const [driverRank, setDriverRank] = useState({ currentRank: 1, level: "Bronze", points: 0 });
   const [dimensions, setDimensions] = useState(Dimensions.get("window"));
 
-  useEffect(() => {
-    const sub = Dimensions.addEventListener("change", ({ window }) => {
-      setDimensions(window);
-    });
+  // Keep refs in sync with state
+  useEffect(() => { driverRef.current = driver; }, [driver]);
+  useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
 
+  // Tracks whether location is actually available on this device/session.
+  // Once it fails we stop hammering the OS with retries.
+  const locationAvailableRef = useRef(true);
+  // Prevents startLocationUpdates from being called concurrently
+  const isStartingLocationRef = useRef(false);
+
+  useEffect(() => {
+    const sub = Dimensions.addEventListener("change", ({ window }) => setDimensions(window));
     return () => sub?.remove?.();
   }, []);
 
-  const chartCardPadding = rs(18); // Performance card padding
-  const chartBoxPadding = rs(8); // inner chart box padding
-  const safeChartInset = rs(10); // extra allowance para hindi sumobra
-
+  const chartCardPadding = rs(18);
+  const chartBoxPadding = rs(8);
+  const safeChartInset = rs(10);
   const chartWidth = Math.max(
     220,
-    dimensions.width -
-      HP * 2 -
-      chartCardPadding * 2 -
-      chartBoxPadding * 2 -
-      safeChartInset,
+    dimensions.width - HP * 2 - chartCardPadding * 2 - chartBoxPadding * 2 - safeChartInset,
   );
 
   // Toggle animation
@@ -858,13 +495,10 @@ export default function DriverHomeScreen() {
       useNativeDriver: false,
     }).start();
   }, [isOnline]);
-  const thumbX = toggleAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [rs(2), rs(34)],
-  });
+  const thumbX = toggleAnim.interpolate({ inputRange: [0, 1], outputRange: [rs(2), rs(34)] });
 
   // ── HELPERS ──────────────────────────────
-  const showAlert = (title, message, type = "info", options = {}) => {
+  const showAlert = useCallback((title, message, type = "info", options = {}) => {
     setAlertConfig({
       title,
       message,
@@ -874,232 +508,67 @@ export default function DriverHomeScreen() {
       cancelText: options.cancelText || null,
     });
     setAlertVisible(true);
-  };
+  }, []);
 
   // ── FOCUS TRACKING ───────────────────────
   useFocusEffect(
     useCallback(() => {
       isScreenFocused.current = true;
-      return () => {
-        isScreenFocused.current = false;
-      };
+      return () => { isScreenFocused.current = false; };
     }, []),
   );
 
   // ── HEARTBEAT ────────────────────────────
+  // FIX: Use ref-based timer instead of state to avoid stale closures
   const sendHeartbeat = useCallback(async () => {
-    if (!driver?.id || !isOnline) return;
+    const currentDriver = driverRef.current;
+    if (!currentDriver?.id || !isOnlineRef.current) return;
     try {
       const now = new Date().toISOString();
       await supabase
         .from("driver_locations")
         .update({ last_heartbeat: now, is_online: true, last_updated: now })
-        .eq("driver_id", driver.id);
+        .eq("driver_id", currentDriver.id);
     } catch (err) {
       console.log("Heartbeat error:", err);
     }
-  }, [driver?.id, isOnline]);
+  }, []);
+
+  const startHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
+    // FIX: Use setInterval (not setTimeout loop) for consistent heartbeat
+    heartbeatTimerRef.current = setInterval(() => {
+      if (isOnlineRef.current) sendHeartbeat();
+      else stopHeartbeat();
+    }, 15000);
+  }, [sendHeartbeat]);
+
+  const stopHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
-    if (heartbeatInterval) {
-      clearInterval(heartbeatInterval);
-      setHeartbeatInterval(null);
-    }
     if (driver?.id && isOnline) {
-      let isActive = true,
-        timeoutId = null;
-      const scheduleHeartbeat = () => {
-        if (!isActive || !isOnline) return;
-        sendHeartbeat();
-        timeoutId = setTimeout(scheduleHeartbeat, 15000);
-      };
-      scheduleHeartbeat();
-      setHeartbeatInterval(timeoutId);
-      return () => {
-        isActive = false;
-        if (timeoutId) clearTimeout(timeoutId);
-      };
+      sendHeartbeat(); // immediate first beat
+      startHeartbeat();
+    } else {
+      stopHeartbeat();
     }
-  }, [driver?.id, isOnline, sendHeartbeat]);
-
-  // ── AUTO REFRESH ─────────────────────────
-  const checkAndRefresh = useCallback(async () => {
-    if (!driver?.id || !isScreenFocused.current) return;
-    try {
-      const { data, error } = await supabase
-        .from("drivers")
-        .select("is_active, online_status")
-        .eq("id", driver.id)
-        .single();
-      if (error) throw error;
-      const dbOnline =
-        data.is_active === true || data.online_status === "online";
-      if (dbOnline !== isOnline) {
-        setIsOnline(dbOnline);
-        showAlert(
-          "Status Synced",
-          dbOnline ? "You are now online" : "You are now offline",
-          "info",
-          { confirmText: "OK" },
-        );
-        if (dbOnline && !locationSubscription)
-          await startLocationUpdates(driver.id);
-        else if (!dbOnline && locationSubscription)
-          await stopLocationUpdates(driver.id);
-      }
-      setLastRefreshTime(Date.now());
-    } catch (err) {
-      console.log("Auto-refresh error:", err);
-    }
-  }, [driver?.id, isOnline, locationSubscription]);
-
-  useEffect(() => {
-    if (autoRefreshInterval.current) clearInterval(autoRefreshInterval.current);
-    if (driver?.id)
-      autoRefreshInterval.current = setInterval(checkAndRefresh, 30000);
-    return () => {
-      if (autoRefreshInterval.current)
-        clearInterval(autoRefreshInterval.current);
-    };
-  }, [driver?.id, checkAndRefresh]);
-
-  // ── SUBSCRIPTION ─────────────────────────
-  const fetchActiveSubscription = useCallback(
-    async (driverId, useCache = true) => {
-      if (!driverId) return null;
-      if (
-        useCache &&
-        dataCache.current.subscription &&
-        dataCache.current.timestamp &&
-        Date.now() - dataCache.current.timestamp < 30000
-      )
-        return dataCache.current.subscription;
-      try {
-        const { data, error } = await supabase
-          .from("driver_subscriptions")
-          .select(
-            "id, plan_id, start_date, end_date, status, subscription_plans (plan_name, plan_type, price)",
-          )
-          .eq("driver_id", driverId)
-          .in("status", ["active", "expired"])
-          .order("end_date", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (error) {
-          console.log("Subscription fetch error:", error.message);
-          dataCache.current.subscription = null;
-          return null;
-        }
-        dataCache.current.subscription = data;
-        return data;
-      } catch (err) {
-        console.log("Exception fetching subscription:", err.message);
-        return null;
-      }
-    },
-    [],
-  );
-
-  const checkAndHandleSubscription = useCallback(
-    async (driverId, currentOnlineStatus) => {
-      if (!isScreenFocused.current || !driverId || subscriptionCheckInProgress)
-        return currentOnlineStatus;
-      try {
-        setSubscriptionCheckInProgress(true);
-        const subscription = await fetchActiveSubscription(driverId, false);
-        setActiveSubscription(subscription);
-        let hasValidSubscription = !!(
-          subscription &&
-          subscription.status === "active" &&
-          new Date(subscription.end_date) > new Date()
-        );
-        setHasActiveSubscription(hasValidSubscription);
-        if (subscription && !hasValidSubscription && currentOnlineStatus) {
-          setIsOnline(false);
-          if (heartbeatInterval) {
-            clearInterval(heartbeatInterval);
-            setHeartbeatInterval(null);
-          }
-          const now = new Date().toISOString();
-          await supabase
-            .from("drivers")
-            .update({
-              is_active: false,
-              online_status: "offline",
-              updated_at: now,
-            })
-            .eq("id", driverId);
-          await stopLocationUpdates(driverId);
-          if (
-            subscription.status === "expired" ||
-            new Date(subscription.end_date) <= new Date()
-          ) {
-            showAlert(
-              "Subscription Expired",
-              "Your subscription has expired. You've been set offline.",
-              "warning",
-              {
-                confirmText: "Renew Now",
-                onConfirm: () => {
-                  setAlertVisible(false);
-                  navigation.navigate("SubscriptionScreen");
-                },
-                cancelText: "Later",
-              },
-            );
-          } else {
-            showAlert(
-              "Subscription Inactive",
-              `Your subscription is ${subscription.status}. Please contact support.`,
-              "warning",
-              {
-                confirmText: "Contact Support",
-                onConfirm: () => {
-                  setAlertVisible(false);
-                  navigation.navigate("SupportScreen");
-                },
-                cancelText: "OK",
-              },
-            );
-          }
-          return false;
-        }
-        return currentOnlineStatus;
-      } catch (err) {
-        console.log("Error checking subscription:", err);
-        return currentOnlineStatus;
-      } finally {
-        setSubscriptionCheckInProgress(false);
-      }
-    },
-    [heartbeatInterval, navigation, fetchActiveSubscription],
-  );
-
-  useEffect(() => {
-    if (!driver?.id) return;
-    if (subscriptionExpiryCheckInterval)
-      clearInterval(subscriptionExpiryCheckInterval);
-    const interval = setInterval(async () => {
-      if (isOnline && isScreenFocused.current)
-        await checkAndHandleSubscription(driver.id, isOnline);
-    }, 60000);
-    setSubscriptionExpiryCheckInterval(interval);
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [driver?.id, isOnline, checkAndHandleSubscription]);
+    return () => stopHeartbeat();
+  }, [driver?.id, isOnline, sendHeartbeat, startHeartbeat, stopHeartbeat]);
 
   // ── LOCATION ─────────────────────────────
   const setupLocationPermission = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== "granted") {
-        showAlert(
-          "Permission Denied",
-          "Location access is required to go online.",
-          "error",
-          { confirmText: "OK" },
-        );
+        showAlert("Permission Denied", "Location access is required to go online.", "error", { confirmText: "OK" });
         setLocationPermission(false);
         return false;
       }
@@ -1111,12 +580,38 @@ export default function DriverHomeScreen() {
     }
   };
 
-  const startLocationUpdates = async (driverId) => {
+  // FIX: startLocationUpdates/stopLocationUpdates use refs, not state
+  const startLocationUpdates = useCallback(async (driverId) => {
+    // Guard 1: don't start if location is known unavailable on this device
+    if (!locationAvailableRef.current) {
+      console.log("Location unavailable — skipping startLocationUpdates");
+      return false;
+    }
+    // Guard 2: prevent concurrent calls (the main cause of the log spam)
+    if (isStartingLocationRef.current) {
+      console.log("startLocationUpdates already in progress — skipping");
+      return false;
+    }
+    // Guard 3: already watching
+    if (locationSubscriptionRef.current) {
+      console.log("Location watch already active — skipping");
+      return true;
+    }
+
+    isStartingLocationRef.current = true;
     try {
-      if (locationSubscription) locationSubscription.remove();
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
+      // Use a short timeout so we don't hang forever on unavailable GPS
+      const location = await Promise.race([
+        Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced, // less strict than High — works on more devices
+          maximumAge: 30000, // accept a cached position up to 30s old
+          timeout: 10000,    // give up after 10s
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Location timeout")), 12000),
+        ),
+      ]);
+
       const now = new Date().toISOString();
       const { data: existing } = await supabase
         .from("driver_locations")
@@ -1129,25 +624,18 @@ export default function DriverHomeScreen() {
         is_online: true,
         last_updated: now,
         last_heartbeat: now,
-        accuracy: location.coords.accuracy,
-        speed: location.coords.speed,
-        heading: location.coords.heading,
+        accuracy: location.coords.accuracy ?? null,
+        speed: location.coords.speed ?? null,
+        heading: location.coords.heading ?? null,
       };
-      if (existing)
-        await supabase
-          .from("driver_locations")
-          .update(locationData)
-          .eq("driver_id", driverId);
-      else
-        await supabase
-          .from("driver_locations")
-          .insert({ driver_id: driverId, ...locationData });
+      if (existing) {
+        await supabase.from("driver_locations").update(locationData).eq("driver_id", driverId);
+      } else {
+        await supabase.from("driver_locations").insert({ driver_id: driverId, ...locationData });
+      }
+
       const subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 10000,
-          distanceInterval: 20,
-        },
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 15000, distanceInterval: 30 },
         async (newLocation) => {
           try {
             const updateNow = new Date().toISOString();
@@ -1159,9 +647,9 @@ export default function DriverHomeScreen() {
                 is_online: true,
                 last_updated: updateNow,
                 last_heartbeat: updateNow,
-                accuracy: newLocation.coords.accuracy,
-                speed: newLocation.coords.speed,
-                heading: newLocation.coords.heading,
+                accuracy: newLocation.coords.accuracy ?? null,
+                speed: newLocation.coords.speed ?? null,
+                heading: newLocation.coords.heading ?? null,
               })
               .eq("driver_id", driverId);
           } catch (err) {
@@ -1169,22 +657,48 @@ export default function DriverHomeScreen() {
           }
         },
       );
-      setLocationSubscription(subscription);
+      locationSubscriptionRef.current = subscription;
+      // Mark as available (in case it was previously unavailable)
+      locationAvailableRef.current = true;
+      return true;
     } catch (err) {
-      console.log("Start location updates error:", err);
-    }
-  };
+      const msg = err?.message || "";
+      const isUnavailable =
+        msg.includes("unavailable") ||
+        msg.includes("timeout") ||
+        msg.includes("disabled") ||
+        msg.includes("denied");
 
-  const stopLocationUpdates = async (driverId) => {
+      if (isUnavailable) {
+        // Don't keep retrying — mark unavailable so callers stop hammering
+        locationAvailableRef.current = false;
+        console.log("Location unavailable (GPS off / emulator). Driver marked online without location.");
+        // Still mark the driver online in DB so they can receive bookings
+        // just without a precise coordinate entry
+        try {
+          const now = new Date().toISOString();
+          await supabase
+            .from("drivers")
+            .update({ is_active: true, online_status: "online", updated_at: now })
+            .eq("id", driverId);
+        } catch (_) {}
+      } else {
+        console.log("Start location updates error:", err);
+      }
+      return false;
+    } finally {
+      isStartingLocationRef.current = false;
+    }
+  }, []);
+
+  const stopLocationUpdates = useCallback(async (driverId) => {
     try {
-      if (locationSubscription) {
-        locationSubscription.remove();
-        setLocationSubscription(null);
+      // FIX: Always use ref, not stale state
+      if (locationSubscriptionRef.current) {
+        locationSubscriptionRef.current.remove();
+        locationSubscriptionRef.current = null;
       }
-      if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-        setHeartbeatInterval(null);
-      }
+      stopHeartbeat();
       const now = new Date().toISOString();
       await supabase
         .from("driver_locations")
@@ -1193,10 +707,116 @@ export default function DriverHomeScreen() {
     } catch (err) {
       console.log("Stop location updates error:", err);
     }
-  };
+  }, [stopHeartbeat]);
+
+  // ── SUBSCRIPTION ─────────────────────────
+  const fetchActiveSubscription = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    if (
+      useCache &&
+      dataCache.current.subscription !== undefined &&
+      dataCache.current.timestamp &&
+      Date.now() - dataCache.current.timestamp < 30000
+    ) return dataCache.current.subscription;
+    try {
+      const { data, error } = await supabase
+        .from("driver_subscriptions")
+        .select("id, plan_id, start_date, end_date, status, subscription_plans (plan_name, plan_type, price)")
+        .eq("driver_id", driverId)
+        .in("status", ["active", "expired"])
+        .order("end_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) {
+        console.log("Subscription fetch error:", error.message);
+        dataCache.current.subscription = null;
+        return null;
+      }
+      dataCache.current.subscription = data;
+      return data;
+    } catch (err) {
+      console.log("Exception fetching subscription:", err.message);
+      return null;
+    }
+  }, []);
+
+  // FIX: subscriptionCheckInProgress via ref to avoid stale state in async checks
+  const subscriptionCheckInProgressRef = useRef(false);
+
+  const checkAndHandleSubscription = useCallback(
+    async (driverId, currentOnlineStatus) => {
+      // FIX: Use ref instead of stale state
+      if (!isScreenFocused.current || !driverId || subscriptionCheckInProgressRef.current) return currentOnlineStatus;
+      try {
+        subscriptionCheckInProgressRef.current = true;
+        setSubscriptionCheckInProgress(true);
+        const subscription = await fetchActiveSubscription(driverId, false);
+        setActiveSubscription(subscription);
+        const hasValidSubscription = !!(
+          subscription &&
+          subscription.status === "active" &&
+          new Date(subscription.end_date) > new Date()
+        );
+        setHasActiveSubscription(hasValidSubscription);
+        if (subscription && !hasValidSubscription && currentOnlineStatus) {
+          setIsOnline(false);
+          stopHeartbeat();
+          const now = new Date().toISOString();
+          await supabase
+            .from("drivers")
+            .update({ is_active: false, online_status: "offline", updated_at: now })
+            .eq("id", driverId);
+          await stopLocationUpdates(driverId);
+          if (subscription.status === "expired" || new Date(subscription.end_date) <= new Date()) {
+            showAlert("Subscription Expired", "Your subscription has expired. You've been set offline.", "warning", {
+              confirmText: "Renew Now",
+              onConfirm: () => { setAlertVisible(false); navigation.navigate("SubscriptionScreen"); },
+              cancelText: "Later",
+            });
+          } else {
+            showAlert("Subscription Inactive", `Your subscription is ${subscription.status}. Please contact support.`, "warning", {
+              confirmText: "Contact Support",
+              onConfirm: () => { setAlertVisible(false); navigation.navigate("SupportScreen"); },
+              cancelText: "OK",
+            });
+          }
+          return false;
+        }
+        return currentOnlineStatus;
+      } catch (err) {
+        console.log("Error checking subscription:", err);
+        return currentOnlineStatus;
+      } finally {
+        subscriptionCheckInProgressRef.current = false;
+        setSubscriptionCheckInProgress(false);
+      }
+    },
+    // FIX: Removed subscriptionCheckInProgress from deps — using ref instead
+    [fetchActiveSubscription, navigation, stopHeartbeat, stopLocationUpdates, showAlert],
+  );
+
+  useEffect(() => {
+    if (!driver?.id) return;
+    if (subscriptionExpiryIntervalRef.current) {
+      clearInterval(subscriptionExpiryIntervalRef.current);
+      subscriptionExpiryIntervalRef.current = null;
+    }
+    subscriptionExpiryIntervalRef.current = setInterval(async () => {
+      // FIX: Read latest values from refs
+      if (isOnlineRef.current && isScreenFocused.current) {
+        await checkAndHandleSubscription(driverRef.current?.id, isOnlineRef.current);
+      }
+    }, 60000);
+    return () => {
+      if (subscriptionExpiryIntervalRef.current) {
+        clearInterval(subscriptionExpiryIntervalRef.current);
+        subscriptionExpiryIntervalRef.current = null;
+      }
+    };
+  }, [driver?.id, checkAndHandleSubscription]);
 
   // ── DATA FETCHING ─────────────────────────
-  const fetchTodayEarnings = useCallback(async (driverId, useCache = true) => {
+  const fetchTodayEarnings = useCallback(async (driverId) => {
     if (!driverId) return null;
     try {
       const today = new Date();
@@ -1214,10 +834,7 @@ export default function DriverHomeScreen() {
       let total = 0;
       if (data?.length) {
         for (const b of data) {
-          const e =
-            b.actual_fare !== null && b.actual_fare !== undefined
-              ? b.actual_fare
-              : b.fare || 0;
+          const e = b.actual_fare !== null && b.actual_fare !== undefined ? b.actual_fare : b.fare || 0;
           total += e;
         }
       }
@@ -1237,43 +854,27 @@ export default function DriverHomeScreen() {
       dataCache.current.recent &&
       dataCache.current.timestamp &&
       Date.now() - dataCache.current.timestamp < 60000
-    )
-      return dataCache.current.recent;
+    ) return dataCache.current.recent;
     try {
       const { data, error } = await supabase
         .from("bookings")
-        .select(
-          "id, pickup_location, dropoff_location, fare, distance_km, ride_completed_at, status, payment_method, payment_type",
-        )
+        .select("id, pickup_location, dropoff_location, fare, distance_km, ride_completed_at, status, payment_method, payment_type")
         .eq("driver_id", driverId)
         .eq("status", "completed")
         .order("ride_completed_at", { ascending: false })
         .limit(10);
-      if (error) {
-        console.log("Recent trips error:", error.message);
-        return [];
-      }
-      const formattedTrips =
-        data?.map((trip) => {
-          const paymentMethod =
-            trip.payment_method || trip.payment_type || "cash";
-          return {
-            id: trip.id,
-            from: trip.pickup_location?.split(",")[0] || "Pickup",
-            to: trip.dropoff_location?.split(",")[0] || "Dropoff",
-            distance: trip.distance_km
-              ? `${trip.distance_km.toFixed(1)} km`
-              : "—",
-            earnings: `₱${Number(trip.fare || 0).toFixed(2)}`,
-            time: trip.ride_completed_at
-              ? new Date(trip.ride_completed_at).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : "—",
-            paymentMethod,
-          };
-        }) || [];
+      if (error) { console.log("Recent trips error:", error.message); return []; }
+      const formattedTrips = data?.map((trip) => ({
+        id: trip.id,
+        from: trip.pickup_location?.split(",")[0] || "Pickup",
+        to: trip.dropoff_location?.split(",")[0] || "Dropoff",
+        distance: trip.distance_km ? `${trip.distance_km.toFixed(1)} km` : "—",
+        earnings: `₱${Number(trip.fare || 0).toFixed(2)}`,
+        time: trip.ride_completed_at
+          ? new Date(trip.ride_completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+          : "—",
+        paymentMethod: trip.payment_method || trip.payment_type || "cash",
+      })) || [];
       dataCache.current.recent = formattedTrips;
       return formattedTrips;
     } catch (err) {
@@ -1289,15 +890,11 @@ export default function DriverHomeScreen() {
       dataCache.current.weekly &&
       dataCache.current.timestamp &&
       Date.now() - dataCache.current.timestamp < 60000
-    )
-      return dataCache.current.weekly;
+    ) return dataCache.current.weekly;
     try {
-      const today = new Date(),
-        dayOfWeek = today.getDay();
+      const today = new Date(), dayOfWeek = today.getDay();
       const startOfWeek = new Date(today);
-      startOfWeek.setDate(
-        today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1),
-      );
+      startOfWeek.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
       startOfWeek.setHours(0, 0, 0, 0);
       const endOfWeek = new Date(startOfWeek);
       endOfWeek.setDate(startOfWeek.getDate() + 7);
@@ -1309,12 +906,8 @@ export default function DriverHomeScreen() {
         .gte("ride_completed_at", startOfWeek.toISOString())
         .lt("ride_completed_at", endOfWeek.toISOString())
         .order("ride_completed_at", { ascending: true });
-      if (error) {
-        console.log("Weekly data error:", error.message);
-        return null;
-      }
-      const earnings = [0, 0, 0, 0, 0, 0, 0],
-        trips = [0, 0, 0, 0, 0, 0, 0];
+      if (error) { console.log("Weekly data error:", error.message); return null; }
+      const earnings = [0, 0, 0, 0, 0, 0, 0], trips = [0, 0, 0, 0, 0, 0, 0];
       data?.forEach((b) => {
         if (b.ride_completed_at) {
           const date = new Date(b.ride_completed_at);
@@ -1324,11 +917,7 @@ export default function DriverHomeScreen() {
           trips[di] += 1;
         }
       });
-      const result = {
-        labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-        earnings,
-        trips,
-      };
+      const result = { labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], earnings, trips };
       dataCache.current.weekly = result;
       return result;
     } catch (err) {
@@ -1337,71 +926,60 @@ export default function DriverHomeScreen() {
     }
   }, []);
 
-  const fetchMissionProgress = useCallback(
-    async (driverId, useCache = true) => {
-      if (!driverId) return null;
-      if (
-        useCache &&
-        dataCache.current.mission &&
-        dataCache.current.timestamp &&
-        Date.now() - dataCache.current.timestamp < 30000
-      )
-        return dataCache.current.mission;
-      try {
-        const today = new Date(),
-          startOfWeek = new Date(today);
-        startOfWeek.setDate(today.getDate() - today.getDay() + 1);
-        startOfWeek.setHours(0, 0, 0, 0);
-        const endOfWeek = new Date(startOfWeek);
-        endOfWeek.setDate(startOfWeek.getDate() + 6);
-        endOfWeek.setHours(23, 59, 59, 999);
-        const { data, error } = await supabase
-          .from("ride_missions")
-          .select("*")
-          .eq("driver_id", driverId)
-          .gte("week_start", startOfWeek.toISOString().split("T")[0])
-          .lte("week_end", endOfWeek.toISOString().split("T")[0])
-          .maybeSingle();
-        if (error && error.code !== "PGRST116") {
-          console.log("Mission error:", error.message);
-          return null;
-        }
-        dataCache.current.mission = data;
-        return data;
-      } catch (err) {
-        console.log("Fetch mission error:", err.message);
-        return null;
-      }
-    },
-    [],
-  );
+  const fetchMissionProgress = useCallback(async (driverId, useCache = true) => {
+    if (!driverId) return null;
+    if (
+      useCache &&
+      dataCache.current.mission &&
+      dataCache.current.timestamp &&
+      Date.now() - dataCache.current.timestamp < 30000
+    ) return dataCache.current.mission;
+    try {
+      const today = new Date(), startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - today.getDay() + 1);
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+      const { data, error } = await supabase
+        .from("ride_missions")
+        .select("*")
+        .eq("driver_id", driverId)
+        .gte("week_start", startOfWeek.toISOString().split("T")[0])
+        .lte("week_end", endOfWeek.toISOString().split("T")[0])
+        .maybeSingle();
+      if (error && error.code !== "PGRST116") { console.log("Mission error:", error.message); return null; }
+      dataCache.current.mission = data;
+      return data;
+    } catch (err) {
+      console.log("Fetch mission error:", err.message);
+      return null;
+    }
+  }, []);
 
-  const fetchUnreadNotifications = useCallback(
-    async (userId, useCache = true) => {
-      if (!userId) return 0;
-      if (
-        useCache &&
-        dataCache.current.notifications !== undefined &&
-        dataCache.current.timestamp &&
-        Date.now() - dataCache.current.timestamp < 30000
-      )
-        return dataCache.current.notifications;
-      try {
-        const { count, error } = await supabase
-          .from("notifications")
-          .select("*", { count: "exact", head: true })
-          .eq("user_id", userId)
-          .eq("is_read", false);
-        if (error) throw error;
-        dataCache.current.notifications = count || 0;
-        return count || 0;
-      } catch (err) {
-        console.log("Error fetching notifications:", err);
-        return 0;
-      }
-    },
-    [],
-  );
+  const fetchUnreadNotifications = useCallback(async (userId, useCache = true) => {
+    if (!userId) return 0;
+    if (
+      useCache &&
+      // FIX: check for null explicitly, initial value is null not undefined
+      dataCache.current.notifications !== null &&
+      dataCache.current.timestamp &&
+      Date.now() - dataCache.current.timestamp < 30000
+    ) return dataCache.current.notifications;
+    try {
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("is_read", false);
+      if (error) throw error;
+      dataCache.current.notifications = count || 0;
+      return count || 0;
+    } catch (err) {
+      console.log("Error fetching notifications:", err);
+      return 0;
+    }
+  }, []);
 
   const fetchDriverRank = useCallback(async (driverId, useCache = true) => {
     if (!driverId) return null;
@@ -1410,8 +988,7 @@ export default function DriverHomeScreen() {
       dataCache.current.rank &&
       dataCache.current.timestamp &&
       Date.now() - dataCache.current.timestamp < 60000
-    )
-      return dataCache.current.rank;
+    ) return dataCache.current.rank;
     try {
       const { data: drivers, error } = await supabase
         .from("drivers")
@@ -1447,8 +1024,10 @@ export default function DriverHomeScreen() {
 
   // ── MAIN LOAD ─────────────────────────────
   const loadDriverData = useCallback(
-    async (forceRefresh = false) => {
-      if (!driver?.id || isFetching.current) return;
+    async (forceRefresh = false, driverId = null) => {
+      // FIX: Accept driverId param so initial load can pass it before state is set
+      const id = driverId || driverRef.current?.id;
+      if (!id || isFetching.current) return;
       try {
         isFetching.current = true;
         if (forceRefresh) dataCache.current.timestamp = null;
@@ -1461,8 +1040,7 @@ export default function DriverHomeScreen() {
             setTodayEarnings(dataCache.current.today.total);
             setTodayTrips(dataCache.current.today.tripsCount);
           }
-          if (dataCache.current.recent)
-            setRecentTrips(dataCache.current.recent);
+          if (dataCache.current.recent) setRecentTrips(dataCache.current.recent);
           if (dataCache.current.weekly) setWeeklyData(dataCache.current.weekly);
           setActiveSubscription(dataCache.current.subscription);
           setMissionProgress(dataCache.current.mission);
@@ -1470,36 +1048,27 @@ export default function DriverHomeScreen() {
           if (dataCache.current.rank) setDriverRank(dataCache.current.rank);
           return;
         }
-        const [
-          todayResult,
-          recentResult,
-          weeklyResult,
-          subscriptionResult,
-          missionResult,
-          notificationsResult,
-          rankResult,
-        ] = await Promise.all([
-          fetchTodayEarnings(driver.id, false),
-          fetchRecentTrips(driver.id, false),
-          fetchWeeklyData(driver.id, false),
-          fetchActiveSubscription(driver.id, false),
-          fetchMissionProgress(driver.id, false),
-          fetchUnreadNotifications(driver.id, false),
-          fetchDriverRank(driver.id, false),
-        ]);
-        if (todayResult) {
-          setTodayEarnings(todayResult.total);
-          setTodayTrips(todayResult.tripsCount);
-        }
+        const [todayResult, recentResult, weeklyResult, subscriptionResult, missionResult, notificationsResult, rankResult] =
+          await Promise.all([
+            fetchTodayEarnings(id),
+            fetchRecentTrips(id, false),
+            fetchWeeklyData(id, false),
+            fetchActiveSubscription(id, false),
+            fetchMissionProgress(id, false),
+            fetchUnreadNotifications(id, false),
+            fetchDriverRank(id, false),
+          ]);
+        if (todayResult) { setTodayEarnings(todayResult.total); setTodayTrips(todayResult.tripsCount); }
         if (recentResult) setRecentTrips(recentResult);
         if (weeklyResult) setWeeklyData(weeklyResult);
         setActiveSubscription(subscriptionResult);
-        if (subscriptionResult)
+        if (subscriptionResult) {
           setHasActiveSubscription(
-            subscriptionResult.status === "active" &&
-              new Date(subscriptionResult.end_date) > new Date(),
+            subscriptionResult.status === "active" && new Date(subscriptionResult.end_date) > new Date(),
           );
-        else setHasActiveSubscription(false);
+        } else {
+          setHasActiveSubscription(false);
+        }
         setMissionProgress(missionResult);
         setUnreadNotifications(notificationsResult);
         if (rankResult) setDriverRank(rankResult);
@@ -1510,17 +1079,41 @@ export default function DriverHomeScreen() {
         isFetching.current = false;
       }
     },
-    [
-      driver?.id,
-      fetchTodayEarnings,
-      fetchRecentTrips,
-      fetchWeeklyData,
-      fetchActiveSubscription,
-      fetchMissionProgress,
-      fetchUnreadNotifications,
-      fetchDriverRank,
-    ],
+    [fetchTodayEarnings, fetchRecentTrips, fetchWeeklyData, fetchActiveSubscription, fetchMissionProgress, fetchUnreadNotifications, fetchDriverRank],
   );
+
+  // ── AUTO REFRESH ─────────────────────────
+  const checkAndRefresh = useCallback(async () => {
+    const currentDriver = driverRef.current;
+    if (!currentDriver?.id || !isScreenFocused.current) return;
+    try {
+      const { data, error } = await supabase
+        .from("drivers")
+        .select("is_active, online_status")
+        .eq("id", currentDriver.id)
+        .single();
+      if (error) throw error;
+      const dbOnline = data.is_active === true || data.online_status === "online";
+      if (dbOnline !== isOnlineRef.current) {
+        setIsOnline(dbOnline);
+        showAlert("Status Synced", dbOnline ? "You are now online" : "You are now offline", "info", { confirmText: "OK" });
+        if (dbOnline && !locationSubscriptionRef.current) {
+          await startLocationUpdates(currentDriver.id);
+        } else if (!dbOnline && locationSubscriptionRef.current) {
+          await stopLocationUpdates(currentDriver.id);
+        }
+      }
+      setLastRefreshTime(Date.now());
+    } catch (err) {
+      console.log("Auto-refresh error:", err);
+    }
+  }, [showAlert, startLocationUpdates, stopLocationUpdates]);
+
+  useEffect(() => {
+    if (autoRefreshInterval.current) clearInterval(autoRefreshInterval.current);
+    if (driver?.id) autoRefreshInterval.current = setInterval(checkAndRefresh, 30000);
+    return () => { if (autoRefreshInterval.current) clearInterval(autoRefreshInterval.current); };
+  }, [driver?.id, checkAndRefresh]);
 
   // ── INITIAL LOAD ──────────────────────────
   useEffect(() => {
@@ -1528,50 +1121,42 @@ export default function DriverHomeScreen() {
       try {
         setLoading(true);
         const storedUserId = await AsyncStorage.getItem("user_id");
-        if (!storedUserId) {
-          setLoading(false);
-          return;
-        }
+        if (!storedUserId) { setLoading(false); return; }
         const { data, error } = await supabase
           .from("drivers")
-          .select(
-            "id, first_name, middle_name, last_name, status, is_active, online_status, email, phone, profile_picture",
-          )
+          .select("id, first_name, middle_name, last_name, status, is_active, online_status, email, phone, profile_picture")
           .eq("id", storedUserId)
           .single();
-        if (error) {
-          console.log(error.message);
-          setLoading(false);
-          return;
-        }
+        if (error) { console.log(error.message); setLoading(false); return; }
+        // FIX: Set ref immediately so callbacks can use it before state update propagates
+        driverRef.current = data;
         setDriver(data);
+
         const subscription = await fetchActiveSubscription(data.id, false);
-        let hasValidSubscription = !!(
-          subscription &&
-          subscription.status === "active" &&
-          new Date(subscription.end_date) > new Date()
+        const hasValidSubscription = !!(
+          subscription && subscription.status === "active" && new Date(subscription.end_date) > new Date()
         );
         setActiveSubscription(subscription);
         setHasActiveSubscription(hasValidSubscription);
-        const wasOnline =
-          data?.is_active === true || data?.online_status === "online";
-        const shouldBeOnline =
-          data?.status === "approved" && hasValidSubscription && wasOnline;
+        const wasOnline = data?.is_active === true || data?.online_status === "online";
+        const shouldBeOnline = data?.status === "approved" && hasValidSubscription && wasOnline;
         setIsOnline(shouldBeOnline);
+        isOnlineRef.current = shouldBeOnline;
+
         await setupLocationPermission();
+        // Reset availability flag on each fresh load — GPS may have been enabled
+        locationAvailableRef.current = true;
+
         if (wasOnline && !hasValidSubscription) {
           await supabase
             .from("drivers")
-            .update({
-              is_active: false,
-              online_status: "offline",
-              updated_at: new Date().toISOString(),
-            })
+            .update({ is_active: false, online_status: "offline", updated_at: new Date().toISOString() })
             .eq("id", data.id);
         } else if (shouldBeOnline) {
           await startLocationUpdates(data.id);
         }
-        await loadDriverData(true);
+        // FIX: Pass driverId directly so loadDriverData doesn't rely on stale state
+        await loadDriverData(true, data.id);
         initialLoadComplete.current = true;
       } catch (err) {
         console.log(err.message);
@@ -1580,6 +1165,7 @@ export default function DriverHomeScreen() {
       }
     };
     getDriver();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── PULL-TO-REFRESH ───────────────────────
@@ -1587,71 +1173,63 @@ export default function DriverHomeScreen() {
     setRefreshing(true);
     await checkAndRefresh();
     await loadDriverData(true);
-    if (driver?.id && isScreenFocused.current)
-      await checkAndHandleSubscription(driver.id, isOnline);
+    const currentDriver = driverRef.current;
+    if (currentDriver?.id && isScreenFocused.current) {
+      await checkAndHandleSubscription(currentDriver.id, isOnlineRef.current);
+    }
     setRefreshing(false);
-    showAlert("Updated", "Your dashboard is up to date.", "success", {
-      confirmText: "OK",
-    });
-  }, [
-    loadDriverData,
-    driver?.id,
-    isOnline,
-    checkAndHandleSubscription,
-    checkAndRefresh,
-  ]);
+    showAlert("Updated", "Your dashboard is up to date.", "success", { confirmText: "OK" });
+  }, [loadDriverData, checkAndHandleSubscription, checkAndRefresh, showAlert]);
 
   // ── FOCUS EFFECT ──────────────────────────
   useFocusEffect(
     useCallback(() => {
-      if (initialLoadComplete.current && driver?.id) {
-        const cacheAge = dataCache.current.timestamp
-          ? Date.now() - dataCache.current.timestamp
-          : Infinity;
+      if (initialLoadComplete.current && driverRef.current?.id) {
+        const cacheAge = dataCache.current.timestamp ? Date.now() - dataCache.current.timestamp : Infinity;
         if (cacheAge > 30000) loadDriverData(false);
-        if (isOnline) checkAndHandleSubscription(driver.id, isOnline);
+        if (isOnlineRef.current) checkAndHandleSubscription(driverRef.current.id, isOnlineRef.current);
       }
-    }, [driver?.id, loadDriverData, isOnline, checkAndHandleSubscription]),
+    }, [loadDriverData, checkAndHandleSubscription]),
   );
 
   // ── CLEANUP ───────────────────────────────
   useEffect(() => {
     return () => {
-      if (locationSubscription) locationSubscription.remove();
-      if (heartbeatInterval) clearInterval(heartbeatInterval);
-      if (subscriptionExpiryCheckInterval)
-        clearInterval(subscriptionExpiryCheckInterval);
+      if (locationSubscriptionRef.current) locationSubscriptionRef.current.remove();
+      stopHeartbeat();
+      if (subscriptionExpiryIntervalRef.current) clearInterval(subscriptionExpiryIntervalRef.current);
+      if (autoRefreshInterval.current) clearInterval(autoRefreshInterval.current);
     };
-  }, [
-    locationSubscription,
-    heartbeatInterval,
-    subscriptionExpiryCheckInterval,
-  ]);
+  }, [stopHeartbeat]);
 
   // ── APP STATE ─────────────────────────────
   useEffect(() => {
-    const subscription = AppState.addEventListener(
-      "change",
-      async (nextAppState) => {
-        const prev = appState.current;
-        appState.current = nextAppState;
-        if (prev.match(/inactive|background/) && nextAppState === "active") {
-          if (driver?.id) {
-            await loadDriverData(false);
-            await checkAndRefresh();
-            if (isScreenFocused.current) {
-              const newStatus = await checkAndHandleSubscription(
-                driver.id,
-                isOnline,
-              );
-              if (newStatus && isOnline && !locationSubscription)
-                await startLocationUpdates(driver.id);
-              else if (newStatus && isOnline) {
+    const subscription = AppState.addEventListener("change", async (nextAppState) => {
+      const prev = appState.current;
+      appState.current = nextAppState;
+
+      if (prev.match(/inactive|background/) && nextAppState === "active") {
+        const currentDriver = driverRef.current;
+        if (currentDriver?.id) {
+          await loadDriverData(false);
+          await checkAndRefresh();
+          if (isScreenFocused.current) {
+            const newStatus = await checkAndHandleSubscription(currentDriver.id, isOnlineRef.current);
+            if (newStatus && isOnlineRef.current) {
+              if (!locationSubscriptionRef.current) {
+                await startLocationUpdates(currentDriver.id);
+              } else if (locationAvailableRef.current) {
+                // Already watching — just refresh heartbeat + current position
                 await sendHeartbeat();
                 try {
-                  const location = await Location.getCurrentPositionAsync({
-                    accuracy: Location.Accuracy.High,
-                  });
+                  const location = await Promise.race([
+                    Location.getCurrentPositionAsync({
+                      accuracy: Location.Accuracy.Balanced,
+                      maximumAge: 60000,
+                      timeout: 8000,
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 9000)),
+                  ]);
                   await supabase
                     .from("driver_locations")
                     .update({
@@ -1660,19 +1238,33 @@ export default function DriverHomeScreen() {
                       last_updated: new Date().toISOString(),
                       last_heartbeat: new Date().toISOString(),
                     })
-                    .eq("driver_id", driver.id);
+                    .eq("driver_id", currentDriver.id);
                 } catch (err) {
-                  console.log("Error refreshing location:", err);
+                  const msg = err?.message || "";
+                  if (msg.includes("unavailable") || msg.includes("timeout") || msg.includes("disabled")) {
+                    locationAvailableRef.current = false;
+                  } else {
+                    console.log("Error refreshing location on foreground:", err);
+                  }
                 }
               }
             }
           }
-        } else if (nextAppState === "background") {
-          if (isOnline && driver?.id) {
+        }
+      } else if (nextAppState === "background") {
+        const currentDriver = driverRef.current;
+        if (isOnlineRef.current && currentDriver?.id) {
+          // Only attempt location update if GPS is available
+          if (locationAvailableRef.current) {
             try {
-              const location = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.High,
-              });
+              const location = await Promise.race([
+                Location.getCurrentPositionAsync({
+                  accuracy: Location.Accuracy.Balanced,
+                  maximumAge: 60000,
+                  timeout: 8000,
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 9000)),
+              ]);
               const now = new Date().toISOString();
               await supabase
                 .from("driver_locations")
@@ -1683,75 +1275,69 @@ export default function DriverHomeScreen() {
                   last_heartbeat: now,
                   is_online: true,
                 })
-                .eq("driver_id", driver.id);
+                .eq("driver_id", currentDriver.id);
               await supabase
                 .from("drivers")
                 .update({ last_online: now, updated_at: now })
-                .eq("id", driver.id);
+                .eq("id", currentDriver.id);
             } catch (err) {
-              console.log("Error updating location before background:", err);
+              const msg = err?.message || "";
+              if (msg.includes("unavailable") || msg.includes("timeout") || msg.includes("disabled")) {
+                locationAvailableRef.current = false;
+                console.log("Location unavailable on background — suppressing future attempts");
+              } else {
+                console.log("Error updating location before background:", err);
+              }
             }
-            if (isScreenFocused.current)
-              showAlert(
-                "App Backgrounded",
-                "Keep the app open to receive bookings.",
-                "info",
-                { confirmText: "OK" },
-              );
+          }
+          // Only alert if this screen is actually in focus
+          if (isScreenFocused.current) {
+            showAlert(
+              "App Backgrounded",
+              "Keep the app open to receive bookings.",
+              "info",
+              { confirmText: "OK" },
+            );
           }
         }
-      },
-    );
+      }
+    });
     return () => subscription.remove();
-  }, [
-    isOnline,
-    driver?.id,
-    loadDriverData,
-    locationSubscription,
-    checkAndHandleSubscription,
-    sendHeartbeat,
-    checkAndRefresh,
-  ]);
+  }, [loadDriverData, checkAndHandleSubscription, sendHeartbeat, checkAndRefresh, startLocationUpdates, showAlert]);
 
   // ── TOGGLE AVAILABILITY ───────────────────
   const toggleAvailability = async () => {
     if (isToggling) return;
-    if (!driver || driver.status !== "approved") {
-      showAlert(
-        "Not Approved",
-        "Your account is pending approval.",
-        "warning",
-        { confirmText: "OK" },
-      );
+    const currentDriver = driverRef.current;
+    if (!currentDriver || currentDriver.status !== "approved") {
+      showAlert("Not Approved", "Your account is pending approval.", "warning", { confirmText: "OK" });
       return;
     }
     setIsToggling(true);
-    const newOnlineStatus = !isOnline;
+    const newOnlineStatus = !isOnlineRef.current;
     setIsOnline(newOnlineStatus);
+    isOnlineRef.current = newOnlineStatus;
+
+    // Reset location availability flag on every "go online" attempt —
+    // the user may have enabled GPS since the last failure
+    if (newOnlineStatus) locationAvailableRef.current = true;
     try {
       if (newOnlineStatus) {
-        const subscription = await fetchActiveSubscription(driver.id, false);
+        const subscription = await fetchActiveSubscription(currentDriver.id, false);
         const hasValid = !!(
-          subscription &&
-          subscription.status === "active" &&
-          new Date(subscription.end_date) > new Date()
+          subscription && subscription.status === "active" && new Date(subscription.end_date) > new Date()
         );
         setActiveSubscription(subscription);
         setHasActiveSubscription(hasValid);
         if (!hasValid) {
           setIsOnline(false);
+          isOnlineRef.current = false;
           let message = "You need an active subscription to go online.";
-          if (subscription?.status === "expired")
-            message = "Your subscription has expired. Renew to go online.";
-          else if (subscription && subscription.status !== "active")
-            message = `Your subscription is ${subscription.status}. Contact support.`;
+          if (subscription?.status === "expired") message = "Your subscription has expired. Renew to go online.";
+          else if (subscription && subscription.status !== "active") message = `Your subscription is ${subscription.status}. Contact support.`;
           showAlert("Subscription Required", message, "warning", {
-            confirmText:
-              subscription?.status === "expired" ? "Renew Now" : "Subscribe",
-            onConfirm: () => {
-              setAlertVisible(false);
-              navigation.navigate("SubscriptionScreen");
-            },
+            confirmText: subscription?.status === "expired" ? "Renew Now" : "Subscribe",
+            onConfirm: () => { setAlertVisible(false); navigation.navigate("SubscriptionScreen"); },
             cancelText: "Cancel",
           });
           setIsToggling(false);
@@ -1762,24 +1348,21 @@ export default function DriverHomeScreen() {
         const granted = await setupLocationPermission();
         if (!granted) {
           setIsOnline(false);
+          isOnlineRef.current = false;
           setIsToggling(false);
           return;
         }
       }
       const now = new Date().toISOString();
-      await Promise.all([
-        supabase
-          .from("drivers")
-          .update({
-            is_active: newOnlineStatus,
-            online_status: newOnlineStatus ? "online" : "offline",
-            updated_at: now,
-          })
-          .eq("id", driver.id),
-        newOnlineStatus
-          ? startLocationUpdates(driver.id)
-          : stopLocationUpdates(driver.id),
-      ]);
+      await supabase
+        .from("drivers")
+        .update({ is_active: newOnlineStatus, online_status: newOnlineStatus ? "online" : "offline", updated_at: now })
+        .eq("id", currentDriver.id);
+      if (newOnlineStatus) {
+        await startLocationUpdates(currentDriver.id);
+      } else {
+        await stopLocationUpdates(currentDriver.id);
+      }
       showAlert(
         newOnlineStatus ? "You're Online" : "You're Offline",
         newOnlineStatus ? "Ready to accept bookings." : "Bookings are paused.",
@@ -1788,10 +1371,10 @@ export default function DriverHomeScreen() {
       );
     } catch (err) {
       console.log(err.message);
-      setIsOnline(!newOnlineStatus);
-      showAlert("Error", "Failed to update status. Try again.", "error", {
-        confirmText: "OK",
-      });
+      const reverted = !newOnlineStatus;
+      setIsOnline(reverted);
+      isOnlineRef.current = reverted;
+      showAlert("Error", "Failed to update status. Try again.", "error", { confirmText: "OK" });
     } finally {
       setIsToggling(false);
       setLastRefreshTime(Date.now());
@@ -1803,8 +1386,7 @@ export default function DriverHomeScreen() {
     [navigation],
   );
   const limitedRecentTrips = recentTrips.slice(0, RECENT_TRIPS_DISPLAY_LIMIT);
-  const hasMoreTrips = recentTrips.length > RECENT_TRIPS_DISPLAY_LIMIT;
-  // Rank helpers
+
   const levelMap = {
     Diamond: { icon: "diamond-outline", color: "#06B6D4", label: "Diamond" },
     Gold: { icon: "trophy-outline", color: COLORS.orange, label: "Gold" },
@@ -1815,8 +1397,7 @@ export default function DriverHomeScreen() {
 
   const subExpired =
     activeSubscription &&
-    (activeSubscription.status === "expired" ||
-      new Date(activeSubscription.end_date) <= new Date());
+    (activeSubscription.status === "expired" || new Date(activeSubscription.end_date) <= new Date());
   const subInactive =
     activeSubscription &&
     activeSubscription.status !== "active" &&
@@ -1828,37 +1409,20 @@ export default function DriverHomeScreen() {
   const isApproved = driver?.status === "approved";
   const canToggle = isApproved && hasActiveSubscription;
 
-  // ── STATUS TEXT ───────────────────────────
   const statusText = () => {
     if (!isApproved) return "Pending approval";
     if (!hasActiveSubscription)
-      return activeSubscription?.status === "expired"
-        ? "Subscription expired"
-        : "Subscription required";
+      return activeSubscription?.status === "expired" ? "Subscription expired" : "Subscription required";
     return isOnline ? "Accepting bookings" : "Not accepting bookings";
   };
 
   // ── LOADING ───────────────────────────────
   if (loading && !refreshing) {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: COLORS.white,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
+      <View style={{ flex: 1, backgroundColor: COLORS.white, justifyContent: "center", alignItems: "center" }}>
         <StatusBar barStyle="dark-content" backgroundColor={COLORS.white} />
         <ActivityIndicator size="large" color={COLORS.navy} />
-        <Text
-          style={{
-            marginTop: rs(12),
-            color: COLORS.gray500,
-            fontSize: normalize(13),
-            letterSpacing: 0.2,
-          }}
-        >
+        <Text style={{ marginTop: rs(12), color: COLORS.gray500, fontSize: normalize(13), letterSpacing: 0.2 }}>
           Loading…
         </Text>
       </View>
@@ -1871,254 +1435,143 @@ export default function DriverHomeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: COLORS.gray50 }}>
       <StatusBar barStyle="light-content" />
-        {/* ═══════════ HEADER ═══════════ */}
-        <View
-          style={{
-            backgroundColor: COLORS.navy,
-            paddingTop: insets.top + rs(12),
-            paddingBottom: rs(24),
-            paddingHorizontal: HP,
-          }}
-        >
-          {/* Top row */}
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: rs(20),
-            }}
-          >
-            {/* Logo */}
-            <Pressable onPress={() => navigation.navigate("account")}>
-              <RN.Image
-                source={
-                  driver?.profile_picture
-                    ? { uri: driver.profile_picture }
-                    : require("../../assets/logo-sakayna.png")
-                }
-                resizeMode="cover"
-                style={{
-                  width: rs(40),
-                  height: rs(40),
-                  borderRadius: rs(20),
-                  borderWidth: 2,
-                  borderColor: COLORS.white,
-                  backgroundColor: "rgba(255,255,255,0.12)",
-                }}
-              />
-            </Pressable>
 
-            {/* Right: notifications + rank */}
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: rs(8) }}
+      {/* ═══════════ HEADER ═══════════ */}
+      <View
+        style={{
+          backgroundColor: COLORS.navy,
+          paddingTop: insets.top + rs(12),
+          paddingBottom: rs(24),
+          paddingHorizontal: HP,
+        }}
+      >
+        {/* Top row */}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: rs(20) }}>
+          <Pressable onPress={() => navigation.navigate("account")}>
+            <RN.Image
+              source={
+                driver?.profile_picture
+                  ? { uri: driver.profile_picture }
+                  : require("../../assets/logo-sakayna.png")
+              }
+              resizeMode="cover"
+              style={{
+                width: rs(40), height: rs(40), borderRadius: rs(20),
+                borderWidth: 2, borderColor: COLORS.white,
+                backgroundColor: "rgba(255,255,255,0.12)",
+              }}
+            />
+          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: rs(8) }}>
+            <Pressable
+              onPress={() => navigation.navigate("inbox")}
+              style={{
+                width: rs(38), height: rs(38), borderRadius: rs(10),
+                backgroundColor: "rgba(255,255,255,0.1)", justifyContent: "center", alignItems: "center",
+              }}
             >
-              {/* Notifications bell */}
-              <Pressable
-                onPress={() => navigation.navigate("inbox")}
-                style={{
-                  width: rs(38),
-                  height: rs(38),
-                  borderRadius: rs(10),
-                  backgroundColor: "rgba(255,255,255,0.1)",
-                  justifyContent: "center",
-                  alignItems: "center",
-                }}
-              >
-                <Ionicons
-                  name="notifications-outline"
-                  size={rs(20)}
-                  color={COLORS.white}
-                />
-                {unreadNotifications > 0 && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      top: rs(6),
-                      right: rs(6),
-                      width: rs(8),
-                      height: rs(8),
-                      borderRadius: rs(4),
-                      backgroundColor: COLORS.orange,
-                      borderWidth: 1.5,
-                      borderColor: COLORS.navy,
-                    }}
-                  />
-                )}
-              </Pressable>
-
-              {/* Rank badge */}
-              <Pressable
-                onPress={() => navigation.navigate("RankingPage")}
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingHorizontal: rs(10),
-                  paddingVertical: rs(6),
-                  backgroundColor: "rgba(255,255,255,0.1)",
-                  borderRadius: rs(10),
-                  gap: rs(5),
-                }}
-              >
-                <Ionicons
-                  name={rankInfo.icon}
-                  size={rs(16)}
-                  color={rankInfo.color}
-                />
-                <Text
+              <Ionicons name="notifications-outline" size={rs(20)} color={COLORS.white} />
+              {unreadNotifications > 0 && (
+                <View
                   style={{
-                    fontSize: normalize(12),
-                    fontWeight: "700",
-                    color: COLORS.white,
+                    position: "absolute", top: rs(6), right: rs(6),
+                    width: rs(8), height: rs(8), borderRadius: rs(4),
+                    backgroundColor: COLORS.orange, borderWidth: 1.5, borderColor: COLORS.navy,
                   }}
-                >
-                  #{driverRank?.currentRank || "—"}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
-
-          {/* Driver info row */}
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <View style={{ flex: 1 }}>
-              <Text
-                style={{
-                  fontSize: normalize(13),
-                  color: "rgba(255,255,255,0.5)",
-                  marginBottom: rs(2),
-                  letterSpacing: 0.3,
-                }}
-              >
-                {new Date().toLocaleDateString("en-PH", {
-                  weekday: "long",
-                  month: "long",
-                  day: "numeric",
-                })}
+                />
+              )}
+            </Pressable>
+            <Pressable
+              onPress={() => navigation.navigate("RankingPage")}
+              style={{
+                flexDirection: "row", alignItems: "center",
+                paddingHorizontal: rs(10), paddingVertical: rs(6),
+                backgroundColor: "rgba(255,255,255,0.1)", borderRadius: rs(10), gap: rs(5),
+              }}
+            >
+              <Ionicons name={rankInfo.icon} size={rs(16)} color={rankInfo.color} />
+              <Text style={{ fontSize: normalize(12), fontWeight: "700", color: COLORS.white }}>
+                #{driverRank?.currentRank || "—"}
               </Text>
-              <Text
-                style={{
-                  fontSize: normalize(20),
-                  fontWeight: "800",
-                  color: COLORS.white,
-                  letterSpacing: -0.5,
-                }}
-                numberOfLines={1}
-              >
-                {driverName}
-              </Text>
-            </View>
-
-            {/* Status pills */}
-            <View style={{ alignItems: "flex-end", gap: rs(5) }}>
-              <Pill
-                label={
-                  driver?.status === "approved"
-                    ? "VERIFIED"
-                    : driver?.status?.replace("_", " ").toUpperCase() ||
-                      "INACTIVE"
-                }
-                color={isApproved ? COLORS.green : COLORS.orange}
-                bg={
-                  isApproved ? "rgba(22,163,74,0.15)" : "rgba(233,122,62,0.2)"
-                }
-              />
-              <Pill
-                label={isOnline ? "● ONLINE" : "○ OFFLINE"}
-                color={isOnline ? COLORS.green : "rgba(255,255,255,0.5)"}
-                bg={
-                  isOnline ? "rgba(22,163,74,0.15)" : "rgba(255,255,255,0.07)"
-                }
-              />
-            </View>
+            </Pressable>
           </View>
         </View>
+
+        {/* Driver info row */}
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: normalize(13), color: "rgba(255,255,255,0.5)", marginBottom: rs(2), letterSpacing: 0.3 }}>
+              {new Date().toLocaleDateString("en-PH", { weekday: "long", month: "long", day: "numeric" })}
+            </Text>
+            <Text
+              style={{ fontSize: normalize(20), fontWeight: "800", color: COLORS.white, letterSpacing: -0.5 }}
+              numberOfLines={1}
+            >
+              {driverName}
+            </Text>
+          </View>
+          <View style={{ alignItems: "flex-end", gap: rs(5) }}>
+            <Pill
+              label={
+                driver?.status === "approved" ? "VERIFIED" :
+                driver?.status?.replace("_", " ").toUpperCase() || "INACTIVE"
+              }
+              color={isApproved ? COLORS.green : COLORS.orange}
+              bg={isApproved ? "rgba(22,163,74,0.15)" : "rgba(233,122,62,0.2)"}
+            />
+            <Pill
+              label={isOnline ? "● ONLINE" : "○ OFFLINE"}
+              color={isOnline ? COLORS.green : "rgba(255,255,255,0.5)"}
+              bg={isOnline ? "rgba(22,163,74,0.15)" : "rgba(255,255,255,0.07)"}
+            />
+          </View>
+        </View>
+      </View>
+
       <ScrollView
         style={{ flex: 1 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={COLORS.navy}
-            colors={[COLORS.navy]}
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.navy} colors={[COLORS.navy]} />
         }
         removeClippedSubviews
-        maxToRenderPerBatch={5}
-        windowSize={5}
-        contentContainerStyle={{
-    paddingTop: rs(10), // adjust mo depende sa design
-    paddingBottom: insets.bottom
-  }}
+        contentContainerStyle={{ paddingTop: rs(10), paddingBottom: insets.bottom + rs(20) }}
       >
-        
-
         {/* ═══════════ WARNING BANNERS ═══════════ */}
         {driver && !isApproved && (
           <WarningBanner
-            icon={
-              ["rejected", "suspended"].includes(driver.status)
-                ? "alert-circle-outline"
-                : "time-outline"
-            }
+            icon={["rejected", "suspended"].includes(driver.status) ? "alert-circle-outline" : "time-outline"}
             title={
-              driver.status === "pending"
-                ? "Verification Pending"
-                : driver.status === "under_review"
-                  ? "Under Review"
-                  : driver.status === "rejected"
-                    ? "Documents Rejected"
-                    : "Account Suspended"
+              driver.status === "pending" ? "Verification Pending" :
+              driver.status === "under_review" ? "Under Review" :
+              driver.status === "rejected" ? "Documents Rejected" : "Account Suspended"
             }
             body={
-              driver.status === "pending"
-                ? "Complete verification to start accepting bookings."
-                : driver.status === "under_review"
-                  ? "Your documents are being reviewed. Check back soon."
-                  : driver.status === "rejected"
-                    ? "Your documents did not pass. Please resubmit."
-                    : "Your account is suspended. Contact support."
+              driver.status === "pending" ? "Complete verification to start accepting bookings." :
+              driver.status === "under_review" ? "Your documents are being reviewed. Check back soon." :
+              driver.status === "rejected" ? "Your documents did not pass. Please resubmit." :
+              "Your account is suspended. Contact support."
             }
-            accentColor={
-              ["rejected", "suspended"].includes(driver.status)
-                ? COLORS.red
-                : COLORS.orange
-            }
-            bgColor={
-              ["rejected", "suspended"].includes(driver.status)
-                ? COLORS.redLight
-                : COLORS.orangeLight
-            }
+            accentColor={["rejected", "suspended"].includes(driver.status) ? COLORS.red : COLORS.orange}
+            bgColor={["rejected", "suspended"].includes(driver.status) ? COLORS.redLight : COLORS.orangeLight}
             buttonLabel={
-              driver.status === "pending" || driver.status === "rejected"
-                ? driver.status === "pending"
-                  ? "Complete Verification"
-                  : "Resubmit Documents"
-                : null
+              driver.status === "pending" ? "Complete Verification" :
+              driver.status === "rejected" ? "Resubmit Documents" : null
             }
             onPress={() => navigation.navigate("DriverVerificationScreen")}
           />
         )}
-
-        {isApproved &&
-          !hasActiveSubscription &&
-          activeSubscription === null && (
-            <WarningBanner
-              icon="card-outline"
-              title="No Active Subscription"
-              body="Subscribe to go online and accept bookings."
-              accentColor={COLORS.red}
-              bgColor={COLORS.redLight}
-              buttonLabel="Subscribe Now"
-              onPress={() => navigation.navigate("SubscriptionScreen")}
-            />
-          )}
+        {isApproved && !hasActiveSubscription && activeSubscription === null && (
+          <WarningBanner
+            icon="card-outline"
+            title="No Active Subscription"
+            body="Subscribe to go online and accept bookings."
+            accentColor={COLORS.red}
+            bgColor={COLORS.redLight}
+            buttonLabel="Subscribe Now"
+            onPress={() => navigation.navigate("SubscriptionScreen")}
+          />
+        )}
         {isApproved && subExpired && (
           <WarningBanner
             icon="time-outline"
@@ -2145,165 +1598,81 @@ export default function DriverHomeScreen() {
         {/* ═══════════ EARNINGS + TOGGLE CARD ═══════════ */}
         <View
           style={{
-            marginHorizontal: HP,
-            marginTop: rs(16),
-            backgroundColor: COLORS.white,
-            borderRadius: rs(20),
-            overflow: "hidden",
-            borderWidth: 1,
-            borderColor: COLORS.gray100,
-            shadowColor: COLORS.navy,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.08,
-            shadowRadius: 8,
-            elevation: 3,
+            marginHorizontal: HP, marginTop: rs(16),
+            backgroundColor: COLORS.white, borderRadius: rs(20),
+            overflow: "hidden", borderWidth: 1, borderColor: COLORS.gray100,
+            shadowColor: COLORS.navy, shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.08, shadowRadius: 8, elevation: 3,
           }}
         >
-          {/* Orange accent bar */}
           <View style={{ height: rs(3), backgroundColor: COLORS.orange }} />
-
           <View style={{ padding: rs(18) }}>
-            {/* Row: stats + toggle */}
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              {/* Today earnings */}
               <View style={{ flex: 1 }}>
-                <Text
-                  style={{
-                    fontSize: normalize(11),
-                    color: COLORS.gray500,
-                    letterSpacing: 0.5,
-                    marginBottom: rs(2),
-                  }}
-                >
+                <Text style={{ fontSize: normalize(11), color: COLORS.gray500, letterSpacing: 0.5, marginBottom: rs(2) }}>
                   TODAY'S EARNINGS
                 </Text>
-                <Text
-                  style={{
-                    fontSize: normalize(32),
-                    fontWeight: "800",
-                    color: COLORS.navy,
-                    letterSpacing: -1,
-                  }}
-                >
+                <Text style={{ fontSize: normalize(32), fontWeight: "800", color: COLORS.navy, letterSpacing: -1 }}>
                   ₱{todayEarnings.toFixed(0)}
                 </Text>
-                <Text
-                  style={{
-                    fontSize: normalize(12),
-                    color: COLORS.gray500,
-                    marginTop: rs(2),
-                  }}
-                >
+                <Text style={{ fontSize: normalize(12), color: COLORS.gray500, marginTop: rs(2) }}>
                   {todayTrips} {todayTrips === 1 ? "trip" : "trips"} completed
                 </Text>
               </View>
-
-              {/* Divider */}
-              <View
-                style={{
-                  width: 1,
-                  height: rs(56),
-                  backgroundColor: COLORS.gray100,
-                  marginHorizontal: rs(16),
-                }}
-              />
-
-              {/* Toggle */}
+              <View style={{ width: 1, height: rs(56), backgroundColor: COLORS.gray100, marginHorizontal: rs(16) }} />
               <View style={{ alignItems: "center" }}>
                 <Pressable
                   onPress={toggleAvailability}
                   disabled={!canToggle || isToggling}
                   style={{
-                    width: rs(66),
-                    height: rs(34),
-                    borderRadius: rs(17),
-                    backgroundColor: !canToggle
-                      ? COLORS.gray300
-                      : isOnline
-                        ? COLORS.navy
-                        : COLORS.gray100,
-                    justifyContent: "center",
-                    paddingHorizontal: rs(2),
+                    width: rs(66), height: rs(34), borderRadius: rs(17),
+                    backgroundColor: !canToggle ? COLORS.gray300 : isOnline ? COLORS.navy : COLORS.gray100,
+                    justifyContent: "center", paddingHorizontal: rs(2),
                     borderWidth: 1,
-                    borderColor: !canToggle
-                      ? COLORS.gray300
-                      : isOnline
-                        ? COLORS.navy
-                        : COLORS.gray300,
+                    borderColor: !canToggle ? COLORS.gray300 : isOnline ? COLORS.navy : COLORS.gray300,
                   }}
                 >
                   {isToggling ? (
                     <View style={{ alignItems: "center" }}>
-                      <ActivityIndicator
-                        size="small"
-                        color={isOnline ? COLORS.white : COLORS.gray500}
-                      />
+                      <ActivityIndicator size="small" color={isOnline ? COLORS.white : COLORS.gray500} />
                     </View>
                   ) : (
                     <Animated.View
                       style={{
-                        width: rs(28),
-                        height: rs(28),
-                        borderRadius: rs(14),
+                        width: rs(28), height: rs(28), borderRadius: rs(14),
                         backgroundColor: COLORS.white,
                         transform: [{ translateX: thumbX }],
-                        shadowColor: COLORS.navy,
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.15,
-                        shadowRadius: 3,
-                        elevation: 2,
+                        shadowColor: COLORS.navy, shadowOffset: { width: 0, height: 1 },
+                        shadowOpacity: 0.15, shadowRadius: 3, elevation: 2,
                       }}
                     />
                   )}
                 </Pressable>
                 <Text
                   style={{
-                    marginTop: rs(6),
-                    fontSize: normalize(10),
-                    fontWeight: "700",
-                    letterSpacing: 0.5,
-                    color: isOnline ? COLORS.navy : COLORS.gray300,
+                    marginTop: rs(6), fontSize: normalize(10), fontWeight: "700",
+                    letterSpacing: 0.5, color: isOnline ? COLORS.navy : COLORS.gray300,
                   }}
                 >
                   {isOnline ? "ONLINE" : "OFFLINE"}
                 </Text>
               </View>
             </View>
-
-            {/* Status caption */}
             <View
               style={{
-                marginTop: rs(14),
-                paddingTop: rs(12),
-                borderTopWidth: 1,
-                borderTopColor: COLORS.gray100,
-                flexDirection: "row",
-                alignItems: "center",
+                marginTop: rs(14), paddingTop: rs(12),
+                borderTopWidth: 1, borderTopColor: COLORS.gray100,
+                flexDirection: "row", alignItems: "center",
               }}
             >
               <View
                 style={{
-                  width: rs(6),
-                  height: rs(6),
-                  borderRadius: rs(3),
-                  backgroundColor: !canToggle
-                    ? COLORS.gray300
-                    : isOnline
-                      ? COLORS.green
-                      : COLORS.gray300,
+                  width: rs(6), height: rs(6), borderRadius: rs(3),
+                  backgroundColor: !canToggle ? COLORS.gray300 : isOnline ? COLORS.green : COLORS.gray300,
                   marginRight: rs(7),
                 }}
               />
-              <Text
-                style={{
-                  fontSize: normalize(12),
-                  color: !canToggle
-                    ? COLORS.gray300
-                    : isOnline
-                      ? COLORS.navy
-                      : COLORS.gray500,
-                }}
-              >
+              <Text style={{ fontSize: normalize(12), color: !canToggle ? COLORS.gray300 : isOnline ? COLORS.navy : COLORS.gray500 }}>
                 {statusText()}
               </Text>
             </View>
@@ -2312,135 +1681,60 @@ export default function DriverHomeScreen() {
 
         {/* ═══════════ SUBSCRIPTION + MISSION ROW ═══════════ */}
         {(hasActiveSubscription || missionProgress) && (
-          <View
-            style={{
-              marginHorizontal: HP,
-              marginTop: rs(10),
-              flexDirection: "row",
-              gap: rs(8),
-            }}
-          >
+          <View style={{ marginHorizontal: HP, marginTop: rs(10), flexDirection: "row", gap: rs(8) }}>
             {hasActiveSubscription && (
               <Pressable
                 onPress={() => navigation.navigate("SubscriptionScreen")}
                 style={{
-                  flex: 1,
-                  backgroundColor: COLORS.white,
-                  padding: rs(14),
-                  borderRadius: BR,
-                  borderWidth: 1,
-                  borderColor: COLORS.gray100,
-                  shadowColor: COLORS.navy,
-                  shadowOffset: { width: 0, height: 1 },
-                  shadowOpacity: 0.05,
-                  shadowRadius: 4,
-                  elevation: 2,
+                  flex: 1, backgroundColor: COLORS.white, padding: rs(14),
+                  borderRadius: BR, borderWidth: 1, borderColor: COLORS.gray100,
+                  shadowColor: COLORS.navy, shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.05, shadowRadius: 4, elevation: 2,
                 }}
               >
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginBottom: rs(8),
-                  }}
-                >
+                <View style={{ flexDirection: "row", alignItems: "center", marginBottom: rs(8) }}>
                   <View
                     style={{
-                      width: rs(28),
-                      height: rs(28),
-                      borderRadius: rs(8),
-                      backgroundColor: COLORS.greenLight,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      marginRight: rs(8),
+                      width: rs(28), height: rs(28), borderRadius: rs(8),
+                      backgroundColor: COLORS.greenLight, justifyContent: "center",
+                      alignItems: "center", marginRight: rs(8),
                     }}
                   >
-                    <Ionicons
-                      name="card-outline"
-                      size={rs(15)}
-                      color={COLORS.green}
-                    />
+                    <Ionicons name="card-outline" size={rs(15)} color={COLORS.green} />
                   </View>
-                  <Text
-                    style={{
-                      fontSize: normalize(12),
-                      fontWeight: "700",
-                      color: COLORS.navy,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {activeSubscription?.subscription_plans?.plan_name ||
-                      "Plan"}
+                  <Text style={{ fontSize: normalize(12), fontWeight: "700", color: COLORS.navy }} numberOfLines={1}>
+                    {activeSubscription?.subscription_plans?.plan_name || "Plan"}
                   </Text>
                 </View>
-                <Text
-                  style={{ fontSize: normalize(11), color: COLORS.gray500 }}
-                >
+                <Text style={{ fontSize: normalize(11), color: COLORS.gray500 }}>
                   Exp{" "}
-                  {new Date(activeSubscription?.end_date).toLocaleDateString(
-                    "en-PH",
-                    { month: "short", day: "numeric" },
-                  )}
+                  {new Date(activeSubscription?.end_date).toLocaleDateString("en-PH", { month: "short", day: "numeric" })}
                 </Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    marginTop: rs(6),
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontSize: normalize(11),
-                      fontWeight: "600",
-                      color: COLORS.orange,
-                      marginRight: rs(3),
-                    }}
-                  >
+                <View style={{ flexDirection: "row", alignItems: "center", marginTop: rs(6) }}>
+                  <Text style={{ fontSize: normalize(11), fontWeight: "600", color: COLORS.orange, marginRight: rs(3) }}>
                     Manage
                   </Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={rs(12)}
-                    color={COLORS.orange}
-                  />
+                  <Ionicons name="chevron-forward" size={rs(12)} color={COLORS.orange} />
                 </View>
               </Pressable>
             )}
-            {missionProgress && (
-              <MissionProgress missionProgress={missionProgress} />
-            )}
+            {missionProgress && <MissionProgress missionProgress={missionProgress} />}
           </View>
         )}
 
         {/* ═══════════ PERFORMANCE CARD ═══════════ */}
         <View
           style={{
-            marginHorizontal: HP,
-            marginTop: rs(10),
-            marginBottom: rs(10),
-            backgroundColor: COLORS.white,
-            borderRadius: rs(20),
-            padding: rs(18),
-            borderWidth: 1,
-            borderColor: COLORS.gray100,
-            shadowColor: COLORS.navy,
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.08,
-            shadowRadius: 8,
-            elevation: 3,
+            marginHorizontal: HP, marginTop: rs(10), marginBottom: rs(10),
+            backgroundColor: COLORS.white, borderRadius: rs(20),
+            padding: rs(18), borderWidth: 1, borderColor: COLORS.gray100,
+            shadowColor: COLORS.navy, shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.08, shadowRadius: 8, elevation: 3,
           }}
         >
-          <SectionHeader
-            icon="stats-chart-outline"
-            title="Performance"
-            subtitle="This week's summary"
-          />
+          <SectionHeader icon="stats-chart-outline" title="Performance" subtitle="This week's summary" />
 
-          {/* Quick stats */}
-          <View
-            style={{ flexDirection: "row", gap: rs(8), marginBottom: rs(18) }}
-          >
+          <View style={{ flexDirection: "row", gap: rs(8), marginBottom: rs(18) }}>
             <StatChip
               label="Week Total"
               value={`₱${weeklyData.earnings.reduce((a, b) => a + b, 0).toFixed(0)}`}
@@ -2458,13 +1752,9 @@ export default function DriverHomeScreen() {
           {/* Tabs */}
           <View
             style={{
-              flexDirection: "row",
-              backgroundColor: COLORS.gray50,
-              borderRadius: rs(10),
-              padding: rs(3),
-              marginBottom: rs(18),
-              borderWidth: 1,
-              borderColor: COLORS.gray100,
+              flexDirection: "row", backgroundColor: COLORS.gray50,
+              borderRadius: rs(10), padding: rs(3), marginBottom: rs(18),
+              borderWidth: 1, borderColor: COLORS.gray100,
             }}
           >
             {["earnings", "trips"].map((tab) => (
@@ -2472,15 +1762,9 @@ export default function DriverHomeScreen() {
                 key={tab}
                 onPress={() => setActiveTab(tab)}
                 style={{
-                  flex: 1,
-                  paddingVertical: rs(8),
-                  borderRadius: rs(8),
-                  alignItems: "center",
-                  flexDirection: "row",
-                  justifyContent: "center",
-                  gap: rs(5),
-                  backgroundColor:
-                    activeTab === tab ? COLORS.navy : "transparent",
+                  flex: 1, paddingVertical: rs(8), borderRadius: rs(8),
+                  alignItems: "center", flexDirection: "row", justifyContent: "center", gap: rs(5),
+                  backgroundColor: activeTab === tab ? COLORS.navy : "transparent",
                 }}
               >
                 <Ionicons
@@ -2488,13 +1772,7 @@ export default function DriverHomeScreen() {
                   size={rs(15)}
                   color={activeTab === tab ? COLORS.orange : COLORS.gray500}
                 />
-                <Text
-                  style={{
-                    fontSize: normalize(12),
-                    fontWeight: "600",
-                    color: activeTab === tab ? COLORS.white : COLORS.gray500,
-                  }}
-                >
+                <Text style={{ fontSize: normalize(12), fontWeight: "600", color: activeTab === tab ? COLORS.white : COLORS.gray500 }}>
                   {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </Text>
               </Pressable>
@@ -2507,58 +1785,30 @@ export default function DriverHomeScreen() {
               {!weeklyData.earnings.some((d) => d > 0) && (
                 <View
                   style={{
-                    backgroundColor: COLORS.gray50,
-                    borderRadius: rs(12),
-                    padding: rs(32),
-                    marginBottom: rs(16),
-                    alignItems: "center",
-                    borderWidth: 1,
-                    borderColor: COLORS.gray100,
+                    backgroundColor: COLORS.gray50, borderRadius: rs(12),
+                    padding: rs(32), marginBottom: rs(16), alignItems: "center",
+                    borderWidth: 1, borderColor: COLORS.gray100,
                   }}
                 >
-                  <Ionicons
-                    name="bar-chart-outline"
-                    size={rs(36)}
-                    color={COLORS.gray300}
-                  />
-                  <Text
-                    style={{
-                      marginTop: rs(10),
-                      color: COLORS.gray300,
-                      fontSize: normalize(13),
-                    }}
-                  >
+                  <Ionicons name="bar-chart-outline" size={rs(36)} color={COLORS.gray300} />
+                  <Text style={{ marginTop: rs(10), color: COLORS.gray300, fontSize: normalize(13) }}>
                     No earnings this week
                   </Text>
                 </View>
               )}
-
               <View
                 style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  backgroundColor: COLORS.gray50,
-                  borderRadius: rs(12),
-                  paddingVertical: rs(12),
-                  paddingHorizontal: rs(8),
-                  borderWidth: 1,
-                  borderColor: COLORS.gray100,
+                  flexDirection: "row", justifyContent: "space-between",
+                  backgroundColor: COLORS.gray50, borderRadius: rs(12),
+                  paddingVertical: rs(12), paddingHorizontal: rs(8),
+                  borderWidth: 1, borderColor: COLORS.gray100,
                 }}
               >
                 {weeklyData.labels.map((day, index) => {
-                  const todayIndex =
-                    new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
+                  const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
                   const isToday = index === todayIndex;
-
                   return (
-                    <View
-                      key={day}
-                      style={{
-                        alignItems: "center",
-                        flex: 1,
-                        minWidth: rs(32),
-                      }}
-                    >
+                    <View key={day} style={{ alignItems: "center", flex: 1, minWidth: rs(32) }}>
                       <Text
                         style={{
                           fontSize: normalize(10),
@@ -2569,27 +1819,11 @@ export default function DriverHomeScreen() {
                       >
                         {isSmallScreen ? day.charAt(0) : day.slice(0, 3)}
                       </Text>
-                      <Text
-                        style={{
-                          fontSize: normalize(11),
-                          fontWeight: "700",
-                          color: isToday ? COLORS.navy : COLORS.gray500,
-                        }}
-                      >
-                        {weeklyData.earnings[index] > 0
-                          ? `₱${weeklyData.earnings[index]}`
-                          : "—"}
+                      <Text style={{ fontSize: normalize(11), fontWeight: "700", color: isToday ? COLORS.navy : COLORS.gray500 }}>
+                        {weeklyData.earnings[index] > 0 ? `₱${weeklyData.earnings[index]}` : "—"}
                       </Text>
-                      <Text
-                        style={{
-                          fontSize: normalize(9),
-                          color: COLORS.gray300,
-                          marginTop: rs(1),
-                        }}
-                      >
-                        {weeklyData.trips[index] > 0
-                          ? `${weeklyData.trips[index]}t`
-                          : ""}
+                      <Text style={{ fontSize: normalize(9), color: COLORS.gray300, marginTop: rs(1) }}>
+                        {weeklyData.trips[index] > 0 ? `${weeklyData.trips[index]}t` : ""}
                       </Text>
                     </View>
                   );
@@ -2599,58 +1833,24 @@ export default function DriverHomeScreen() {
           ) : (
             /* ─ TRIPS TAB ─ */
             <View>
-              {/* Trip summary */}
-              <View
-                style={{
-                  flexDirection: "row",
-                  gap: rs(8),
-                  marginBottom: rs(16),
-                }}
-              >
+              <View style={{ flexDirection: "row", gap: rs(8), marginBottom: rs(16) }}>
                 <StatChip
                   label="Week Trips"
                   value={weeklyData.trips.reduce((a, b) => a + b, 0).toString()}
                   accentColor={COLORS.navy}
                 />
-                <StatChip
-                  label="Today Trips"
-                  value={todayTrips.toString()}
-                  accentColor={COLORS.orange}
-                />
+                <StatChip label="Today Trips" value={todayTrips.toString()} accentColor={COLORS.orange} />
               </View>
-
-              <View
-                style={{
-                  flexDirection: "row",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: rs(12),
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: normalize(13),
-                    fontWeight: "700",
-                    color: COLORS.navy,
-                    letterSpacing: -0.2,
-                  }}
-                >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: rs(12) }}>
+                <Text style={{ fontSize: normalize(13), fontWeight: "700", color: COLORS.navy, letterSpacing: -0.2 }}>
                   Recent Trips
                 </Text>
-
                 {recentTrips.length > RECENT_TRIPS_DISPLAY_LIMIT && (
-                  <Text
-                    style={{
-                      fontSize: normalize(11),
-                      color: COLORS.gray500,
-                      fontWeight: "600",
-                    }}
-                  >
+                  <Text style={{ fontSize: normalize(11), color: COLORS.gray500, fontWeight: "600" }}>
                     Showing {RECENT_TRIPS_DISPLAY_LIMIT} of {recentTrips.length}
                   </Text>
                 )}
               </View>
-
               <FlatList
                 data={limitedRecentTrips}
                 renderItem={renderTrip}
@@ -2659,68 +1859,36 @@ export default function DriverHomeScreen() {
                 removeClippedSubviews
                 maxToRenderPerBatch={3}
                 initialNumToRender={3}
-                ItemSeparatorComponent={() => (
-                  <View style={{ height: rs(2) }} />
-                )}
+                ItemSeparatorComponent={() => <View style={{ height: rs(2) }} />}
                 ListEmptyComponent={
                   <View
                     style={{
-                      paddingVertical: rs(32),
-                      alignItems: "center",
-                      backgroundColor: COLORS.gray50,
-                      borderRadius: rs(12),
-                      borderWidth: 1,
-                      borderColor: COLORS.gray100,
+                      paddingVertical: rs(32), alignItems: "center",
+                      backgroundColor: COLORS.gray50, borderRadius: rs(12),
+                      borderWidth: 1, borderColor: COLORS.gray100,
                     }}
                   >
-                    <Ionicons
-                      name="bicycle-outline"
-                      size={rs(36)}
-                      color={COLORS.gray300}
-                    />
-                    <Text
-                      style={{
-                        marginTop: rs(10),
-                        color: COLORS.gray300,
-                        fontSize: normalize(13),
-                      }}
-                    >
+                    <Ionicons name="bicycle-outline" size={rs(36)} color={COLORS.gray300} />
+                    <Text style={{ marginTop: rs(10), color: COLORS.gray300, fontSize: normalize(13) }}>
                       No trips yet
                     </Text>
                   </View>
                 }
               />
-
               {recentTrips.length > 0 && (
                 <Pressable
                   onPress={() => navigation.navigate("AllTripsScreen")}
                   style={({ pressed }) => ({
-                    marginTop: rs(12),
-                    paddingVertical: rs(12),
-                    borderRadius: rs(12),
-                    borderWidth: 1,
-                    borderColor: COLORS.gray100,
+                    marginTop: rs(12), paddingVertical: rs(12), borderRadius: rs(12),
+                    borderWidth: 1, borderColor: COLORS.gray100,
                     backgroundColor: pressed ? COLORS.gray100 : COLORS.gray50,
-                    flexDirection: "row",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    gap: rs(6),
+                    flexDirection: "row", justifyContent: "center", alignItems: "center", gap: rs(6),
                   })}
                 >
-                  <Text
-                    style={{
-                      fontSize: normalize(13),
-                      fontWeight: "700",
-                      color: COLORS.navy,
-                    }}
-                  >
+                  <Text style={{ fontSize: normalize(13), fontWeight: "700", color: COLORS.navy }}>
                     View All Trips
                   </Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={rs(14)}
-                    color={COLORS.navy}
-                  />
+                  <Ionicons name="chevron-forward" size={rs(14)} color={COLORS.navy} />
                 </Pressable>
               )}
             </View>

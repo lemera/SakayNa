@@ -692,54 +692,123 @@ const addNotification = async ({
     const setupRequestSub = () => {
       const sub = supabase
         .channel(`driver-requests-v2-${id}`)
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "booking_requests", filter: `driver_id=eq.${id}` },
-          async (payload) => {
-            console.log("🔔 New booking_request INSERT", payload.new.id);
-            if (!isMounted.current) return;
-            if (!activeBookingRef.current) {
-              // ── FIX 1: use debounced fetch instead of direct call ────────────
-              debouncedFetchRequests(id);
-              const { data: booking } = await supabase
-                .from("bookings")
-                .select("*, commuter:commuters(first_name, last_name, phone, profile_picture)")
-                .eq("id", payload.new.booking_id)
-                .single();
-              if (booking) {
-  startExpiryTimer(payload.new.id, payload.new.booking_id);
+.on(
+  "postgres_changes",
+  { event: "INSERT", schema: "public", table: "booking_requests", filter: `driver_id=eq.${id}` },
+  async (payload) => {
+    console.log("🔔 New booking_request INSERT", payload.new.id);
 
-  await playBookingSound();
-  await showBookingNotification({
-    title: "New Booking Request! 🚗",
-    body: `${booking.commuter?.first_name || "Someone"} wants a ride`,
-    data: {
-      type: "booking_request",
-      bookingId: payload.new.booking_id,
-      requestId: payload.new.id,
-    },
-  });
+    if (!isMounted.current || activeBookingRef.current) return;
 
-  await addNotification({
-    type: "booking",
-    title: "New Booking Request!",
-    message: `${booking.commuter?.first_name || "Someone"} wants a ride — ${REQUEST_EXPIRY_SECONDS}s to accept`,
-    duration: 10000,
-    actionable: true,
-    actionText: "View",
-    onAction: () =>
-      setSelectedRequest({
-        ...booking,
-        request_id: payload.new.id,
-        request_status: payload.new.status,
-        request_distance: payload.new.distance_km,
-        request_created_at: payload.new.created_at,
-      }),
-  });
-}
-            }
-          }
-        )
+    const requestId = payload.new.id;
+    const bookingId = payload.new.booking_id;
+
+    // start timer agad
+    startExpiryTimer(requestId, bookingId);
+
+    const fetchBookingDetails = async (retries = 5, delay = 250) => {
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          const { data: booking, error } = await supabase
+            .from("bookings")
+            .select(`
+              id,
+              commuter_id,
+              pickup_location,
+              pickup_latitude,
+              pickup_longitude,
+              pickup_details,
+              dropoff_location,
+              dropoff_latitude,
+              dropoff_longitude,
+              dropoff_details,
+              passenger_count,
+              fare,
+              distance_km,
+              duration_minutes,
+              status,
+              commuter:commuters(first_name, last_name, phone, profile_picture)
+            `)
+            .eq("id", bookingId)
+            .single();
+
+          if (!error && booking) return booking;
+        } catch (err) {
+          console.log("fetchBookingDetails retry error:", err?.message);
+        }
+
+        if (attempt < retries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+
+      return null;
+    };
+
+    const booking = await fetchBookingDetails();
+
+    if (!booking) {
+      console.log("❌ Booking details not found after retries");
+      addNotification({
+        type: "warning",
+        title: "New request received",
+        message: "Tap refresh if booking details are delayed.",
+        duration: 4000,
+      });
+
+      // fallback fetch
+      fetchPendingRequests(id);
+      return;
+    }
+
+    const newRequest = {
+      request_id: requestId,
+      request_status: payload.new.status,
+      request_distance: payload.new.distance_km,
+      request_created_at: payload.new.created_at,
+      ...booking,
+    };
+
+    // ✅ IMPORTANT: update UI agad, huwag hintayin ang notifications
+    setPendingRequests((prev) => {
+      const exists = prev.some((r) => r.request_id === requestId);
+      if (exists) return prev;
+      return [newRequest, ...prev];
+    });
+
+    setSelectedRequest((prev) => prev || newRequest);
+
+    // background refresh lang para siguradong synced
+    fetchPendingRequests(id);
+
+    // notifications / sounds - wag i-block ang UI
+    Promise.resolve().then(async () => {
+      try {
+        await showBookingNotification({
+          title: "New Booking Request! 🚗",
+          body: `${booking.commuter?.first_name || "Someone"} wants a ride`,
+          data: {
+            type: "booking_request",
+            bookingId,
+            requestId,
+          },
+        });
+      } catch (err) {
+        console.log("showBookingNotification error:", err);
+      }
+    });
+
+    addNotification({
+      type: "booking",
+      title: "New Booking Request!",
+      message: `${booking.commuter?.first_name || "Someone"} wants a ride — ${REQUEST_EXPIRY_SECONDS}s to accept`,
+      duration: 10000,
+      actionable: true,
+      actionText: "View",
+      onAction: () => setSelectedRequest(newRequest),
+    });
+  }
+)
         .on(
           "postgres_changes",
           { event: "UPDATE", schema: "public", table: "booking_requests", filter: `driver_id=eq.${id}` },

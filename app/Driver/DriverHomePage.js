@@ -166,60 +166,67 @@ export default function HomePage() {
   }, [driverId]);
 
   // Enhanced notification subscription with auto-refresh
-  useEffect(() => {
-    if (!driverId) return;
+useEffect(() => {
+  if (!driverId) return;
 
-    console.log("📡 Setting up notification subscription for driver:", driverId);
-    
-    // Initial fetch
-    fetchUnreadCount();
+  console.log("🚀 Setting up booking monitor for driver:", driverId);
 
-    // Subscribe to real-time notification changes
-    const notifSubscription = supabase
-      .channel('inbox-notifications')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${driverId}`,
-        },
-        (payload) => {
-          console.log("📦 Notification changed:", payload.eventType);
-          console.log("📊 Payload:", payload.new);
-          
-          // Immediately fetch updated count
-          fetchUnreadCount();
-          
-          // Trigger haptic for new notifications
-          if (payload.eventType === 'INSERT' && !payload.new?.is_read) {
-            // Vibrate for new notification
-            Vibration.vibrate(200);
-            if (Platform.OS === 'ios') {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            } else {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }
-          }
+  // Run immediately on mount / driverId change
+  checkAllBookings();
+
+  // Fallback polling every 5s (real-time should catch most updates)
+  const intervalId = setInterval(checkAllBookings, 5000);
+
+  // Watch booking_requests table for new/updated pending requests
+  const requestsSub = supabase
+    .channel(`driver-requests-${driverId}`)          // unique channel per driver
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "booking_requests",
+        filter: `driver_id=eq.${driverId}`,
+      },
+      (payload) => {
+        console.log("📦 booking_requests change:", payload.eventType, payload.new?.status);
+        checkAllBookings();
+
+        if (payload.eventType === "INSERT" && payload.new?.status === "pending") {
+          triggerBookingAlert();
         }
-      )
-      .subscribe((status) => {
-        console.log("📡 Notification subscription status:", status);
-      });
+      }
+    )
+    .subscribe((status) => console.log("📡 booking_requests sub:", status));
 
-    // Set up periodic check as backup (every 30 seconds)
-    const periodicCheck = setInterval(() => {
-      console.log("⏰ Periodic notification check");
-      fetchUnreadCount();
-    }, 30000);
+  // Watch bookings table for accepted / active ride status
+  const bookingsSub = supabase
+    .channel(`driver-bookings-${driverId}`)           // separate channel, unique name
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "bookings",
+        filter: `driver_id=eq.${driverId}`,
+      },
+      (payload) => {
+        console.log("📦 bookings change:", payload.eventType, payload.new?.status);
+        checkAllBookings();
 
-    return () => {
-      console.log("🧹 Cleaning up notification subscription");
-      notifSubscription.unsubscribe();
-      clearInterval(periodicCheck);
-    };
-  }, [driverId]);
+        if (payload.new?.status === "accepted") {
+          triggerBookingAlert();
+        }
+      }
+    )
+    .subscribe((status) => console.log("📡 bookings sub:", status));
+
+  return () => {
+    clearInterval(intervalId);
+    requestsSub.unsubscribe();
+    bookingsSub.unsubscribe();
+  };
+}, [driverId]);
 
   // Refresh unread count when Inbox screen is focused
   useFocusEffect(
@@ -481,7 +488,7 @@ export default function HomePage() {
             case "Home":
               iconName = focused ? "home" : "home-outline";
               break;
-            case "Wallet":
+            case "Earnings":
               iconName = focused ? "wallet" : "wallet-outline";
               break;
             case "Inbox":
@@ -522,7 +529,7 @@ export default function HomePage() {
           }
         }}
       />
-      <Tab.Screen name="Wallet" component={WalletScreen} />
+      <Tab.Screen name="Earnings" component={WalletScreen} />
 
       {/* TRACK RIDE BUTTON WITH ENHANCED GLOW EFFECT */}
       <Tab.Screen
@@ -675,6 +682,7 @@ const styles = StyleSheet.create({
   glowRing: {
     position: 'absolute',
     marginTop: 15,
+    marginBottom: -15,
     zIndex: 1,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 0 },

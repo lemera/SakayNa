@@ -15,7 +15,7 @@ import {
   Animated,
   Dimensions,
   Linking,
-  Clipboard, // Use React Native's built-in Clipboard
+  Clipboard,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -41,18 +41,12 @@ export default function ReferralsScreen() {
   const [referralStats, setReferralStats] = useState({
     totalReferrals: 0,
     activeReferrals: 0,
-    totalCommission: 0,
     pointsEarned: 0,
-    pendingCommission: 0,
   });
   const [referralsList, setReferralsList] = useState([]);
-  const [commissions, setCommissions] = useState([]);
   const [referralSettings, setReferralSettings] = useState({
     referral_points: 100,
-    referral_commission_rate: 0.05,
     referral_bonus_points: 50,
-    referral_commission_duration_days: 365,
-    min_referral_rides: 1,
     referral_expiry_days: 90,
   });
   const [showShareModal, setShowShareModal] = useState(false);
@@ -92,7 +86,6 @@ export default function ReferralsScreen() {
           fetchReferralCode(id),
           fetchReferralStats(id),
           fetchReferralsList(id),
-          fetchCommissions(id),
           fetchReferralSettings(),
         ]);
       }
@@ -150,7 +143,7 @@ export default function ReferralsScreen() {
     try {
       const { data: referrals, error: referralsError } = await supabase
         .from("referrals")
-        .select("status, total_commission_earned")
+        .select("status")
         .eq("referrer_id", id)
         .eq("referrer_type", "commuter");
 
@@ -158,7 +151,6 @@ export default function ReferralsScreen() {
 
       const totalReferrals = referrals?.length || 0;
       const activeReferrals = referrals?.filter(r => r.status === "active").length || 0;
-      const totalCommission = referrals?.reduce((sum, r) => sum + (r.total_commission_earned || 0), 0) || 0;
 
       const { data: pointsHistory, error: pointsError } = await supabase
         .from("commuter_points_history")
@@ -170,19 +162,10 @@ export default function ReferralsScreen() {
 
       const pointsEarned = pointsHistory?.reduce((sum, p) => sum + p.points, 0) || 0;
 
-      const { data: pendingCommissions, error: pendingError } = await supabase
-        .from("commissions")
-        .select("amount")
-        .eq("status", "pending");
-
-      const pendingCommission = pendingCommissions?.reduce((sum, c) => sum + c.amount, 0) || 0;
-
       setReferralStats({
         totalReferrals,
         activeReferrals,
-        totalCommission,
         pointsEarned,
-        pendingCommission,
       });
     } catch (err) {
       console.log("Error fetching referral stats:", err.message);
@@ -197,10 +180,8 @@ export default function ReferralsScreen() {
           id,
           referred_id,
           status,
-          total_commission_earned,
           referred_at,
           first_ride_completed_at,
-          commission_ends_at,
           referred:users!referred_id (
             phone,
             created_at
@@ -230,35 +211,6 @@ export default function ReferralsScreen() {
     }
   };
 
-  const fetchCommissions = async (id) => {
-    try {
-      const { data, error } = await supabase
-        .from("commissions")
-        .select(`
-          id,
-          amount,
-          status,
-          created_at,
-          paid_at,
-          booking:bookings (
-            id,
-            fare,
-            created_at,
-            pickup_location,
-            dropoff_location
-          )
-        `)
-        .in("status", ["pending", "paid"])
-        .order("created_at", { ascending: false })
-        .limit(20);
-
-      if (error) throw error;
-      setCommissions(data || []);
-    } catch (err) {
-      console.log("Error fetching commissions:", err.message);
-    }
-  };
-
   const fetchReferralSettings = async () => {
     try {
       const { data, error } = await supabase
@@ -284,7 +236,7 @@ export default function ReferralsScreen() {
 
   const handleShare = async () => {
     try {
-      const message = `🎉 Join me on SakayNa! Use my referral code ${referralCode} to get ₱${(referralSettings.referral_bonus_points * 0.1).toFixed(0)} off your first ride!\n\nDownload the app: https://sakay.ph/download`;
+      const message = `🎉 Join me on SakayNa! Use my referral code ${referralCode} to get ${referralSettings.referral_bonus_points} points off your first ride!\n\nDownload the app: https://sakay.ph/download`;
       
       const result = await Share.share({
         message: message,
@@ -300,7 +252,6 @@ export default function ReferralsScreen() {
   };
 
   const handleCopyCode = async () => {
-    // Use React Native's built-in Clipboard
     await Clipboard.setString(referralCode || "");
     Alert.alert("Copied!", "Referral code copied to clipboard");
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -330,14 +281,14 @@ export default function ReferralsScreen() {
 
   const handleWhatsAppShare = () => {
     const message = encodeURIComponent(
-      `🎉 Join me on SakayNa! Use my referral code ${referralCode} to get ₱${(referralSettings.referral_bonus_points * 0.1).toFixed(0)} off your first ride!\n\nDownload: https://sakay.ph/download`
+      `🎉 Join me on SakayNa! Use my referral code ${referralCode} to get ${referralSettings.referral_bonus_points} points off your first ride!\n\nDownload: https://sakay.ph/download`
     );
     Linking.openURL(`whatsapp://send?text=${message}`);
   };
 
   const handleMessengerShare = () => {
     const message = encodeURIComponent(
-      `🎉 Join me on SakayNa! Use my referral code ${referralCode} to get ₱${(referralSettings.referral_bonus_points * 0.1).toFixed(0)} off your first ride!\n\nDownload: https://sakay.ph/download`
+      `🎉 Join me on SakayNa! Use my referral code ${referralCode} to get ${referralSettings.referral_bonus_points} points off your first ride!\n\nDownload: https://sakay.ph/download`
     );
     Linking.openURL(`fb-messenger://share?link=${message}`);
   };
@@ -352,10 +303,6 @@ export default function ReferralsScreen() {
     if (diffDays === 1) return "Yesterday";
     if (diffDays < 7) return `${diffDays} days ago`;
     return date.toLocaleDateString("en-PH", { month: "short", day: "numeric" });
-  };
-
-  const formatCurrency = (amount) => {
-    return `₱${amount?.toFixed(2) || "0.00"}`;
   };
 
   const getReferralStatusColor = (status) => {
@@ -374,14 +321,6 @@ export default function ReferralsScreen() {
       case "expired": return "Expired";
       default: return "Pending";
     }
-  };
-
-  const getCommissionStatusColor = (status) => {
-    return status === "paid" ? "#10B981" : "#F59E0B";
-  };
-
-  const getCommissionStatusText = (status) => {
-    return status === "paid" ? "Paid" : "Pending";
   };
 
   const onRefresh = () => {
@@ -431,9 +370,9 @@ export default function ReferralsScreen() {
             end={{ x: 1, y: 1 }}
             style={styles.heroGradient}
           >
-            <Text style={styles.heroTitle}>Invite Friends, Earn Rewards!</Text>
+            <Text style={styles.heroTitle}>Invite Friends, Earn Points!</Text>
             <Text style={styles.heroSubtitle}>
-              Get {referralSettings.referral_points} points for every friend who joins
+              Get {referralSettings.referral_points} points for every friend who joins and completes their first ride
             </Text>
             
             <View style={styles.referralCodeContainer}>
@@ -479,10 +418,10 @@ export default function ReferralsScreen() {
 
           <View style={styles.statCard}>
             <View style={styles.statIconContainer}>
-              <Ionicons name="cash-outline" size={24} color="#10B981" />
+              <Ionicons name="people-circle" size={24} color="#8B5CF6" />
             </View>
-            <Text style={styles.statValue}>{formatCurrency(referralStats.totalCommission)}</Text>
-            <Text style={styles.statLabel}>Commission</Text>
+            <Text style={styles.statValue}>{referralStats.activeReferrals}</Text>
+            <Text style={styles.statLabel}>Active Referrals</Text>
           </View>
         </View>
 
@@ -520,9 +459,9 @@ export default function ReferralsScreen() {
                 <Text style={styles.stepNumberText}>3</Text>
               </View>
               <View style={styles.stepContent}>
-                <Text style={styles.stepTitle}>Earn Rewards</Text>
+                <Text style={styles.stepTitle}>Earn Points</Text>
                 <Text style={styles.stepDesc}>
-                  Get {referralSettings.referral_points} points + {referralSettings.referral_commission_rate * 100}% commission on their rides for {referralSettings.referral_commission_duration_days} days
+                  Get {referralSettings.referral_points} points when your friend completes their first ride
                 </Text>
               </View>
             </View>
@@ -593,37 +532,11 @@ export default function ReferralsScreen() {
           </View>
         )}
 
-        {/* Commissions History */}
-        {commissions.length > 0 && (
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>💰 Commission History</Text>
-            
-            {commissions.map((commission, index) => (
-              <View key={commission.id} style={[styles.commissionItem, index === commissions.length - 1 && styles.lastCommissionItem]}>
-                <View style={styles.commissionLeft}>
-                  <Text style={styles.commissionAmount}>{formatCurrency(commission.amount)}</Text>
-                  <Text style={styles.commissionDate}>{formatDate(commission.created_at)}</Text>
-                  {commission.booking && (
-                    <Text style={styles.commissionBooking} numberOfLines={1}>
-                      Ride: {commission.booking.pickup_location?.split(",")[0]} → {commission.booking.dropoff_location?.split(",")[0]}
-                    </Text>
-                  )}
-                </View>
-                <View style={[styles.commissionStatus, { backgroundColor: getCommissionStatusColor(commission.status) + "20" }]}>
-                  <Text style={[styles.commissionStatusText, { color: getCommissionStatusColor(commission.status) }]}>
-                    {getCommissionStatusText(commission.status)}
-                  </Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
-
         {/* Info Card */}
         <View style={styles.infoCard}>
           <Ionicons name="information-circle" size={20} color="#183B5C" />
           <Text style={styles.infoText}>
-            Terms: Referral points are credited when your referred friend completes their first ride. Commission is earned on their rides for {referralSettings.referral_commission_duration_days} days. Referral codes expire after {referralSettings.referral_expiry_days} days of inactivity.
+            Terms: Referral points are credited when your referred friend completes their first ride. Referral codes expire after {referralSettings.referral_expiry_days} days of inactivity. Maximum {referralSettings.referral_points} points per referral.
           </Text>
         </View>
       </ScrollView>
@@ -954,44 +867,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   referralStatusText: {
-    fontSize: 11,
-    fontWeight: "600",
-  },
-  commissionItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  lastCommissionItem: {
-    borderBottomWidth: 0,
-  },
-  commissionLeft: {
-    flex: 1,
-  },
-  commissionAmount: {
-    fontSize: 16,
-    fontWeight: "bold",
-    color: "#10B981",
-    marginBottom: 2,
-  },
-  commissionDate: {
-    fontSize: 11,
-    color: "#999",
-    marginBottom: 2,
-  },
-  commissionBooking: {
-    fontSize: 11,
-    color: "#666",
-  },
-  commissionStatus: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  commissionStatusText: {
     fontSize: 11,
     fontWeight: "600",
   },

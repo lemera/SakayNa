@@ -287,7 +287,7 @@ export default function RateDriverScreen() {
 
           <Pressable
             style={styles.skipButton}
-            onPress={() => navigation.goBack()}
+            onPress={() => navigation.replace("HomeScreen")}
           >
             <Text style={styles.skipButtonText}>Skip</Text>
           </Pressable>

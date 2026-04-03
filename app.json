@@ -19,27 +19,20 @@
         "googleMapsApiKey": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
       },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "This app needs access to location to track rides and show your position on map.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "This app needs access to location to track rides and show your position on map.",
-        "UIBackgroundModes": [
-          "location"
-        ],
+        "NSLocationWhenInUseUsageDescription": "This app needs access to location to show your position on the map, set pickup points, and improve ride booking.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.lemera.sakayna",
-      "versionCode": 6,
+      "versionCode": 7,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon_app.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
+        "ACCESS_FINE_LOCATION"
       ],
       "config": {
         "googleMaps": {
@@ -61,9 +54,9 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow SakayNa to use your location to track rides.",
-          "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": true
+          "locationWhenInUsePermission": "Allow SakayNa to use your location to show your position on the map, suggest pickup points, and improve ride booking.",
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
         }
       ],
       [
