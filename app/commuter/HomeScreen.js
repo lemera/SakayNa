@@ -1,4 +1,4 @@
-// screens/commuter/HomeScreen.js (Complete with Glowing Effects)
+// screens/commuter/HomeScreen.js (Complete with Floating Action Buttons)
 import React, {
   useState,
   useEffect,
@@ -700,50 +700,102 @@ const TripSummaryCard = ({ distance, time, passengers, fare }) => (
   </View>
 );
 
-// ==================== ACTION BUTTONS ====================
-const ActionButtons = ({ onScan, onFind, disabled, trackUserAction }) => (
-  <View style={styles.actionContainer}>
-    <TouchableOpacity
-      style={[styles.actionButton, disabled && styles.actionButtonDisabled]}
-      onPress={() => {
-        if (trackUserAction) trackUserAction();
-        onScan();
-      }}
-      disabled={disabled}
-      activeOpacity={0.8}
-    >
-      <View style={styles.actionIconWrapper}>
-        <Ionicons name="qr-code-outline" size={28} color="#10B981" />
-      </View>
-      <Text style={styles.actionTitle}>Scan QR</Text>
-      <Text style={styles.actionSubtitle}>Instant ride</Text>
-    </TouchableOpacity>
+// ==================== FLOATING ACTION BUTTONS ====================
+const FloatingActionButtons = ({ onScan, onFind, disabled, trackUserAction, visible }) => {
+  const translateY = useRef(new Animated.Value(100)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
 
-    <TouchableOpacity
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          damping: 20,
+          stiffness: 300,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      Animated.parallel([
+        Animated.timing(translateY, {
+          toValue: 100,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }
+  }, [visible]);
+
+  if (!visible) return null;
+
+  return (
+    <Animated.View
       style={[
-        styles.actionButton,
-        styles.actionButtonPrimary,
-        disabled && styles.actionButtonDisabled,
+        styles.floatingActionContainer,
+        {
+          transform: [{ translateY }],
+          opacity,
+        },
       ]}
-      onPress={() => {
-        if (trackUserAction) trackUserAction();
-        onFind();
-      }}
-      disabled={disabled}
-      activeOpacity={0.8}
     >
-      <View style={styles.actionIconWrapper}>
-        <Ionicons name="car-outline" size={28} color="#FFF" />
+      <View style={styles.floatingActionButtons}>
+        <TouchableOpacity
+          style={[styles.floatingActionButton, disabled && styles.floatingActionButtonDisabled]}
+          onPress={() => {
+            if (trackUserAction) trackUserAction();
+            onScan();
+          }}
+          disabled={disabled}
+          activeOpacity={0.8}
+        >
+          <View style={styles.floatingActionIconWrapper}>
+            <Ionicons name="qr-code-outline" size={24} color="#10B981" />
+          </View>
+          <View style={styles.floatingActionTextContainer}>
+            <Text style={styles.floatingActionTitle}>Scan QR</Text>
+            <Text style={styles.floatingActionSubtitle}>Instant ride</Text>
+          </View>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.floatingActionButton,
+            styles.floatingActionButtonPrimary,
+            disabled && styles.floatingActionButtonDisabled,
+          ]}
+          onPress={() => {
+            if (trackUserAction) trackUserAction();
+            onFind();
+          }}
+          disabled={disabled}
+          activeOpacity={0.8}
+        >
+          <View style={styles.floatingActionIconWrapper}>
+            <Ionicons name="car-outline" size={24} color="#FFF" />
+          </View>
+          <View style={styles.floatingActionTextContainer}>
+            <Text style={[styles.floatingActionTitle, styles.floatingActionTitleLight]}>
+              Find Driver
+            </Text>
+            <Text style={[styles.floatingActionSubtitle, styles.floatingActionSubtitleLight]}>
+              Search nearby
+            </Text>
+          </View>
+        </TouchableOpacity>
       </View>
-      <Text style={[styles.actionTitle, styles.actionTitleLight]}>
-        Find Driver
-      </Text>
-      <Text style={[styles.actionSubtitle, styles.actionSubtitleLight]}>
-        Search nearby
-      </Text>
-    </TouchableOpacity>
-  </View>
-);
+    </Animated.View>
+  );
+};
 
 // ==================== PROXIMITY FILTER MODAL ====================
 const ProximityModal = ({
@@ -1577,9 +1629,11 @@ export default function CommuterHomeScreen() {
     if (pickup && dropoff && estimatedDistance)
       calculateFareWithPassengers(parseFloat(estimatedDistance));
   }, [passengerCount, estimatedDistance, fareSettings]);
+  
   useEffect(() => {
     if (pickup && dropoff) calculateRoute(pickup, dropoff);
   }, [pickup, dropoff]);
+  
   useEffect(() => {
     if (pickup && dropoff && !showCharacterMessage)
       setTimeout(
@@ -1587,6 +1641,7 @@ export default function CommuterHomeScreen() {
         500,
       );
   }, [pickup, dropoff]);
+  
   useEffect(() => {
     if (!pickup && !dropoff && !initialLoad && !showCharacterMessage)
       setTimeout(
@@ -1733,10 +1788,12 @@ export default function CommuterHomeScreen() {
     setFindingDriver(false);
     navigation.navigate("TrackRide", { bookingId: currentBookingId, driverId });
   };
+  
   const handleCancelFinding = () => {
     setFindingDriver(false);
     setCurrentBookingId(null);
   };
+  
   const handleNoDriversFound = () => {
     setFindingDriver(false);
     setCurrentBookingId(null);
@@ -2212,34 +2269,34 @@ export default function CommuterHomeScreen() {
               <Text style={styles.greetingName}>Where to?</Text>
             </View>
             <TouchableOpacity
-  style={styles.filterButton}
-  onPress={() => {
-    trackUserAction();
-    openProximityFilter();
-  }}
-  activeOpacity={0.7}
->
-  <View style={styles.filterButtonContent}>
-    <View style={styles.filterIconContainer}>
-      <Ionicons name="options-outline" size={18} color="#183B5C" />
-      {proximityRadius === 0.1 && (
-        <View style={styles.activeFilterDot} />
-      )}
-    </View>
-    <Text style={styles.filterText}>
-      {proximityRadius.toFixed(1)}km
-    </Text>
-    <Ionicons name="chevron-down" size={14} color="#9CA3AF" />
-  </View>
-  
-  {/* Proximity indicator badge */}
-  <View style={styles.proximityIndicator}>
-    <Ionicons name="radio-outline" size={12} color="#10B981" />
-    <Text style={styles.proximityIndicatorText}>
-      {proximityRadius === 0.1 ? "Nearest" : proximityRadius === 0.2 ? "Near" : proximityRadius === 0.3 ? "Standard" : "Wide"}
-    </Text>
-  </View>
-</TouchableOpacity>
+              style={styles.filterButton}
+              onPress={() => {
+                trackUserAction();
+                openProximityFilter();
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.filterButtonContent}>
+                <View style={styles.filterIconContainer}>
+                  <Ionicons name="options-outline" size={18} color="#183B5C" />
+                  {proximityRadius === 0.1 && (
+                    <View style={styles.activeFilterDot} />
+                  )}
+                </View>
+                <Text style={styles.filterText}>
+                  {proximityRadius.toFixed(1)}km
+                </Text>
+                <Ionicons name="chevron-down" size={14} color="#9CA3AF" />
+              </View>
+              
+              {/* Proximity indicator badge */}
+              <View style={styles.proximityIndicator}>
+                <Ionicons name="radio-outline" size={12} color="#10B981" />
+                <Text style={styles.proximityIndicatorText}>
+                  {proximityRadius === 0.1 ? "Nearest" : proximityRadius === 0.2 ? "Near" : proximityRadius === 0.3 ? "Standard" : "Wide"}
+                </Text>
+              </View>
+            </TouchableOpacity>
           </View>
 
           <Animated.View
@@ -2332,20 +2389,25 @@ export default function CommuterHomeScreen() {
             />
           )}
 
-          <ActionButtons
-            onScan={openScanner}
-            onFind={handleBookRide}
-            disabled={!pickup || !dropoff}
-            trackUserAction={trackUserAction}
-          />
-
           <View style={styles.helpContainer}>
             <Text style={styles.helpText}>
               💡 Tip: Both location boxes must glow before you can book a ride
             </Text>
           </View>
+          
+          {/* Add padding at the bottom to account for floating buttons */}
+          <View style={{ height: 100 }} />
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Floating Action Buttons - Only appear when both locations are selected */}
+      <FloatingActionButtons
+        onScan={openScanner}
+        onFind={handleBookRide}
+        disabled={!pickup || !dropoff}
+        trackUserAction={trackUserAction}
+        visible={!!(pickup && dropoff)}
+      />
     </View>
   );
 }
@@ -2434,15 +2496,53 @@ const styles = StyleSheet.create({
   greeting: { fontSize: 14, color: "#6B7280", marginBottom: 2 },
   greetingName: { fontSize: 24, fontWeight: "600", color: "#111827" },
   filterButton: {
-    flexDirection: "row",
-    alignItems: "center",
+    flexDirection: "column",
+    alignItems: "flex-end",
     backgroundColor: "#F3F4F6",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
+    gap: 4,
+    minWidth: 90,
+  },
+  filterButtonContent: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
   },
-  filterText: { fontSize: 14, fontWeight: "500", color: "#183B5C" },
+  filterIconContainer: {
+    position: "relative",
+  },
+  activeFilterDot: {
+    position: "absolute",
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#10B981",
+    borderWidth: 1,
+    borderColor: "#FFF",
+  },
+  filterText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#183B5C",
+  },
+  proximityIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(16, 185, 129, 0.1)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  proximityIndicatorText: {
+    fontSize: 9,
+    fontWeight: "500",
+    color: "#10B981",
+  },
 
   // Enhanced Location Card Styles
   locationCard: {
@@ -2693,29 +2793,6 @@ const styles = StyleSheet.create({
   fareLabel: { fontSize: 14, color: "#6B7280" },
   fareAmount: { fontSize: 24, fontWeight: "700", color: "#183B5C" },
 
-  actionContainer: { flexDirection: "row", gap: 12, marginBottom: 16 },
-  actionButton: {
-    flex: 1,
-    backgroundColor: "#FFF",
-    paddingVertical: 16,
-    borderRadius: 16,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-  },
-  actionButtonPrimary: { backgroundColor: "#183B5C", borderColor: "#183B5C" },
-  actionButtonDisabled: { opacity: 0.5 },
-  actionIconWrapper: { marginBottom: 8 },
-  actionTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 2,
-  },
-  actionTitleLight: { color: "#FFF" },
-  actionSubtitle: { fontSize: 11, color: "#9CA3AF" },
-  actionSubtitleLight: { color: "#E5E7EB" },
-
   helpContainer: { alignItems: "center", paddingVertical: 12 },
   helpText: { fontSize: 11, color: "#9CA3AF", textAlign: "center" },
 
@@ -2825,18 +2902,6 @@ const styles = StyleSheet.create({
   radiusDisplay: { alignItems: "center", marginBottom: 24 },
   radiusValue: { fontSize: 56, fontWeight: "700", color: "#183B5C" },
   radiusUnit: { fontSize: 16, color: "#9CA3AF", marginTop: -8 },
-  slider: { width: "100%", height: 40, marginBottom: 24 },
-  quickSelectGrid: { flexDirection: "row", gap: 12, marginBottom: 24 },
-  quickSelectChip: {
-    flex: 1,
-    paddingVertical: 10,
-    backgroundColor: "#F3F4F6",
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  quickSelectChipActive: { backgroundColor: "#183B5C" },
-  quickSelectText: { fontSize: 14, color: "#374151", fontWeight: "500" },
-  quickSelectTextActive: { color: "#FFF" },
   driverStats: {
     flexDirection: "row",
     alignItems: "center",
@@ -2978,55 +3043,77 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   glowGuideClose: { padding: 4 },
-  // Add to your existing styles
-filterButton: {
-  flexDirection: "column",
-  alignItems: "flex-end",
-  backgroundColor: "#F3F4F6",
-  paddingHorizontal: 12,
-  paddingVertical: 8,
-  borderRadius: 20,
-  gap: 4,
-  minWidth: 90,
-},
-filterButtonContent: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 6,
-},
-filterIconContainer: {
-  position: "relative",
-},
-activeFilterDot: {
-  position: "absolute",
-  top: -2,
-  right: -2,
-  width: 8,
-  height: 8,
-  borderRadius: 4,
-  backgroundColor: "#10B981",
-  borderWidth: 1,
-  borderColor: "#FFF",
-},
-filterText: {
-  fontSize: 14,
-  fontWeight: "600",
-  color: "#183B5C",
-},
-proximityIndicator: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 4,
-  backgroundColor: "rgba(16, 185, 129, 0.1)",
-  paddingHorizontal: 8,
-  paddingVertical: 2,
-  borderRadius: 12,
-},
-proximityIndicatorText: {
-  fontSize: 9,
-  fontWeight: "500",
-  color: "#10B981",
-},
-});
 
-// export default CommuterHomeScreen;
+  // Floating Action Buttons Styles
+  floatingActionContainer: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === "ios" ? 34 : 20,
+    paddingTop: 12,
+    backgroundColor: "transparent",
+    zIndex: 100,
+  },
+  floatingActionButtons: {
+    flexDirection: "row",
+    gap: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    borderRadius: 20,
+    padding: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: "#F0F0F0",
+  },
+  floatingActionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFF",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+  },
+  floatingActionButtonPrimary: {
+    backgroundColor: "#183B5C",
+    borderColor: "#183B5C",
+  },
+  floatingActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  floatingActionIconWrapper: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "rgba(0,0,0,0.05)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  floatingActionTextContainer: {
+    flex: 1,
+  },
+  floatingActionTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 2,
+  },
+  floatingActionTitleLight: {
+    color: "#FFF",
+  },
+  floatingActionSubtitle: {
+    fontSize: 10,
+    color: "#9CA3AF",
+  },
+  floatingActionSubtitleLight: {
+    color: "#E5E7EB",
+  },
+});

@@ -137,6 +137,12 @@ export default function DriverAccountScreen({ navigation }) {
   const [isTestAccount, setIsTestAccount] = useState(false);
   const [driver, setDriver] = useState(null);
 
+  // URLs from database
+  const [helpCenterUrl, setHelpCenterUrl] = useState(null);
+  const [termsUrl, setTermsUrl] = useState(null);
+  const [privacyUrl, setPrivacyUrl] = useState(null);
+  const [urlsLoading, setUrlsLoading] = useState(true);
+
   // Custom alert states
   const [alertVisible, setAlertVisible] = useState(false);
   const [alertConfig, setAlertConfig] = useState({
@@ -180,6 +186,44 @@ export default function DriverAccountScreen({ navigation }) {
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [language, setLanguage] = useState("english");
 
+  // Fetch URLs from system_settings
+  const fetchSystemUrls = async () => {
+    try {
+      setUrlsLoading(true);
+      const { data, error } = await supabase
+        .from("system_settings")
+        .select("key, value")
+        .in("key", ["help_center_url", "terms_and_conditions_url", "privacy_policy_url"])
+        .eq("is_public", true);
+
+      if (error) throw error;
+
+      if (data) {
+        data.forEach(setting => {
+          switch (setting.key) {
+            case "help_center_url":
+              setHelpCenterUrl(setting.value);
+              break;
+            case "terms_and_conditions_url":
+              setTermsUrl(setting.value);
+              break;
+            case "privacy_policy_url":
+              setPrivacyUrl(setting.value);
+              break;
+          }
+        });
+      }
+    } catch (err) {
+      console.log("Error fetching system URLs:", err.message);
+      // Set fallback URLs if database fetch fails
+      setHelpCenterUrl("https://sakayna-v1.netlify.app/help");
+      setTermsUrl("https://sakayna-v1.netlify.app/terms");
+      setPrivacyUrl("https://sakayna-v1.netlify.app/privacy");
+    } finally {
+      setUrlsLoading(false);
+    }
+  };
+
   // Custom alert helper functions
   const showAlert = (title, message, type = "info", onConfirm = null, onCancel = null, confirmText = "OK", cancelText = "Cancel") => {
     setAlertConfig({
@@ -202,6 +246,26 @@ export default function DriverAccountScreen({ navigation }) {
 
   const hideAlert = () => {
     setAlertVisible(false);
+  };
+
+  // Helper function to open URLs with validation
+  const openUrl = async (url, name) => {
+    if (!url) {
+      showAlert("Error", `${name} URL is not configured. Please contact support.`, "error");
+      return;
+    }
+
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+      } else {
+        showAlert("Error", `Cannot open ${name.toLowerCase()} URL.`, "error");
+      }
+    } catch (err) {
+      console.log(`Error opening ${name}:`, err);
+      showAlert("Error", `Failed to open ${name.toLowerCase()}.`, "error");
+    }
   };
 
   useFocusEffect(
@@ -247,6 +311,7 @@ export default function DriverAccountScreen({ navigation }) {
       };
 
       getDriverId();
+      fetchSystemUrls(); // Fetch URLs from database
     }, [])
   );
 
@@ -414,7 +479,10 @@ export default function DriverAccountScreen({ navigation }) {
     }
 
     setRefreshing(true);
-    await loadDriverData();
+    await Promise.all([
+      loadDriverData(),
+      fetchSystemUrls() // Refresh URLs on pull-to-refresh
+    ]);
     generateQRCode();
     setRefreshing(false);
   };
@@ -1582,6 +1650,7 @@ export default function DriverAccountScreen({ navigation }) {
             </Pressable>
           )}
 
+          {/* Help Center - Using URL from database */}
           <Pressable
             style={{
               flexDirection: "row",
@@ -1590,7 +1659,7 @@ export default function DriverAccountScreen({ navigation }) {
               borderBottomWidth: 1,
               borderBottomColor: "#F3F4F6",
             }}
-            onPress={() => Linking.openURL("https://sakayna-v1.netlify.app/help")}
+            onPress={() => openUrl(helpCenterUrl, "Help Center")}
           >
             <Ionicons
               name="help-circle-outline"
@@ -1599,9 +1668,14 @@ export default function DriverAccountScreen({ navigation }) {
               style={{ width: 30 }}
             />
             <Text style={{ flex: 1, color: "#333" }}>Help Center</Text>
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            {urlsLoading ? (
+              <ActivityIndicator size="small" color="#9CA3AF" />
+            ) : (
+              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            )}
           </Pressable>
 
+          {/* Terms & Conditions - Using URL from database */}
           <Pressable
             style={{
               flexDirection: "row",
@@ -1610,7 +1684,7 @@ export default function DriverAccountScreen({ navigation }) {
               borderBottomWidth: 1,
               borderBottomColor: "#F3F4F6",
             }}
-            onPress={() => Linking.openURL("https://sakayna-v1.netlify.app/terms")}
+            onPress={() => openUrl(termsUrl, "Terms and Conditions")}
           >
             <Ionicons
               name="document-text-outline"
@@ -1619,9 +1693,14 @@ export default function DriverAccountScreen({ navigation }) {
               style={{ width: 30 }}
             />
             <Text style={{ flex: 1, color: "#333" }}>Terms & Conditions</Text>
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            {urlsLoading ? (
+              <ActivityIndicator size="small" color="#9CA3AF" />
+            ) : (
+              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            )}
           </Pressable>
 
+          {/* Privacy Policy - Using URL from database */}
           <Pressable
             style={{
               flexDirection: "row",
@@ -1630,7 +1709,7 @@ export default function DriverAccountScreen({ navigation }) {
               borderBottomWidth: 1,
               borderBottomColor: "#F3F4F6",
             }}
-            onPress={() => Linking.openURL("https://sakayna-v1.netlify.app/privacy")}
+            onPress={() => openUrl(privacyUrl, "Privacy Policy")}
           >
             <Ionicons
               name="lock-closed-outline"
@@ -1639,7 +1718,11 @@ export default function DriverAccountScreen({ navigation }) {
               style={{ width: 30 }}
             />
             <Text style={{ flex: 1, color: "#333" }}>Privacy Policy</Text>
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            {urlsLoading ? (
+              <ActivityIndicator size="small" color="#9CA3AF" />
+            ) : (
+              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            )}
           </Pressable>
 
           <Pressable

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "271207969548",
+    "project_id": "sakayna-b137e",
+    "storage_bucket": "sakayna-b137e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:271207969548:android:c211732b1fd25afd208f29",
+        "android_client_info": {
+          "package_name": "com.lemera.sakayna"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA1RuHintCTQgTj3BpQZLvYot-tU7ujUUk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

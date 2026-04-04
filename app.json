@@ -25,11 +25,12 @@
     },
     "android": {
       "package": "com.lemera.sakayna",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon_app.png",
         "backgroundColor": "#ffffff"
       },
+      
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"

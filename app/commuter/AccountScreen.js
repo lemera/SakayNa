@@ -46,6 +46,13 @@ export default function AccountScreen({ navigation }) {
   const [userType, setUserType] = useState('commuter');
   const [isTestAccount, setIsTestAccount] = useState(false); // ✅ Track if test account
   const [profile, setProfile] = useState(null);
+  
+  // URLs from database
+  const [helpCenterUrl, setHelpCenterUrl] = useState(null);
+  const [termsUrl, setTermsUrl] = useState(null);
+  const [privacyUrl, setPrivacyUrl] = useState(null);
+  const [urlsLoading, setUrlsLoading] = useState(true);
+  
   const [stats, setStats] = useState({
     totalTrips: 0,
     totalPoints: 0,
@@ -86,6 +93,64 @@ export default function AccountScreen({ navigation }) {
   const [pinError, setPinError] = useState("");
   const [changingPin, setChangingPin] = useState(false);
 
+  // Fetch URLs from system_settings
+  const fetchSystemUrls = async () => {
+    try {
+      setUrlsLoading(true);
+      const { data, error } = await supabase
+        .from("system_settings")
+        .select("key, value")
+        .in("key", ["help_center_url", "terms_and_conditions_url", "privacy_policy_url"])
+        .eq("is_public", true);
+
+      if (error) throw error;
+
+      if (data) {
+        data.forEach(setting => {
+          switch (setting.key) {
+            case "help_center_url":
+              setHelpCenterUrl(setting.value);
+              break;
+            case "terms_and_conditions_url":
+              setTermsUrl(setting.value);
+              break;
+            case "privacy_policy_url":
+              setPrivacyUrl(setting.value);
+              break;
+          }
+        });
+      }
+    } catch (err) {
+      console.log("Error fetching system URLs:", err.message);
+      // Set fallback URLs if database fetch fails
+      setHelpCenterUrl("https://sakayna-v1.netlify.app/help");
+      setTermsUrl("https://sakayna-v1.netlify.app/terms");
+      setPrivacyUrl("https://sakayna-v1.netlify.app/privacy");
+    } finally {
+      setUrlsLoading(false);
+    }
+  };
+
+  // Helper function to open URLs with validation
+  const openUrl = async (url, name) => {
+    if (!url) {
+      Alert.alert("Error", `${name} URL is not configured. Please contact support.`);
+      return;
+    }
+
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert("Error", `Cannot open ${name.toLowerCase()} URL.`);
+      }
+    } catch (err) {
+      console.log(`Error opening ${name}:`, err);
+      Alert.alert("Error", `Failed to open ${name.toLowerCase()}.`);
+    }
+  };
+
   // Fetch user ID and check if test account
   useFocusEffect(
     useCallback(() => {
@@ -122,6 +187,7 @@ export default function AccountScreen({ navigation }) {
         }
       };
       getUserId();
+      fetchSystemUrls(); // Fetch URLs from database
     }, [])
   );
 
@@ -306,7 +372,8 @@ export default function AccountScreen({ navigation }) {
     await Promise.all([
       loadUserData(),
       loadWithdrawalSettings(),
-      loadPayoutMethods()
+      loadPayoutMethods(),
+      fetchSystemUrls() // Refresh URLs on pull-to-refresh
     ]);
     setRefreshing(false);
   };
@@ -687,7 +754,7 @@ export default function AccountScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Withdrawal Settings Section - Hide for test accounts */}
+      {/* Withdrawal Settings Section - Hide for test accounts
       {!isTestAccount && (
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>💰 Withdrawal Settings</Text>
@@ -713,7 +780,7 @@ export default function AccountScreen({ navigation }) {
             </View>
           )}
         </View>
-      )}
+      )} */}
 
       {/* Account Settings */}
       <View style={styles.sectionCard}>
@@ -725,31 +792,53 @@ export default function AccountScreen({ navigation }) {
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
 
-        <Pressable style={styles.menuItem} onPress={() => navigation.navigate("PaymentMethods")}>
+        {/* <Pressable style={styles.menuItem} onPress={() => navigation.navigate("PaymentMethods")}>
           <Ionicons name="wallet-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Payment Methods</Text>
           <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable>
+        </Pressable> */}
 
-        <Pressable style={[styles.menuItem, styles.lastMenuItem]} onPress={() => Linking.openURL("https://sakay.ph/help")}>
+        {/* Help Center - Using URL from database */}
+        <Pressable 
+          style={styles.menuItem} 
+          onPress={() => openUrl(helpCenterUrl, "Help Center")}
+        >
           <Ionicons name="help-circle-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Help Center</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          {urlsLoading ? (
+            <ActivityIndicator size="small" color="#9CA3AF" />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          )}
         </Pressable>
       </View>
 
-      {/* Legal Links */}
+      {/* Legal Links - Using URLs from database */}
       <View style={styles.sectionCard}>
-        <Pressable style={styles.menuItem} onPress={() => Linking.openURL("https://sakay.ph/terms")}>
+        <Pressable 
+          style={styles.menuItem} 
+          onPress={() => openUrl(termsUrl, "Terms of Service")}
+        >
           <Ionicons name="document-text-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Terms of Service</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          {urlsLoading ? (
+            <ActivityIndicator size="small" color="#9CA3AF" />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          )}
         </Pressable>
 
-        <Pressable style={[styles.menuItem, styles.lastMenuItem]} onPress={() => Linking.openURL("https://sakay.ph/privacy")}>
+        <Pressable 
+          style={[styles.menuItem, styles.lastMenuItem]} 
+          onPress={() => openUrl(privacyUrl, "Privacy Policy")}
+        >
           <Ionicons name="lock-closed-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Privacy Policy</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          {urlsLoading ? (
+            <ActivityIndicator size="small" color="#9CA3AF" />
+          ) : (
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          )}
         </Pressable>
       </View>
 
@@ -1096,8 +1185,6 @@ export default function AccountScreen({ navigation }) {
     </ScrollView>
   );
 }
-
-
 
 const styles = StyleSheet.create({
   container: {

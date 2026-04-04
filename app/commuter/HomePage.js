@@ -40,8 +40,8 @@ const HomeButton = ({ accessibilityState }) => {
         },
       ]}
     >
-      <Ionicons name="star" size={30} color="#fff" />
-      <Text style={styles.buttonLabel}>Start Ride</Text>
+      <Ionicons name="location" size={30} color="#fff" />
+      <Text style={styles.buttonLabel}>Booking</Text>
     </Pressable>
   );
 };
