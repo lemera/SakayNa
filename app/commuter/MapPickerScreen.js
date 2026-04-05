@@ -16,6 +16,7 @@ import {
   StatusBar,
   ScrollView,
   Modal,
+  PanResponder,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
@@ -31,6 +32,13 @@ import { supabase } from "../../lib/supabase";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const GEOCODE_DEBOUNCE_MS = 500;
 const FAVORITES_STORAGE_KEY = "user_favorite_locations";
+
+// Bottom sheet snap points (heights in pixels)
+const BOTTOM_SHEET_SNAP_POINTS = {
+  MINIMIZED: 300,
+  PARTIAL: SCREEN_HEIGHT * 0.35,
+  EXPANDED: SCREEN_HEIGHT * 0.6,
+};
 
 // ─── Landmark display maps ────────────────────────────────────────────────────
 const LANDMARK_ICONS = {
@@ -157,9 +165,12 @@ export default function MapPickerScreen() {
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
   const geocodeTimeout = useRef(null);
-  const bottomSheetAnim = useRef(new Animated.Value(0)).current;
+  const bottomSheetAnim = useRef(new Animated.Value(BOTTOM_SHEET_SNAP_POINTS.EXPANDED)).current;
   const hasAutoCentered = useRef(false);
   const geocodeAbortRef = useRef(null);
+  const scrollViewRef = useRef(null);
+  const isScrollingRef = useRef(false);
+  const scrollOffsetRef = useRef(0);
 
   const { type, onSelect, initialLocation } = route.params || {};
 
@@ -178,6 +189,7 @@ export default function MapPickerScreen() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [showAllLandmarks, setShowAllLandmarks] = useState(false);
   const [activeTab, setActiveTab] = useState("popular");
+  const [isSheetExpanded, setIsSheetExpanded] = useState(true);
 
   // Favorites related state
   const [favorites, setFavorites] = useState([]);
@@ -190,6 +202,97 @@ export default function MapPickerScreen() {
   const [selectedFavorite, setSelectedFavorite] = useState(null);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+
+  // Pan responder for bottom sheet - only works when not scrolling
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        // Don't allow dragging if user is scrolling
+        if (isScrollingRef.current) {
+          return false;
+        }
+        // Only allow drag if scroll is at top (scrollOffset <= 0)
+        if (scrollOffsetRef.current > 0) {
+          return false;
+        }
+        return Math.abs(gestureState.dy) > 10;
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const newHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED - gestureState.dy;
+        if (newHeight >= BOTTOM_SHEET_SNAP_POINTS.MINIMIZED && 
+            newHeight <= BOTTOM_SHEET_SNAP_POINTS.EXPANDED) {
+          bottomSheetAnim.setValue(newHeight);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        const currentHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED - gestureState.dy;
+        const velocity = gestureState.vy;
+        
+        let targetHeight;
+        
+        if (Math.abs(velocity) > 0.5) {
+          if (velocity > 0) {
+            targetHeight = BOTTOM_SHEET_SNAP_POINTS.MINIMIZED;
+          } else {
+            targetHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
+          }
+        } else {
+          if (currentHeight < BOTTOM_SHEET_SNAP_POINTS.PARTIAL) {
+            targetHeight = BOTTOM_SHEET_SNAP_POINTS.MINIMIZED;
+          } else if (currentHeight < BOTTOM_SHEET_SNAP_POINTS.EXPANDED) {
+            targetHeight = BOTTOM_SHEET_SNAP_POINTS.PARTIAL;
+          } else {
+            targetHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
+          }
+        }
+        
+        Animated.spring(bottomSheetAnim, {
+          toValue: targetHeight,
+          useNativeDriver: false,
+          tension: 300,
+          friction: 30,
+        }).start(() => {
+          setIsSheetExpanded(targetHeight === BOTTOM_SHEET_SNAP_POINTS.EXPANDED);
+        });
+        
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      },
+    })
+  ).current;
+
+  // Function to manually toggle bottom sheet
+  const toggleBottomSheet = useCallback(() => {
+    const targetHeight = isSheetExpanded 
+      ? BOTTOM_SHEET_SNAP_POINTS.MINIMIZED 
+      : BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
+    
+    Animated.spring(bottomSheetAnim, {
+      toValue: targetHeight,
+      useNativeDriver: false,
+      tension: 300,
+      friction: 30,
+    }).start(() => {
+      setIsSheetExpanded(!isSheetExpanded);
+    });
+    
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [isSheetExpanded]);
+
+  // Handle scroll events
+  const handleScrollBeginDrag = () => {
+    isScrollingRef.current = true;
+  };
+
+  const handleScrollEndDrag = () => {
+    setTimeout(() => {
+      isScrollingRef.current = false;
+    }, 100);
+  };
+
+  const handleScroll = (event) => {
+    scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+  };
 
   // Load favorites from storage
   useEffect(() => {
@@ -329,16 +432,6 @@ export default function MapPickerScreen() {
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 10);
   }, [landmarks, selectedLocation]);
-
-  // ─── Bottom sheet entrance ───────────────────────────────────────────────────
-  useEffect(() => {
-    Animated.spring(bottomSheetAnim, {
-      toValue: 1,
-      useNativeDriver: true,
-      tension: 70,
-      friction: 12,
-    }).start();
-  }, []);
 
   // ─── Fetch landmarks from Supabase ───────────────────────────────────────────
   useEffect(() => {
@@ -778,10 +871,6 @@ export default function MapPickerScreen() {
     );
   }, [handleSelectLandmark]);
 
-  const bottomSheetTransform = {
-    transform: [{ translateY: bottomSheetAnim.interpolate({ inputRange: [0, 1], outputRange: [260, 0] }) }],
-  };
-
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
@@ -905,9 +994,24 @@ export default function MapPickerScreen() {
         </View>
       )}
 
-      {/* ── Bottom card ── */}
-      <Animated.View style={[styles.bottomCard, bottomSheetTransform, { paddingBottom: Math.max(insets.bottom + 14, 20) }]}>
-        <View style={styles.sheetHandle} />
+      {/* ── Bottom card with drag to minimize ── */}
+      <Animated.View 
+        style={[
+          styles.bottomCard, 
+          { 
+            height: bottomSheetAnim,
+            paddingBottom: Math.max(insets.bottom + 14, 20),
+          }
+        ]}
+        {...panResponder.panHandlers}
+      >
+        <TouchableOpacity 
+          onPress={toggleBottomSheet} 
+          activeOpacity={0.7}
+          style={styles.sheetHandleContainer}
+        >
+          <View style={styles.sheetHandle} />
+        </TouchableOpacity>
 
         {/* Tab Navigation */}
         <View style={styles.tabContainer}>
@@ -939,7 +1043,16 @@ export default function MapPickerScreen() {
           </TouchableOpacity>
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} style={styles.bottomScrollView}>
+        <ScrollView 
+          ref={scrollViewRef}
+          showsVerticalScrollIndicator={false} 
+          style={styles.bottomScrollView}
+          scrollEnabled={bottomSheetAnim._value > BOTTOM_SHEET_SNAP_POINTS.MINIMIZED + 50}
+          onScrollBeginDrag={handleScrollBeginDrag}
+          onScrollEndDrag={handleScrollEndDrag}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+        >
           {/* Popular Spots Section */}
           {activeTab === "popular" && (
             <View style={styles.popularSection}>
@@ -1118,21 +1231,25 @@ export default function MapPickerScreen() {
             <Text style={styles.helperText}>
               💡 Tip: Long press on saved locations to edit or remove them
             </Text>
-
-            <TouchableOpacity
-              style={[styles.confirmButton, (!selectedLocation || loading) && styles.confirmButtonDisabled]}
-              onPress={handleConfirm}
-              disabled={!selectedLocation || loading}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.confirmButtonText}>
-                Confirm {type === "pickup" ? "pickup location" : "dropoff location"}
-              </Text>
-              <Ionicons name="checkmark-circle" size={20} color="#FFF" style={styles.confirmIcon} />
-            </TouchableOpacity>
           </View>
         </ScrollView>
       </Animated.View>
+
+      {/* Floating Confirm Button */}
+      <TouchableOpacity
+        style={[
+          styles.floatingConfirmButton,
+          (!selectedLocation || loading) && styles.floatingConfirmButtonDisabled
+        ]}
+        onPress={handleConfirm}
+        disabled={!selectedLocation || loading}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.floatingConfirmButtonText}>
+          Confirm {type === "pickup" ? "Pickup" : "Dropoff"}
+        </Text>
+        <Ionicons name="checkmark-circle" size={22} color="#FFF" />
+      </TouchableOpacity>
 
       {/* Add/Edit Favorite Modal */}
       <Modal
@@ -1275,6 +1392,15 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     color: "#183B5C",
+    backgroundColor: "rgba(255,255,255,0.95)",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 6,
   },
   iconButton: {
     width: 42,
@@ -1441,15 +1567,19 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 12,
     zIndex: 12,
-    maxHeight: SCREEN_HEIGHT * 0.7,
+    minHeight: 300,
+  },
+  sheetHandleContainer: {
+    alignSelf: "center",
+    marginBottom: 16,
+    paddingVertical: 5,
+    paddingHorizontal: 20,
   },
   sheetHandle: {
-    alignSelf: "center",
     width: 42,
     height: 5,
     borderRadius: 999,
     backgroundColor: "#E2E8F0",
-    marginBottom: 16,
   },
 
   bottomScrollView: {
@@ -1689,6 +1819,25 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
 
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: 32,
+  },
+  emptyStateTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#64748B",
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  emptyStateText: {
+    fontSize: 13,
+    color: "#94A3B8",
+    textAlign: "center",
+    paddingHorizontal: 24,
+    lineHeight: 18,
+  },
+
   // Selected Location Section
   selectedLocationSection: {
     borderTopWidth: 1,
@@ -1780,42 +1929,36 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
 
-  confirmButton: {
+  // Floating Confirm Button
+  floatingConfirmButton: {
+    position: "absolute",
+    bottom: 30,
+    left: "50%",
+    transform: [{ translateX: -100 }],
     backgroundColor: "#183B5C",
-    minHeight: 52,
-    borderRadius: 18,
-    justifyContent: "center",
-    alignItems: "center",
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 30,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 13,
     gap: 8,
+    width: 200,
   },
-  confirmButtonDisabled: { backgroundColor: "#CBD5E1" },
-  confirmButtonText: {
+  floatingConfirmButtonDisabled: {
+    backgroundColor: "#CBD5E1",
+    shadowOpacity: 0.1,
+  },
+  floatingConfirmButtonText: {
     color: "#FFFFFF",
     fontSize: 15,
     fontWeight: "700",
-  },
-  confirmIcon: {
-    marginLeft: 4,
-  },
-
-  // Empty State
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 40,
-  },
-  emptyStateTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#0F172A",
-    marginTop: 12,
-    marginBottom: 4,
-  },
-  emptyStateText: {
-    fontSize: 13,
-    color: "#64748B",
-    textAlign: "center",
-    paddingHorizontal: 20,
   },
 
   // Modal Styles

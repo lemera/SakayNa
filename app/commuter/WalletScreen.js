@@ -361,7 +361,7 @@ export default function CommuterWalletScreen() {
               
               <Pressable 
                 style={styles.headerButton}
-                onPress={() => navigation.navigate("ReferralsScreen")}
+                onPress={() => navigation.navigate("ReferralScreen")}
               >
                 <LinearGradient
                   colors={['#10B981', '#34D399']}

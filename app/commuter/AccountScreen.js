@@ -801,7 +801,7 @@ export default function AccountScreen({ navigation }) {
         {/* Help Center - Using URL from database */}
         <Pressable 
           style={styles.menuItem} 
-          onPress={() => openUrl(helpCenterUrl, "Help Center")}
+          onPress={() => navigation.navigate("Support")}
         >
           <Ionicons name="help-circle-outline" size={22} color="#183B5C" style={styles.menuIcon} />
           <Text style={styles.menuText}>Help Center</Text>

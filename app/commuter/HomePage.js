@@ -148,13 +148,16 @@ export default function HomePage() {
             </View>
           ),
           headerRight: () => (
-            <Pressable
-              onPress={() => navigation.navigate("Support")}
-              style={{ marginRight: 15 }}
-            >
-              <Ionicons name="help-circle-outline" size={28} color="#183B5C" />
-            </Pressable>
-          ),
+  <Pressable
+    onPress={() => navigation.navigate("Support")}
+    style={{ marginRight: 15, alignItems: "center" }}
+  >
+    <Ionicons name="help-circle-outline" size={24} color="#183B5C" />
+    <Text style={{ fontSize: 11, color: "#183B5C", fontWeight: "500", marginTop: 2 }}>
+      Help
+    </Text>
+  </Pressable>
+),
           tabBarActiveTintColor: "#E97A3E",
           tabBarInactiveTintColor: "#183B5C",
           tabBarStyle: navStyles.tabBar,

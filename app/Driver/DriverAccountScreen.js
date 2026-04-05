@@ -1659,7 +1659,7 @@ export default function DriverAccountScreen({ navigation }) {
               borderBottomWidth: 1,
               borderBottomColor: "#F3F4F6",
             }}
-            onPress={() => openUrl(helpCenterUrl, "Help Center")}
+            onPress={() => navigation.navigate("Support")}
           >
             <Ionicons
               name="help-circle-outline"
