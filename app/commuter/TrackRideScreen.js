@@ -1101,7 +1101,9 @@ export default function TrackRide({ navigation, route }) {
           </View>
         </LinearGradient>
 
-        <ScrollView style={styles.completedContainer} showsVerticalScrollIndicator={false}>
+        <ScrollView style={styles.completedContainer} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+           
+
           <View style={styles.completedIconContainer}>
             <Ionicons name={status === "completed" ? "checkmark-circle" : "close-circle"} size={80} color={status === "completed" ? "#10B981" : "#EF4444"} />
           </View>

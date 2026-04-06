@@ -15,6 +15,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
+  Dimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -34,7 +35,10 @@ const base64ToArrayBuffer = (base64) => {
   }
   return bytes.buffer;
 };
+const { width } = Dimensions.get("window");
 
+// scaling function (same sa ginawa natin kanina)
+const scale = (size) => (width / 375) * size;
 const appVersion = packageJson.version;
 
 export default function AccountScreen({ navigation }) {
@@ -617,14 +621,17 @@ export default function AccountScreen({ navigation }) {
 
   return (
     <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 30 }}
-      refreshControl={
-        !isTestAccount ? (
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        ) : undefined
-      }
-    >
+  style={styles.container}
+  contentContainerStyle={{
+    paddingBottom: insets.bottom + 120,
+  }}
+  showsVerticalScrollIndicator={false}
+  refreshControl={
+    !isTestAccount ? (
+      <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+    ) : undefined
+  }
+>
       {/* Test Account Banner */}
       {isTestAccount && (
         <View style={styles.testBanner}>
@@ -1191,492 +1198,278 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F5F7FA",
   },
+
   loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#F5F7FA",
   },
+
   headerCover: {
     backgroundColor: "#183B5C",
-    paddingBottom: 60,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 30,
-    borderBottomRightRadius: 30,
+    paddingBottom: scale(60),
+    paddingHorizontal: scale(20),
+    borderBottomLeftRadius: scale(30),
+    borderBottomRightRadius: scale(30),
   },
+
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
+
   headerButton: {
-    width: 40,
-    height: 40,
+    width: scale(40),
+    height: scale(40),
     justifyContent: "center",
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#FFF",
-  },
+
   profileCard: {
-    marginHorizontal: 20,
-    marginTop: -40,
+    marginHorizontal: scale(20),
+    marginTop: -scale(40),
     backgroundColor: "#FFF",
-    borderRadius: 24,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
+    borderRadius: scale(24),
+    padding: scale(20),
     elevation: 5,
   },
+
   avatarContainer: {
     position: "relative",
-    marginBottom: 10,
+    marginBottom: scale(10),
   },
+
   avatarWrapper: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: scale(90),
+    height: scale(90),
+    borderRadius: scale(45),
     backgroundColor: "#E5E7EB",
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 4,
+    borderWidth: 3,
     borderColor: "#FFF",
   },
+
   avatar: {
     width: "100%",
     height: "100%",
-    borderRadius: 50,
+    borderRadius: scale(45),
   },
+
   avatarGradient: {
     width: "100%",
     height: "100%",
-    borderRadius: 50,
+    borderRadius: scale(45),
     justifyContent: "center",
     alignItems: "center",
   },
+
   avatarText: {
-    fontSize: 36,
+    fontSize: scale(28),
     fontWeight: "bold",
     color: "#FFF",
   },
+
   cameraBadge: {
     position: "absolute",
     bottom: 0,
     right: 0,
     backgroundColor: "#183B5C",
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: scale(26),
+    height: scale(26),
+    borderRadius: scale(13),
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#FFF",
   },
+
   profileName: {
-    fontSize: 22,
+    fontSize: scale(18),
     fontWeight: "bold",
     color: "#333",
-    marginBottom: 5,
   },
+
   userTypeBadge: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F3F4F6",
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 20,
-    marginBottom: 10,
+    paddingHorizontal: scale(10),
+    paddingVertical: scale(4),
+    borderRadius: scale(20),
+    marginTop: scale(5),
   },
+
   userTypeText: {
+    fontSize: scale(12),
     color: "#666",
-    fontWeight: "500",
     marginLeft: 4,
   },
+
   editProfileButton: {
     backgroundColor: "#F3F4F6",
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: scale(14),
+    paddingVertical: scale(6),
+    borderRadius: scale(20),
     flexDirection: "row",
     alignItems: "center",
+    marginTop: scale(8),
   },
+
   editProfileText: {
+    fontSize: scale(12),
     color: "#183B5C",
-    fontWeight: "600",
     marginLeft: 5,
   },
+
   statsGrid: {
     flexDirection: "row",
-    marginTop: 20,
-    gap: 10,
+    marginTop: scale(16),
+    gap: scale(8),
   },
+
   statCard: {
     flex: 1,
     backgroundColor: "#F9FAFB",
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: scale(14),
+    padding: scale(10),
     alignItems: "center",
   },
-  statRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+
   statValue: {
-    fontSize: 20,
+    fontSize: scale(16),
     fontWeight: "bold",
     color: "#183B5C",
   },
+
   statLabel: {
-    fontSize: 12,
+    fontSize: scale(10),
     color: "#666",
-    marginTop: 2,
   },
+
   sectionCard: {
-    marginHorizontal: 20,
-    marginTop: 20,
+    marginHorizontal: scale(20),
+    marginTop: scale(16),
     backgroundColor: "#FFF",
-    borderRadius: 24,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    borderRadius: scale(20),
+    padding: scale(16),
     elevation: 2,
   },
+
   sectionTitle: {
-    fontSize: 16,
+    fontSize: scale(14),
     fontWeight: "bold",
     color: "#333",
-    marginBottom: 15,
+    marginBottom: scale(12),
   },
-  sectionSubtitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginTop: 15,
-    marginBottom: 10,
-  },
-  contactItem: {
-    marginBottom: 12,
-  },
-  contactLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 2,
-  },
-  contactRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+
   contactValue: {
-    fontSize: 16,
-    color: "#333",
-    marginLeft: 8,
+    fontSize: scale(14),
+    marginLeft: scale(6),
   },
-  referralRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  referralLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginBottom: 4,
-  },
-  referralValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#183B5C",
-  },
-  inviteButton: {
-    backgroundColor: "#183B5C",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  inviteButtonText: {
-    color: "#FFF",
-    fontWeight: "600",
-  },
+
   menuItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
+    paddingVertical: scale(12),
   },
-  lastMenuItem: {
-    borderBottomWidth: 0,
-  },
-  menuIcon: {
-    width: 30,
-  },
+
   menuText: {
     flex: 1,
-    color: "#333",
+    fontSize: scale(14),
   },
-  defaultMethodInfo: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: "#F0FDF4",
-    borderRadius: 12,
-    gap: 8,
-  },
-  defaultMethodText: {
-    fontSize: 12,
-    color: "#10B981",
-    flex: 1,
-  },
+
   signOutButton: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#FEE2E2",
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 10,
-    padding: 16,
-    borderRadius: 12,
-    gap: 8,
+    marginHorizontal: scale(20),
+    marginTop: scale(16),
+    padding: scale(14),
+    borderRadius: scale(12),
   },
+
   signOutText: {
+    fontSize: scale(14),
     color: "#EF4444",
-    fontSize: 16,
     fontWeight: "600",
   },
+
   appInfo: {
-    alignItems: "center",
-    marginTop: 10,
-    marginBottom: 10,
-  },
+  alignItems: "center",
+  marginTop: scale(10),
+  marginBottom: scale(20),
+},
+
   appVersion: {
-    fontSize: 12,
+    fontSize: scale(10),
     color: "#9CA3AF",
   },
+
   memberSince: {
-    fontSize: 11,
+    fontSize: scale(10),
     color: "#D1D5DB",
-    marginTop: 2,
     textAlign: "center",
   },
-  modalContainer: {
-    flex: 1,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  modalOverlayCenter: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
+
   modalContent: {
     backgroundColor: "#FFF",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: "90%",
+    borderTopLeftRadius: scale(24),
+    borderTopRightRadius: scale(24),
+    padding: scale(16),
+    maxHeight: "85%",
   },
-  modalCenterContent: {
-    backgroundColor: "#FFF",
-    borderRadius: 24,
-    padding: 20,
-    width: "90%",
-    maxWidth: 350,
-  },
-  modalCenterHeader: {
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  modalCenterTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-    marginTop: 10,
-  },
-  modalCenterSubtitle: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginTop: 5,
-  },
-  modalCenterActions: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 10,
-  },
-  modalCenterCancel: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#F3F4F6",
-  },
-  modalCenterCancelText: {
-    textAlign: "center",
-    color: "#666",
-  },
-  modalCenterConfirm: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: "#183B5C",
-  },
-  modalCenterConfirmText: {
-    textAlign: "center",
-    color: "#FFF",
-    fontWeight: "600",
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
-  },
+
   input: {
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 15,
+    borderRadius: scale(10),
+    padding: scale(10),
+    fontSize: scale(14),
   },
-  readOnlyField: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: "#F9FAFB",
-    marginBottom: 15,
-  },
-  readOnlyText: {
-    fontSize: 16,
-    color: "#666",
-  },
+
   pinInput: {
     borderWidth: 1,
     borderColor: "#E5E7EB",
-    borderRadius: 12,
-    padding: 12,
-    fontSize: 24,
+    borderRadius: scale(10),
+    padding: scale(12),
+    fontSize: scale(20),
     textAlign: "center",
-    letterSpacing: 8,
-    marginBottom: 15,
+    letterSpacing: 6,
   },
-  pinInputError: {
-    borderColor: "#EF4444",
-  },
-  pinErrorText: {
-    color: "#EF4444",
-    fontSize: 12,
-    marginBottom: 15,
-    textAlign: "center",
-  },
+
   modalButtons: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 10,
+    gap: scale(8),
+    marginTop: scale(10),
   },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    padding: 14,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  cancelButtonText: {
-    color: "#333",
-    fontWeight: "600",
-  },
+
   saveButton: {
     flex: 1,
     backgroundColor: "#183B5C",
-    padding: 14,
-    borderRadius: 12,
+    padding: scale(12),
+    borderRadius: scale(10),
     alignItems: "center",
   },
-  saveButtonText: {
-    color: "#FFF",
-    fontWeight: "600",
-  },
-  pickerContainer: {
-    marginBottom: 15,
-  },
-  pickerButton: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+
+  cancelButton: {
+    flex: 1,
+    backgroundColor: "#F3F4F6",
+    padding: scale(12),
+    borderRadius: scale(10),
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: "#F9FAFB",
   },
-  pickerButtonText: {
-    fontSize: 16,
-    color: "#333",
-  },
-  toggleContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  toggleDescription: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 2,
-  },
-  toggle: {
-    width: 50,
-    height: 28,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 28,
-    padding: 2,
-  },
-  toggleActive: {
-    backgroundColor: "#10B981",
-  },
-  toggleHandle: {
-    width: 24,
-    height: 24,
-    backgroundColor: "#FFF",
-    borderRadius: 24,
-  },
-  toggleHandleActive: {
-    transform: [{ translateX: 22 }],
-  },
+
   testBanner: {
     backgroundColor: "#FFF3E0",
-    padding: 10,
+    padding: scale(8),
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#FFE0B5",
   },
+
   testBannerText: {
+    fontSize: scale(11),
     color: "#E97A3E",
-    fontSize: 12,
-    fontWeight: "500",
   },
 });

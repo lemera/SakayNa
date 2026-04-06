@@ -347,6 +347,7 @@ export default function CommuterWalletScreen() {
       <View style={styles.container}>
         <ScrollView
           showsVerticalScrollIndicator={false}
+           contentContainerStyle={{ paddingBottom: 100 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#183B5C" />
           }

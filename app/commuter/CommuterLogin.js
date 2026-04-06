@@ -140,7 +140,7 @@ export default function CommuterLogin({ navigation }) {
           />
 
           <Text style={styles.title}>
-            Log in using your phone number
+            Commuter Log in using your phone number
           </Text>
 
           <View style={styles.phoneContainer}>

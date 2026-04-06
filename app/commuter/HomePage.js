@@ -1,79 +1,107 @@
-// HomePage.js
-import React, { useState, useEffect } from "react";
-import { View, Image, Pressable, StyleSheet, Text } from "react-native";
+import React, { useState, useEffect, useCallback } from "react";
+import {
+  View,
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  Platform,
+  useWindowDimensions,
+} from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useRoute } from "@react-navigation/native";
-import { supabase } from "../../lib/supabase";
+import { useNavigation } from "@react-navigation/native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+import { supabase } from "../../lib/supabase";
 
 import HomeScreen from "./HomeScreen";
 import WalletScreen from "./WalletScreen";
 import AccountScreen from "./AccountScreen";
 import TrackRideScreen from "./TrackRideScreen";
 import InboxScreen from "./InboxScreen";
-import BookingDetails from "./BookingDetails";
-import PointsRewardsScreen from "./PointsRewards";
-import ReferralScreen from "./ReferralScreen";
-import RideHistoryScreen from "./RideHistoryScreen";
+
 import FloatingMenu from "../components/FloatingMenu";
 import MenuButton from "../components/MenuButton";
-import navStyles from "../styles/NavStyles";
+import navStylesFactory from "../styles/NavStyles";
 
 const Tab = createBottomTabNavigator();
 
-const HomeButton = ({ accessibilityState }) => {
-  const navigation = useNavigation();
+function HomeButton({ accessibilityState, onPress }) {
+  const { width } = useWindowDimensions();
+  const styles = navStylesFactory(width);
   const [pressed, setPressed] = useState(false);
   const isActive = accessibilityState?.selected;
 
   return (
     <Pressable
-      onPress={() => navigation.navigate("Home")}
+      onPress={onPress}
       onPressIn={() => setPressed(true)}
       onPressOut={() => setPressed(false)}
       style={[
-        navStyles.trackRideButton,
+        styles.trackRideButton,
         {
           backgroundColor: pressed || isActive ? "#E97A3E" : "#183B5C",
-          transform: [{ scale: pressed ? 0.95 : 1 }],
+          transform: [{ scale: pressed ? 0.96 : 1 }],
         },
       ]}
     >
-      <Ionicons name="location" size={30} color="#fff" />
-      <Text style={styles.buttonLabel}>Booking</Text>
+      <Ionicons name="location" size={width < 360 ? 24 : 28} color="#fff" />
+      <Text style={stylesLocal.buttonLabel}>Booking</Text>
     </Pressable>
   );
-};
+}
 
 export default function HomePage() {
   const navigation = useNavigation();
-  const route = useRoute();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+
+  const navStyles = navStylesFactory(width);
+
   const [unreadCount, setUnreadCount] = useState(0);
   const [userId, setUserId] = useState(null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [currentScreen, setCurrentScreen] = useState("Home");
 
   useEffect(() => {
+    let mounted = true;
+
     const getUserId = async () => {
-      const id = await AsyncStorage.getItem("user_id");
-      setUserId(id);
+      try {
+        const id = await AsyncStorage.getItem("user_id");
+        if (mounted) {
+          setUserId(id);
+        }
+      } catch (error) {
+        console.log("Error getting user_id:", error?.message || error);
+      }
     };
+
     getUserId();
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
     const unsubscribe = navigation.addListener("state", () => {
-      const routes = navigation.getState()?.routes;
-      if (routes && routes.length > 0) {
+      try {
+        const navState = navigation.getState?.();
+        const routes = navState?.routes || [];
         const currentRoute = routes[routes.length - 1];
         setCurrentScreen(currentRoute?.name || "Home");
+      } catch (error) {
+        console.log("Navigation state error:", error?.message || error);
       }
     });
+
     return unsubscribe;
   }, [navigation]);
 
-  const fetchUnreadCount = async () => {
+  const fetchUnreadCount = useCallback(async () => {
     try {
       if (!userId) return;
 
@@ -88,9 +116,9 @@ export default function HomePage() {
 
       setUnreadCount(count || 0);
     } catch (err) {
-      console.log("Error fetching unread count:", err.message);
+      console.log("Error fetching unread count:", err?.message || err);
     }
-  };
+  }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
@@ -98,7 +126,7 @@ export default function HomePage() {
     fetchUnreadCount();
 
     const notificationSubscription = supabase
-      .channel("commuter-notifications")
+      .channel(`commuter-notifications-${userId}`)
       .on(
         "postgres_changes",
         {
@@ -118,27 +146,45 @@ export default function HomePage() {
     });
 
     return () => {
-      notificationSubscription.unsubscribe();
+      supabase.removeChannel(notificationSubscription);
       unsubscribeFocus();
     };
-  }, [userId, navigation]);
+  }, [userId, navigation, fetchUnreadCount]);
 
   useEffect(() => {
+    if (!userId) return;
+
     const interval = setInterval(() => {
-      if (userId) fetchUnreadCount();
+      fetchUnreadCount();
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [userId]);
+  }, [userId, fetchUnreadCount]);
+
+  const getTabBarHeight = () => {
+    const baseHeight = width < 360 ? 64 : 72;
+    const extraBottom = Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 10;
+    return baseHeight + extraBottom;
+  };
 
   return (
     <>
       <Tab.Navigator
         initialRouteName="Home"
         screenOptions={({ route }) => ({
-          headerStyle: { backgroundColor: "#fff", elevation: 0, shadowOpacity: 0.1 },
-          headerTitleStyle: { fontWeight: "bold", fontSize: 20, color: "#183B5C" },
+          headerStyle: {
+            backgroundColor: "#fff",
+            elevation: 0,
+            shadowOpacity: 0,
+            borderBottomWidth: 0,
+          },
+          headerTitleStyle: {
+            fontWeight: "700",
+            fontSize: width < 360 ? 17 : 19,
+            color: "#183B5C",
+          },
           headerTitleAlign: "center",
+
           headerLeft: () => (
             <View style={navStyles.headerContainer}>
               <Image
@@ -147,23 +193,38 @@ export default function HomePage() {
               />
             </View>
           ),
+
           headerRight: () => (
-  <Pressable
-    onPress={() => navigation.navigate("Support")}
-    style={{ marginRight: 15, alignItems: "center" }}
-  >
-    <Ionicons name="help-circle-outline" size={24} color="#183B5C" />
-    <Text style={{ fontSize: 11, color: "#183B5C", fontWeight: "500", marginTop: 2 }}>
-      Help
-    </Text>
-  </Pressable>
-),
+            <Pressable
+              onPress={() => navigation.navigate("Support")}
+              style={navStyles.helpButton}
+            >
+              <Ionicons name="help-circle-outline" size={24} color="#183B5C" />
+              <Text style={navStyles.helpText}>Help</Text>
+            </Pressable>
+          ),
+
+          tabBarShowLabel: true,
           tabBarActiveTintColor: "#E97A3E",
           tabBarInactiveTintColor: "#183B5C",
-          tabBarStyle: navStyles.tabBar,
-          sceneContainerStyle: { backgroundColor: "transparent" },
+          tabBarLabelStyle: {
+            fontSize: width < 360 ? 10 : 11,
+            fontWeight: "600",
+            marginBottom: Platform.OS === "ios" ? 0 : 2,
+          },
+          tabBarStyle: [
+            navStyles.tabBar,
+            {
+              height: getTabBarHeight(),
+              paddingBottom:
+                Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 10,
+            },
+          ],
+          sceneContainerStyle: {
+            backgroundColor: "#fff",
+          },
           tabBarIcon: ({ focused, color, size }) => {
-            let iconName;
+            let iconName = "";
 
             switch (route.name) {
               case "TrackRide":
@@ -180,15 +241,17 @@ export default function HomePage() {
                 break;
               case "Home":
                 return null;
+              default:
+                return null;
             }
 
             if (route.name === "Inbox") {
               return (
-                <View style={{ position: "relative", width: size, height: size }}>
+                <View style={stylesLocal.iconWrapper}>
                   <Ionicons name={iconName} size={size} color={color} />
                   {unreadCount > 0 && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>
+                    <View style={stylesLocal.badge}>
+                      <Text style={stylesLocal.badgeText}>
                         {unreadCount > 9 ? "9+" : unreadCount}
                       </Text>
                     </View>
@@ -197,36 +260,54 @@ export default function HomePage() {
               );
             }
 
-            return route.name !== "Home" ? (
-              <Ionicons name={iconName} size={size} color={color} />
-            ) : null;
+            return <Ionicons name={iconName} size={size} color={color} />;
           },
         })}
       >
         <Tab.Screen
           name="TrackRide"
           component={TrackRideScreen}
+          options={{
+            title: "Track Ride",
+            tabBarLabel: "Track",
+          }}
         />
+
         <Tab.Screen
           name="Earnings"
           component={WalletScreen}
+          options={{
+            title: "Wallet",
+            tabBarLabel: "Wallet",
+          }}
         />
+
         <Tab.Screen
           name="Home"
           component={HomeScreen}
           options={{
+            title: "Home",
             tabBarLabel: "",
             tabBarButton: (props) => <HomeButton {...props} />,
-            tabBarStyle: navStyles.tabBar,
           }}
         />
+
         <Tab.Screen
           name="Inbox"
           component={InboxScreen}
+          options={{
+            title: "Inbox",
+            tabBarLabel: "Inbox",
+          }}
         />
+
         <Tab.Screen
           name="Account"
           component={AccountScreen}
+          options={{
+            title: "Account",
+            tabBarLabel: "Account",
+          }}
         />
       </Tab.Navigator>
 
@@ -241,35 +322,38 @@ export default function HomePage() {
   );
 }
 
-const styles = StyleSheet.create({
+const stylesLocal = StyleSheet.create({
+  iconWrapper: {
+    position: "relative",
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   badge: {
     position: "absolute",
-    top: -8,
-    right: -12,
+    top: -5,
+    right: -10,
     backgroundColor: "#FF3B30",
-    borderRadius: 12,
-    minWidth: 22,
-    height: 22,
+    borderRadius: 10,
+    minWidth: 18,
+    height: 18,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 4,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: "#FFF",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
     elevation: 4,
   },
   badgeText: {
     color: "#FFF",
-    fontSize: 12,
-    fontWeight: "bold",
+    fontSize: 10,
+    fontWeight: "700",
   },
   buttonLabel: {
     color: "#fff",
     fontSize: 10,
     marginTop: 2,
-    fontWeight: "600",
+    fontWeight: "700",
   },
 });

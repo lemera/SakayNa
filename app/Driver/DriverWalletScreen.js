@@ -330,7 +330,7 @@ export default function DriverWalletScreen({ navigation }) {
         .from("bookings")
         .select(`
           id,
-          actual_fare,
+          fare,
           created_at,
           pickup_location,
           dropoff_location,
@@ -346,7 +346,7 @@ export default function DriverWalletScreen({ navigation }) {
       const bookingTransactions = (bookings || []).map((b) => ({
         id: `booking-${b.id}`,
         type: "earning",
-        amount: Number(b.actual_fare) || 0,
+        amount: Number(b.fare) || 0,
         description: `${safeString((b.pickup_location || "Pickup").split(",")[0])} → ${safeString((b.dropoff_location || "Dropoff").split(",")[0])}`,
         date: b.created_at,
         paymentMethod: b.payment_type || "cash",

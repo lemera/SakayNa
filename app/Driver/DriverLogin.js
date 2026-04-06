@@ -140,7 +140,7 @@ export default function DriverLogin({ navigation }) {
           />
 
           <Text style={styles.title}>
-            Driver Login
+            Driver Log in using your phone number
           </Text>
 
           <View style={styles.phoneContainer}>
