@@ -1,119 +1,280 @@
 // Driver/PaymentWebView.js
-import React, { useRef } from "react";
+import React, { useMemo, useRef } from "react";
+import {
+  View,
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  Dimensions,
+  Platform,
+  StatusBar,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
-import { View, ActivityIndicator, Alert } from "react-native";
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function PaymentWebView({ route, navigation }) {
-  const { url } = route.params;
+  const { url } = route.params || {};
   const webViewRef = useRef(null);
 
-  // Ito ang magfo-force sa page na maging responsive sa mobile
-  const injectedJavaScript = `
-    (function() {
-      // Add viewport meta tag for responsive design
-      const meta = document.createElement('meta');
-      meta.name = 'viewport';
-      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes';
-      document.getElementsByTagName('head')[0].appendChild(meta);
-      
-      // Add responsive CSS
-      const style = document.createElement('style');
-      style.textContent = \`
-        * {
-          max-width: 100% !important;
-          box-sizing: border-box !important;
-        }
-        body, html {
-          overflow-x: hidden !important;
-          width: 100% !important;
-          padding: 0 !important;
-          margin: 0 !important;
-        }
-        .container, .checkout-container, .payment-container {
-          width: 100% !important;
-          max-width: 100% !important;
-          padding: 10px !important;
-        }
-        input, select, button {
-          font-size: 16px !important;
-        }
-        @media only screen and (max-width: 768px) {
-          body {
-            font-size: 14px !important;
+  const injectedJavaScript = useMemo(
+    () => `
+      (function() {
+        try {
+          // Remove old viewport if any
+          var oldViewport = document.querySelector('meta[name="viewport"]');
+          if (oldViewport) {
+            oldViewport.parentNode.removeChild(oldViewport);
           }
-          button, .btn {
-            width: 100% !important;
-            padding: 12px !important;
-          }
-          input, select {
-            width: 100% !important;
-            padding: 10px !important;
-          }
+
+          // Add viewport meta tag
+          var meta = document.createElement('meta');
+          meta.name = 'viewport';
+          meta.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+          document.head.appendChild(meta);
+
+          // Add responsive styles
+          var style = document.createElement('style');
+          style.innerHTML = \`
+            html, body {
+              width: 100% !important;
+              max-width: 100% !important;
+              overflow-x: hidden !important;
+              margin: 0 !important;
+              padding: 0 !important;
+              -webkit-text-size-adjust: 100% !important;
+              text-size-adjust: 100% !important;
+              box-sizing: border-box !important;
+              background: #ffffff !important;
+            }
+
+            *, *::before, *::after {
+              box-sizing: border-box !important;
+              max-width: 100% !important;
+              word-wrap: break-word !important;
+            }
+
+            img, video, iframe, canvas, svg {
+              max-width: 100% !important;
+              height: auto !important;
+            }
+
+            table {
+              width: 100% !important;
+              display: block !important;
+              overflow-x: auto !important;
+              white-space: nowrap !important;
+            }
+
+            input, select, textarea, button {
+              max-width: 100% !important;
+              font-size: 16px !important;
+              border-radius: 8px !important;
+            }
+
+            form {
+              width: 100% !important;
+              max-width: 100% !important;
+            }
+
+            .container,
+            .wrapper,
+            .content,
+            .main,
+            .checkout-container,
+            .payment-container,
+            .form-container {
+              width: 100% !important;
+              max-width: 100% !important;
+              margin-left: auto !important;
+              margin-right: auto !important;
+            }
+
+            @media screen and (max-width: 768px) {
+              body {
+                font-size: 14px !important;
+                padding-left: 10px !important;
+                padding-right: 10px !important;
+              }
+
+              h1, h2, h3, h4, h5, h6 {
+                line-height: 1.25 !important;
+                word-break: break-word !important;
+              }
+
+              button,
+              .btn,
+              [type="button"],
+              [type="submit"] {
+                width: 100% !important;
+                min-height: 44px !important;
+              }
+
+              input,
+              select,
+              textarea {
+                width: 100% !important;
+                min-height: 44px !important;
+                padding: 10px !important;
+              }
+
+              [style*="width: 600px"],
+              [style*="width:600px"],
+              [style*="width: 500px"],
+              [style*="width:500px"],
+              [style*="min-width"] {
+                width: 100% !important;
+                min-width: 0 !important;
+              }
+            }
+          \`;
+          document.head.appendChild(style);
+
+          // Force body width correction after render
+          setTimeout(function() {
+            try {
+              document.documentElement.style.width = '100%';
+              document.body.style.width = '100%';
+              document.body.style.overflowX = 'hidden';
+            } catch (e) {}
+          }, 300);
+
+          true;
+        } catch (error) {
+          true;
         }
-      \`;
-      document.getElementsByTagName('head')[0].appendChild(style);
-      
-      setTimeout(function() {
-        console.log("🔍 Checking form fields...");
-        const nameInputs = document.querySelectorAll('input[name="name"], input[placeholder*="name" i], input[type="text"]');
-        const emailInputs = document.querySelectorAll('input[type="email"], input[name="email"]');
-        const phoneInputs = document.querySelectorAll('input[type="tel"], input[name="phone"]');
-        
-        console.log("Found name inputs:", nameInputs.length);
-        console.log("Found email inputs:", emailInputs.length);
-        console.log("Found phone inputs:", phoneInputs.length);
-        
-        nameInputs.forEach(input => console.log("Name field value:", input.value));
-        emailInputs.forEach(input => console.log("Email field value:", input.value));
-        phoneInputs.forEach(input => console.log("Phone field value:", input.value));
-      }, 3000);
-    })();
-  `;
+      })();
+    `,
+    []
+  );
+
+  const handleCustomScheme = (requestUrl) => {
+    if (!requestUrl) return false;
+
+    if (requestUrl.startsWith("sakayna://")) {
+      console.log("🔗 Custom URL detected:", requestUrl);
+
+      if (requestUrl === "sakayna://payment-success") {
+        navigation.replace("PaymentSuccess");
+      } else if (requestUrl === "sakayna://payment-failed") {
+        Alert.alert(
+          "Payment Failed",
+          "Your payment was not completed. Please try again."
+        );
+        navigation.goBack();
+      } else {
+        navigation.goBack();
+      }
+
+      return true;
+    }
+
+    return false;
+  };
+
+  if (!url) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.centered}>
+          <Alert />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <WebView
-      ref={webViewRef}
-      source={{ uri: url }}
-      originWhitelist={['*', 'sakayna://*', 'http://*', 'https://*']}
-      startInLoadingState
-      injectedJavaScript={injectedJavaScript}
-      renderLoading={() => (
-        <View style={{ flex:1, justifyContent:'center', alignItems:'center' }}>
-          <ActivityIndicator size="large" color="#183B5C" />
-        </View>
-      )}
-      onNavigationStateChange={(navState) => {
-        console.log("📍 Navigation to:", navState.url);
-        
-        // PARA SA CUSTOM URL SCHEME - huwag i-load sa WebView
-        if (navState.url.startsWith("sakayna://")) {
-          console.log("🔗 Custom URL detected:", navState.url);
-          
-          if (navState.url === "sakayna://payment-success") {
-            console.log("✅ Payment successful, redirecting to success page");
-            navigation.replace("PaymentSuccess");
-          } else if (navState.url === "sakayna://payment-failed") {
-            console.log("❌ Payment failed or cancelled");
-            Alert.alert("Payment Failed", "Your payment was not completed. Please try again.");
-            navigation.goBack();
-          }
-          
-          // I-STOP ANG WEBVIEW FROM LOADING THE CUSTOM URL
-          return false;
-        }
-      }}
-      onError={(syntheticEvent) => {
-        const { nativeEvent } = syntheticEvent;
-        console.warn("WebView warning:", nativeEvent.description);
-        // Huwag magpakita ng error para sa custom URL scheme
-        if (!nativeEvent.description?.includes("UNKNOWN_URL_SCHEME")) {
-          console.error("WebView error:", nativeEvent);
-        }
-      }}
-      onHttpError={(syntheticEvent) => {
-        const { nativeEvent } = syntheticEvent;
-        console.error("HTTP error:", nativeEvent);
-      }}
-    />
+    <SafeAreaView style={styles.safeArea}>
+      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <View style={styles.container}>
+        <WebView
+          ref={webViewRef}
+          source={{ uri: url }}
+          style={styles.webview}
+          containerStyle={styles.webviewContainer}
+          originWhitelist={["*", "sakayna://*", "http://*", "https://*"]}
+          startInLoadingState
+          injectedJavaScript={injectedJavaScript}
+          javaScriptEnabled
+          domStorageEnabled
+          sharedCookiesEnabled
+          thirdPartyCookiesEnabled
+          allowsInlineMediaPlayback
+          setBuiltInZoomControls={false}
+          scalesPageToFit={Platform.OS === "android"}
+          showsHorizontalScrollIndicator={false}
+          showsVerticalScrollIndicator={false}
+          automaticallyAdjustContentInsets={false}
+          contentInsetAdjustmentBehavior="never"
+          mixedContentMode="always"
+          androidLayerType="hardware"
+          renderLoading={() => (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#183B5C" />
+            </View>
+          )}
+          onShouldStartLoadWithRequest={(request) => {
+            const blocked = handleCustomScheme(request.url);
+            return !blocked;
+          }}
+          onNavigationStateChange={(navState) => {
+            console.log("📍 Navigation to:", navState.url);
+            handleCustomScheme(navState.url);
+          }}
+          onError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.warn("WebView warning:", nativeEvent.description);
+
+            if (!nativeEvent.description?.includes("UNKNOWN_URL_SCHEME")) {
+              Alert.alert(
+                "Page Error",
+                "Unable to load the payment page. Please try again."
+              );
+            }
+          }}
+          onHttpError={(syntheticEvent) => {
+            const { nativeEvent } = syntheticEvent;
+            console.error("HTTP error:", nativeEvent);
+
+            Alert.alert(
+              "Connection Error",
+              "There was a problem loading the payment page."
+            );
+          }}
+        />
+      </View>
+    </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  container: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  webviewContainer: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  webview: {
+    flex: 1,
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    backgroundColor: "#FFFFFF",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+  },
+  centered: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+});
