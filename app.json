@@ -35,6 +35,10 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION"
       ],
+      "blockedPermissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+     ],
       "config": {
         "googleMaps": {
           "apiKey": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws"
