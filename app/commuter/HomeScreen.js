@@ -23,6 +23,7 @@ import {
   PixelRatio,
   StatusBar,
   PanResponder,
+  Keyboard, // Add this import
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, {
@@ -39,7 +40,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Constants from "expo-constants";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import FindingDriverScreen from "./FindingDriver";
-
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 // ==================== RESPONSIVE UTILITIES ====================
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
@@ -548,7 +549,7 @@ const LocationCard = ({
           )}
         </View>
 
-        {showCurrentLocation && (
+        {/* {showCurrentLocation && (
           <TouchableOpacity
             onPress={onCurrentLocation}
             style={styles.currentLocationButton}
@@ -567,7 +568,7 @@ const LocationCard = ({
               />
             </View>
           </TouchableOpacity>
-        )}
+        )} */}
 
         <View style={styles.chevronContainer}>
           <Ionicons
@@ -787,7 +788,8 @@ const TripSummaryCard = ({ distance, time, passengers, fare }) => (
   </View>
 );
 
-// ==================== FLOATING ACTION BUTTONS ====================
+// ==================== FLOATING ACTION BUTTONS (FIXED FOR ANDROID) ====================
+// Update the FloatingActionButtons component (around line 400)
 const FloatingActionButtons = ({
   onScan,
   onFind,
@@ -795,14 +797,21 @@ const FloatingActionButtons = ({
   trackUserAction,
   visible,
 }) => {
-  const translateY = useRef(new Animated.Value(100)).current;
+  const translateY = useRef(new Animated.Value(120)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
 
-  const getBottomPosition = useCallback(() => {
-    const baseInset = Math.max(insets.bottom, 12);
-    return baseInset + moderateVerticalScale(12);
-  }, [insets.bottom]);
+  const [mounted, setMounted] = useState(false);
+  const [canPress, setCanPress] = useState(false);
+
+  const hideTimerRef = useRef(null);
+  const animRef = useRef(null);
+
+  const tabBarHeight = useBottomTabBarHeight();
+
+const getBottomPosition = useCallback(() => {
+  return tabBarHeight + insets.bottom + 10;
+}, [tabBarHeight, insets.bottom]);
 
   const getButtonDimensions = useCallback(() => {
     if (isSmallDevice) {
@@ -856,45 +865,78 @@ const FloatingActionButtons = ({
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (animRef.current) animRef.current.stop();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+
+    if (animRef.current) {
+      animRef.current.stop();
+    }
+
     if (visible) {
-      Animated.parallel([
+      setMounted(true);
+      setCanPress(true);
+
+      translateY.setValue(120);
+      opacity.setValue(0);
+
+      animRef.current = Animated.parallel([
         Animated.spring(translateY, {
           toValue: 0,
           useNativeDriver: true,
-          damping: 20,
-          stiffness: 300,
-          restSpeedThreshold: 0.5,
-          restDisplacementThreshold: 0.5,
+          damping: 18,
+          stiffness: 220,
+          mass: 0.8,
         }),
         Animated.timing(opacity, {
           toValue: 1,
-          duration: 300,
+          duration: 220,
           useNativeDriver: true,
         }),
-      ]).start();
+      ]);
+
+      animRef.current.start();
     } else {
-      Animated.parallel([
+      // disable touch immediately
+      setCanPress(false);
+
+      animRef.current = Animated.parallel([
         Animated.timing(translateY, {
-          toValue: 100,
-          duration: 200,
+          toValue: 120,
+          duration: 180,
           useNativeDriver: true,
         }),
         Animated.timing(opacity, {
           toValue: 0,
-          duration: 200,
+          duration: 160,
           useNativeDriver: true,
         }),
-      ]).start();
+      ]);
+
+      animRef.current.start();
+
+      hideTimerRef.current = setTimeout(() => {
+        setMounted(false);
+      }, 190);
     }
   }, [visible, translateY, opacity]);
 
-  if (!visible) return null;
+  if (!mounted) return null;
 
   const buttonDims = getButtonDimensions();
   const textSizes = getTextSizes();
 
   return (
     <Animated.View
+      pointerEvents={canPress ? "box-none" : "none"}
       style={[
         styles.floatingActionContainer,
         {
@@ -904,7 +946,6 @@ const FloatingActionButtons = ({
           paddingHorizontal: scale(16),
         },
       ]}
-      pointerEvents="box-none"
     >
       <View
         style={[
@@ -925,14 +966,15 @@ const FloatingActionButtons = ({
               gap: buttonDims.gap,
               borderRadius: moderateScale(isSmallDevice ? 11 : 13),
             },
-            disabled && styles.floatingActionButtonDisabled,
+            (disabled || !canPress) && styles.floatingActionButtonDisabled,
           ]}
           onPress={() => {
+            if (!canPress || disabled) return;
             trackUserAction?.();
             onScan?.();
           }}
-          disabled={disabled}
-          activeOpacity={0.8}
+          disabled={disabled || !canPress}
+          activeOpacity={0.85}
         >
           <View
             style={[
@@ -981,14 +1023,15 @@ const FloatingActionButtons = ({
               gap: buttonDims.gap,
               borderRadius: moderateScale(isSmallDevice ? 11 : 13),
             },
-            disabled && styles.floatingActionButtonDisabled,
+            (disabled || !canPress) && styles.floatingActionButtonDisabled,
           ]}
           onPress={() => {
+            if (!canPress || disabled) return;
             trackUserAction?.();
             onFind?.();
           }}
-          disabled={disabled}
-          activeOpacity={0.8}
+          disabled={disabled || !canPress}
+          activeOpacity={0.85}
         >
           <View
             style={[
@@ -1187,6 +1230,7 @@ export default function CommuterHomeScreen() {
   const [commuterId, setCommuterId] = useState(null);
   const [activeBooking, setActiveBooking] = useState(null);
   const [recentLocations, setRecentLocations] = useState([]);
+  const [forceUpdate, setForceUpdate] = useState(false); // Added for Android fix
   const [alert, setAlert] = useState({
     visible: false,
     type: "info",
@@ -1212,6 +1256,30 @@ export default function CommuterHomeScreen() {
   const [scannedDriverData, setScannedDriverData] = useState(null);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+
+  // Force re-render for Android when locations are set
+  useEffect(() => {
+    if (pickup && dropoff && Platform.OS === 'android') {
+      // Small delay to ensure Android layout updates
+      const timer = setTimeout(() => {
+        setForceUpdate(prev => !prev);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [pickup, dropoff]);
+
+  // Keyboard listener for Android
+  useEffect(() => {
+    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
+      if (pickup && dropoff && Platform.OS === 'android') {
+        setForceUpdate(prev => !prev);
+      }
+    });
+    
+    return () => {
+      keyboardDidHideListener.remove();
+    };
+  }, [pickup, dropoff]);
 
   // ==================== DRAGGABLE SHEET ====================
   const sheetTopAnim = useRef(new Animated.Value(SHEET_TOP_MID)).current;
@@ -2376,6 +2444,32 @@ export default function CommuterHomeScreen() {
     });
   };
 
+  const shouldShowButtons = !!(pickup && dropoff);
+
+// Also add a more robust check:
+const isPickupValid =
+  !!pickup &&
+  typeof pickup.latitude === "number" &&
+  typeof pickup.longitude === "number";
+
+const isDropoffValid =
+  !!dropoff &&
+  typeof dropoff.latitude === "number" &&
+  typeof dropoff.longitude === "number";
+
+const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
+
+  // Debug log (remove in production)
+  useEffect(() => {
+  console.log('Button Debug:', {
+    pickup: !!pickup,
+    dropoff: !!dropoff,
+    shouldShow: !!(pickup && dropoff),
+    pickupValid: isPickupValid,
+    dropoffValid: isDropoffValid
+  });
+}, [pickup, dropoff, isPickupValid, isDropoffValid]);
+
   if (initialLoad && loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -2568,11 +2662,11 @@ export default function CommuterHomeScreen() {
           }}
           activeOpacity={0.8}
         >
-          <Ionicons name="locate" size={moderateScale(20)} color="#183B5C" />
+          <Ionicons name="locate" size={moderateScale(20)} color="#FFF" />
         </TouchableOpacity>
       </View>
 
-      {/* DRAGGABLE BOTTOM SHEET */}
+      {/* DRAGGABLE BOTTOM SHEET - FIXED FOR ANDROID */}
       <Animated.View
         style={[
           styles.draggableSheet,
@@ -2593,191 +2687,371 @@ export default function CommuterHomeScreen() {
           </TouchableOpacity>
         </View>
 
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          style={styles.sheetContentWrapper}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
-        >
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={[
-              styles.scrollContent,
-              { paddingBottom: insets.bottom + scale(120) },
-            ]}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={["#183B5C"]}
-                tintColor="#183B5C"
-              />
-            }
+        {/* Fixed KeyboardAvoidingView for Android */}
+        {Platform.OS === 'ios' ? (
+          <KeyboardAvoidingView
+            behavior="padding"
+            style={styles.sheetContentWrapper}
+            keyboardVerticalOffset={0}
           >
-            {/* Header */}
-            <View style={styles.headerSection}>
-              <View>
-                <Text style={styles.greeting}>Hello,</Text>
-                <Text style={styles.greetingName}>Where to?</Text>
-              </View>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.scrollContent,
+                { paddingBottom: insets.bottom + scale(120) },
+              ]}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  colors={["#183B5C"]}
+                  tintColor="#183B5C"
+                />
+              }
+            >
+              {/* Content */}
+              <View style={styles.headerSection}>
+                <View>
+                  <Text style={styles.greeting}>Hello,</Text>
+                  <Text style={styles.greetingName}>Where to?</Text>
+                </View>
 
-              <TouchableOpacity
-                style={styles.filterButton}
-                onPress={() => {
-                  trackUserAction();
-                  openProximityFilter();
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={styles.filterButtonContent}>
-                  <View style={styles.filterIconContainer}>
+                <TouchableOpacity
+                  style={styles.filterButton}
+                  onPress={() => {
+                    trackUserAction();
+                    openProximityFilter();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.filterButtonContent}>
+                    <View style={styles.filterIconContainer}>
+                      <Ionicons
+                        name="options-outline"
+                        size={moderateScale(16)}
+                        color="#183B5C"
+                      />
+                      {proximityRadius === 0.1 && (
+                        <View style={styles.activeFilterDot} />
+                      )}
+                    </View>
+
+                    <Text style={styles.filterText}>
+                      {proximityRadius.toFixed(1)}km
+                    </Text>
+
                     <Ionicons
-                      name="options-outline"
-                      size={moderateScale(16)}
-                      color="#183B5C"
+                      name="chevron-down"
+                      size={moderateScale(13)}
+                      color="#9CA3AF"
                     />
-                    {proximityRadius === 0.1 && (
-                      <View style={styles.activeFilterDot} />
-                    )}
                   </View>
 
-                  <Text style={styles.filterText}>
-                    {proximityRadius.toFixed(1)}km
-                  </Text>
-
-                  <Ionicons
-                    name="chevron-down"
-                    size={moderateScale(13)}
-                    color="#9CA3AF"
-                  />
-                </View>
-
-                <View style={styles.proximityIndicator}>
-                  <Ionicons
-                    name="radio-outline"
-                    size={moderateScale(11)}
-                    color="#10B981"
-                  />
-                  <Text style={styles.proximityIndicatorText}>
-                    {proximityRadius === 0.1
-                      ? "Nearest"
-                      : proximityRadius === 0.2
-                      ? "Near"
-                      : proximityRadius === 0.3
-                      ? "Standard"
-                      : "Wide"}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-
-            {/* Pickup */}
-            <Animated.View style={{ transform: [{ translateX: shakeAnimPickup }] }}>
-              <LocationCard
-                icon="location"
-                iconColor="#10B981"
-                label="PICKUP"
-                placeholder="📍 Where should we pick you up?"
-                value={pickupText}
-                details={pickupDetails}
-                onDetailsChange={setPickupDetails}
-                onPress={() => handleSelectOnMap("pickup")}
-                onCurrentLocation={handleUseCurrentLocation}
-                showCurrentLocation
-                trackUserAction={trackUserAction}
-              />
-            </Animated.View>
-
-            {/* Dropoff */}
-            <Animated.View
-              style={{ transform: [{ translateX: shakeAnimDropoff }] }}
-            >
-              <LocationCard
-                icon="flag"
-                iconColor="#EF4444"
-                label="DROPOFF"
-                placeholder="🎯 Where are you going?"
-                value={dropoffText}
-                details={dropoffDetails}
-                onDetailsChange={setDropoffDetails}
-                onPress={() => handleSelectOnMap("dropoff")}
-                showCurrentLocation={false}
-                trackUserAction={trackUserAction}
-              />
-            </Animated.View>
-
-            <View style={styles.instructionContainer}>
-              <Ionicons
-                name="information-circle-outline"
-                size={moderateScale(13)}
-                color="#9CA3AF"
-              />
-              <Text style={styles.instructionText}>
-                ✨ Tap on any glowing box above to choose your location from the
-                map
-              </Text>
-            </View>
-
-            {recentLocations.length > 0 && (
-              <View style={styles.recentSection}>
-                <Text style={styles.sectionTitle}>Recent Locations</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  {recentLocations.map((recent) => (
-                    <TouchableOpacity
-                      key={recent.id}
-                      style={styles.recentChip}
-                      onPress={() => {
-                        trackUserAction();
-                        handleSelectRecent(recent);
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons
-                        name={recent.type === "pickup" ? "location" : "flag"}
-                        size={moderateScale(13)}
-                        color={
-                          recent.type === "pickup" ? "#10B981" : "#EF4444"
-                        }
-                      />
-                      <Text style={styles.recentChipText} numberOfLines={1}>
-                        {recent.address.split(",")[0]}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
+                  <View style={styles.proximityIndicator}>
+                    <Ionicons
+                      name="radio-outline"
+                      size={moderateScale(11)}
+                      color="#10B981"
+                    />
+                    <Text style={styles.proximityIndicatorText}>
+                      {proximityRadius === 0.1
+                        ? "Nearest"
+                        : proximityRadius === 0.2
+                        ? "Near"
+                        : proximityRadius === 0.3
+                        ? "Standard"
+                        : "Wide"}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               </View>
-            )}
 
-            <PassengerSelector
-              count={passengerCount}
-              onChange={handlePassengerChange}
-              trackUserAction={trackUserAction}
-            />
+              {/* Pickup */}
+              <Animated.View style={{ transform: [{ translateX: shakeAnimPickup }] }}>
+                <LocationCard
+                  icon="location"
+                  iconColor="#10B981"
+                  label="PICKUP"
+                  placeholder="📍 Where should we pick you up?"
+                  value={pickupText}
+                  details={pickupDetails}
+                  onDetailsChange={setPickupDetails}
+                  onPress={() => handleSelectOnMap("pickup")}
+                  onCurrentLocation={handleUseCurrentLocation}
+                  showCurrentLocation
+                  trackUserAction={trackUserAction}
+                />
+              </Animated.View>
 
-            {pickup && dropoff && estimatedDistance && (
-              <TripSummaryCard
-                distance={estimatedDistance}
-                time={estimatedTime}
-                passengers={passengerCount}
-                fare={estimatedFare}
+              {/* Dropoff */}
+              <Animated.View
+                style={{ transform: [{ translateX: shakeAnimDropoff }] }}
+              >
+                <LocationCard
+                  icon="flag"
+                  iconColor="#EF4444"
+                  label="DROPOFF"
+                  placeholder="🎯 Where are you going?"
+                  value={dropoffText}
+                  details={dropoffDetails}
+                  onDetailsChange={setDropoffDetails}
+                  onPress={() => handleSelectOnMap("dropoff")}
+                  showCurrentLocation={false}
+                  trackUserAction={trackUserAction}
+                />
+              </Animated.View>
+
+              <View style={styles.instructionContainer}>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={moderateScale(13)}
+                  color="#9CA3AF"
+                />
+                <Text style={styles.instructionText}>
+                  ✨ Tap on any glowing box above to choose your location from the
+                  map
+                </Text>
+              </View>
+
+              {recentLocations.length > 0 && (
+                <View style={styles.recentSection}>
+                  <Text style={styles.sectionTitle}>Recent Locations</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {recentLocations.map((recent) => (
+                      <TouchableOpacity
+                        key={recent.id}
+                        style={styles.recentChip}
+                        onPress={() => {
+                          trackUserAction();
+                          handleSelectRecent(recent);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons
+                          name={recent.type === "pickup" ? "location" : "flag"}
+                          size={moderateScale(13)}
+                          color={
+                            recent.type === "pickup" ? "#10B981" : "#EF4444"
+                          }
+                        />
+                        <Text style={styles.recentChipText} numberOfLines={1}>
+                          {recent.address.split(",")[0]}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              <PassengerSelector
+                count={passengerCount}
+                onChange={handlePassengerChange}
+                trackUserAction={trackUserAction}
               />
-            )}
 
-            <View style={styles.helpContainer}>
-              <Text style={styles.helpText}>
-                💡 Tip: Drag this panel down to see more of the map
-              </Text>
-            </View>
-          </ScrollView>
-        </KeyboardAvoidingView>
+              {pickup && dropoff && estimatedDistance && (
+                <TripSummaryCard
+                  distance={estimatedDistance}
+                  time={estimatedTime}
+                  passengers={passengerCount}
+                  fare={estimatedFare}
+                />
+              )}
+
+              <View style={styles.helpContainer}>
+                <Text style={styles.helpText}>
+                  💡 Tip: Drag this panel down to see more of the map
+                </Text>
+              </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        ) : (
+          // Android: Use regular View instead of KeyboardAvoidingView
+          <View style={styles.sheetContentWrapper}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={[
+                styles.scrollContent,
+                { paddingBottom: insets.bottom + scale(120) },
+              ]}
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={onRefresh}
+                  colors={["#183B5C"]}
+                  tintColor="#183B5C"
+                />
+              }
+            >
+              {/* Same content as above */}
+              <View style={styles.headerSection}>
+                <View>
+                  <Text style={styles.greeting}>Hello,</Text>
+                  <Text style={styles.greetingName}>Where to?</Text>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.filterButton}
+                  onPress={() => {
+                    trackUserAction();
+                    openProximityFilter();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.filterButtonContent}>
+                    <View style={styles.filterIconContainer}>
+                      <Ionicons
+                        name="options-outline"
+                        size={moderateScale(16)}
+                        color="#183B5C"
+                      />
+                      {proximityRadius === 0.1 && (
+                        <View style={styles.activeFilterDot} />
+                      )}
+                    </View>
+
+                    <Text style={styles.filterText}>
+                      {proximityRadius.toFixed(1)}km
+                    </Text>
+
+                    <Ionicons
+                      name="chevron-down"
+                      size={moderateScale(13)}
+                      color="#9CA3AF"
+                    />
+                  </View>
+
+                  <View style={styles.proximityIndicator}>
+                    <Ionicons
+                      name="radio-outline"
+                      size={moderateScale(11)}
+                      color="#10B981"
+                    />
+                    <Text style={styles.proximityIndicatorText}>
+                      {proximityRadius === 0.1
+                        ? "Nearest"
+                        : proximityRadius === 0.2
+                        ? "Near"
+                        : proximityRadius === 0.3
+                        ? "Standard"
+                        : "Wide"}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Pickup */}
+              <Animated.View style={{ transform: [{ translateX: shakeAnimPickup }] }}>
+                <LocationCard
+                  icon="location"
+                  iconColor="#10B981"
+                  label="PICKUP"
+                  placeholder="📍 Where should we pick you up?"
+                  value={pickupText}
+                  details={pickupDetails}
+                  onDetailsChange={setPickupDetails}
+                  onPress={() => handleSelectOnMap("pickup")}
+                  onCurrentLocation={handleUseCurrentLocation}
+                  showCurrentLocation
+                  trackUserAction={trackUserAction}
+                />
+              </Animated.View>
+
+              {/* Dropoff */}
+              <Animated.View
+                style={{ transform: [{ translateX: shakeAnimDropoff }] }}
+              >
+                <LocationCard
+                  icon="flag"
+                  iconColor="#EF4444"
+                  label="DROPOFF"
+                  placeholder="🎯 Where are you going?"
+                  value={dropoffText}
+                  details={dropoffDetails}
+                  onDetailsChange={setDropoffDetails}
+                  onPress={() => handleSelectOnMap("dropoff")}
+                  showCurrentLocation={false}
+                  trackUserAction={trackUserAction}
+                />
+              </Animated.View>
+
+              <View style={styles.instructionContainer}>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={moderateScale(13)}
+                  color="#9CA3AF"
+                />
+                <Text style={styles.instructionText}>
+                  ✨ Tap on any glowing box above to choose your location from the
+                  map
+                </Text>
+              </View>
+
+              {recentLocations.length > 0 && (
+                <View style={styles.recentSection}>
+                  <Text style={styles.sectionTitle}>Recent Locations</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    {recentLocations.map((recent) => (
+                      <TouchableOpacity
+                        key={recent.id}
+                        style={styles.recentChip}
+                        onPress={() => {
+                          trackUserAction();
+                          handleSelectRecent(recent);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons
+                          name={recent.type === "pickup" ? "location" : "flag"}
+                          size={moderateScale(13)}
+                          color={
+                            recent.type === "pickup" ? "#10B981" : "#EF4444"
+                          }
+                        />
+                        <Text style={styles.recentChipText} numberOfLines={1}>
+                          {recent.address.split(",")[0]}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+
+              <PassengerSelector
+                count={passengerCount}
+                onChange={handlePassengerChange}
+                trackUserAction={trackUserAction}
+              />
+
+              {pickup && dropoff && estimatedDistance && (
+                <TripSummaryCard
+                  distance={estimatedDistance}
+                  time={estimatedTime}
+                  passengers={passengerCount}
+                  fare={estimatedFare}
+                />
+              )}
+
+              <View style={styles.helpContainer}>
+                <Text style={styles.helpText}>
+                  💡 Tip: Drag this panel down to see more of the map
+                </Text>
+              </View>
+            </ScrollView>
+          </View>
+        )}
       </Animated.View>
 
-      <FloatingActionButtons
-        onScan={openScanner}
-        onFind={handleBookRide}
-        disabled={!pickup || !dropoff}
-        trackUserAction={trackUserAction}
-        visible={!!(pickup && dropoff)}
-      />
+      {/* Wrapper for floating buttons to ensure proper positioning on Android */}
+    
+  <FloatingActionButtons
+    onScan={openScanner}
+    onFind={handleBookRide}
+    disabled={!isPickupValid || !isDropoffValid}
+    trackUserAction={trackUserAction}
+    visible={shouldShowButtonsFixed}
+  />
+
     </View>
   );
 }
@@ -2807,7 +3081,7 @@ const styles = StyleSheet.create({
   mapCurrentLocationButton: {
     position: "absolute",
     right: scale(14),
-    backgroundColor: "#FFF",
+    backgroundColor: "#183B5C",
     width: moderateScale(44),
     height: moderateScale(44),
     borderRadius: moderateScale(14),
@@ -2821,7 +3095,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#F0F0F0",
     zIndex: 20,
-    backgroundColor: "#E97A3E",
   },
 
   driverMarker: {
@@ -3710,6 +3983,7 @@ const styles = StyleSheet.create({
     right: 0,
     backgroundColor: "transparent",
     zIndex: 100,
+    elevation: 10, // Added for Android
   },
 
   floatingActionButtons: {
@@ -3722,56 +3996,75 @@ const styles = StyleSheet.create({
     elevation: 8,
     borderWidth: 1,
     borderColor: "#F0F0F0",
-    marginBottom:70,
-  },
+    marginBottom: 70,
+  },floatingActionContainer: {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  zIndex: 999,
+  elevation: 999,
+},
 
-  floatingActionButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFF",
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-  },
+floatingActionButtons: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  backgroundColor: "rgba(255,255,255,0.96)",
+  marginHorizontal: scale(2),
+  shadowColor: "#000000",
+  shadowOffset: { width: 0, height: 8 },
+  shadowOpacity: 0.12,
+  shadowRadius: 14,
+  elevation: 10,
+  borderWidth: 1,
+  borderColor: "#F3F4F6",
+},
 
-  floatingActionButtonPrimary: {
-    backgroundColor: "#183B5C",
-    borderColor: "#183B5C",
-  },
+floatingActionButton: {
+  flex: 1,
+  flexDirection: "row",
+  alignItems: "center",
+  backgroundColor: "#FFFFFF",
+},
 
-  floatingActionButtonDisabled: {
-    opacity: 0.5,
-  },
+floatingActionButtonPrimary: {
+  backgroundColor: "#183B5C",
+},
 
-  floatingActionIconWrapper: {
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(0,0,0,0.05)",
-  },
+floatingActionButtonDisabled: {
+  opacity: 0.45,
+},
 
-  floatingActionIconWrapperPrimary: {
-    backgroundColor: "rgba(255,255,255,0.15)",
-  },
+floatingActionIconWrapper: {
+  justifyContent: "center",
+  alignItems: "center",
+  backgroundColor: "#ECFDF5",
+},
 
-  floatingActionTextContainer: {
-    flex: 1,
-  },
+floatingActionIconWrapperPrimary: {
+  backgroundColor: "rgba(255,255,255,0.18)",
+},
 
-  floatingActionTitle: {
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 1,
-  },
+floatingActionTextContainer: {
+  flex: 1,
+},
 
-  floatingActionTitleLight: {
-    color: "#FFF",
-  },
+floatingActionTitle: {
+  color: "#111827",
+  fontWeight: "700",
+},
 
-  floatingActionSubtitle: {
-    color: "#9CA3AF",
-  },
+floatingActionTitleLight: {
+  color: "#FFFFFF",
+},
 
-  floatingActionSubtitleLight: {
-    color: "#E5E7EB",
-  },
+floatingActionSubtitle: {
+  color: "#6B7280",
+  fontWeight: "500",
+  marginTop: 1,
+},
+
+floatingActionSubtitleLight: {
+  color: "rgba(255,255,255,0.82)",
+},
 });

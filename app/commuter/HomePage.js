@@ -1,3 +1,4 @@
+// app/commuter/HomePage.js
 import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
@@ -161,9 +162,24 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [userId, fetchUnreadCount]);
 
+  // FIXED: Proper tab bar height calculation for Android
   const getTabBarHeight = () => {
     const baseHeight = width < 360 ? 64 : 72;
-    const extraBottom = Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 10;
+    
+    if (Platform.OS === 'android') {
+      const navigationBarHeight = insets.bottom;
+      
+      // For gesture navigation (no visible buttons)
+      if (navigationBarHeight === 0) {
+        return baseHeight + 20;
+      }
+      
+      // For devices with 3-button navigation
+      return baseHeight + navigationBarHeight;
+    }
+    
+    // iOS
+    const extraBottom = Math.max(insets.bottom, 8);
     return baseHeight + extraBottom;
   };
 
@@ -212,14 +228,31 @@ export default function HomePage() {
             fontWeight: "600",
             marginBottom: Platform.OS === "ios" ? 0 : 2,
           },
+          // FIXED: Tab bar style with proper Android handling
           tabBarStyle: [
             navStyles.tabBar,
             {
               height: getTabBarHeight(),
-              paddingBottom:
-                Platform.OS === "ios" ? Math.max(insets.bottom, 8) : 10,
+              paddingBottom: Platform.select({
+                android: Math.max(insets.bottom, 16),
+                ios: Math.max(insets.bottom, 8),
+                default: 10,
+              }),
+              paddingTop: Platform.select({
+                android: 8,
+                default: 0,
+              }),
+              // Important for Android
+              position: 'absolute',
+              bottom: 0,
+              left: 0,
+              right: 0,
             },
           ],
+          // FIXED: Safe area insets
+          tabBarSafeAreaInsets: {
+            bottom: Platform.OS === 'android' ? Math.max(insets.bottom, 16) : insets.bottom,
+          },
           sceneContainerStyle: {
             backgroundColor: "#fff",
           },

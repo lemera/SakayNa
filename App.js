@@ -9,7 +9,7 @@ import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import { supabase } from "./lib/supabase";
 import { getUserSession, clearUserSession } from "./app/utils/authStorage";
-
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 /* ============================= */
 /* Screens Import */
 /* ============================= */
@@ -302,6 +302,7 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
       <NavigationContainer linking={linking}>
         <Stack.Navigator
           initialRouteName={initialRoute}
@@ -369,7 +370,7 @@ export default function App() {
           <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
-
+      </SafeAreaProvider>
       <Modal
         visible={showLocationDisclosure}
         transparent={true}

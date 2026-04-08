@@ -7,7 +7,6 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Platform,
   FlatList,
   Keyboard,
   TouchableOpacity,
@@ -19,7 +18,7 @@ import {
   PanResponder,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { PROVIDER_GOOGLE } from "react-native-maps";
 import * as Location from "expo-location";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
@@ -28,19 +27,16 @@ import * as Haptics from "expo-haptics";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../lib/supabase";
 
-// Get screen dimensions
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 const GEOCODE_DEBOUNCE_MS = 500;
 const FAVORITES_STORAGE_KEY = "user_favorite_locations";
 
-// Bottom sheet snap points (heights in pixels)
 const BOTTOM_SHEET_SNAP_POINTS = {
-  MINIMIZED: 300,
+  MINIMIZED: 220,
   PARTIAL: SCREEN_HEIGHT * 0.35,
-  EXPANDED: SCREEN_HEIGHT * 0.6,
+  EXPANDED: SCREEN_HEIGHT * 0.58,
 };
 
-// ─── Landmark display maps ────────────────────────────────────────────────────
 const LANDMARK_ICONS = {
   restaurant: "restaurant",
   mall: "bag-handle",
@@ -101,53 +97,200 @@ const LANDMARK_LABELS = {
   other: "Places",
 };
 
-// ─── Address helpers ──────────────────────────────────────────────────────────
 const isPlusCode = (str = "") =>
   /^[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}$/i.test(str.trim());
 
-const buildAddressFromComponents = (result) => {
-  if (!result?.address_components) return null;
-  const get = (...types) => {
-    for (const type of types) {
-      const c = result.address_components.find((ac) => ac.types.includes(type));
-      if (c) return c.long_name;
+const createSessionToken = () =>
+  `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+
+const getAddressComponentValue = (components = [], ...types) => {
+  for (const type of types) {
+    const found = components.find((c) => c?.types?.includes(type));
+    if (found) {
+      return (
+        found.longText ||
+        found.shortText ||
+        found.long_name ||
+        found.short_name ||
+        null
+      );
     }
-    return null;
-  };
-  const premise = get("premise", "point_of_interest", "establishment");
-  const streetNum = get("street_number");
-  const route = get("route");
-  const sublocality = get("sublocality_level_1", "sublocality");
-  const neighborhood = get("neighborhood");
-  const city = get("locality");
-  const province = get("administrative_area_level_2");
+  }
+  return null;
+};
+
+const getBestPlaceNameFromGeocodeResult = (result) => {
+  if (!result?.address_components?.length) return null;
+
+  return (
+    getAddressComponentValue(
+      result.address_components,
+      "premise",
+      "point_of_interest",
+      "establishment"
+    ) || null
+  );
+};
+
+const getBestPlaceNameFromNewPlace = (place) => {
+  if (!place) return null;
+
+  const fromDisplayName = place?.displayName?.text || null;
+  const fromComponents = getAddressComponentValue(
+    place?.addressComponents || [],
+    "premise",
+    "point_of_interest",
+    "establishment"
+  );
+
+  return fromDisplayName || fromComponents || null;
+};
+
+const buildAddressFromNewPlace = (place) => {
+  if (!place?.addressComponents?.length) return null;
+
+  const placeName = getBestPlaceNameFromNewPlace(place);
+  const streetNum = getAddressComponentValue(place.addressComponents, "street_number");
+  const route = getAddressComponentValue(place.addressComponents, "route");
+  const sublocality = getAddressComponentValue(
+    place.addressComponents,
+    "sublocality_level_1",
+    "sublocality"
+  );
+  const neighborhood = getAddressComponentValue(place.addressComponents, "neighborhood");
+  const city = getAddressComponentValue(place.addressComponents, "locality");
+  const province = getAddressComponentValue(
+    place.addressComponents,
+    "administrative_area_level_2",
+    "administrative_area_level_1"
+  );
+
   const parts = [];
-  if (premise && premise !== route) parts.push(premise);
+
+  if (placeName) parts.push(placeName);
+
   const street = [streetNum, route].filter(Boolean).join(" ");
-  if (street) parts.push(street);
+  if (street && street !== placeName) parts.push(street);
+
   if (sublocality) parts.push(sublocality);
   else if (neighborhood) parts.push(neighborhood);
+
   if (city) parts.push(city);
   if (province && province !== city) parts.push(province);
+
   return parts.filter(Boolean).join(", ") || null;
 };
 
-const extractCleanAddress = (result) => {
-  const fmt = result?.formatted_address || "";
-  const firstSegment = fmt.split(",")[0].trim();
-  if (!isPlusCode(firstSegment)) return fmt;
-  return buildAddressFromComponents(result) || null;
+const buildAddressFromGeocodeResult = (result) => {
+  if (!result?.address_components?.length) return null;
+
+  const placeName = getBestPlaceNameFromGeocodeResult(result);
+  const streetNum = getAddressComponentValue(result.address_components, "street_number");
+  const route = getAddressComponentValue(result.address_components, "route");
+  const sublocality = getAddressComponentValue(
+    result.address_components,
+    "sublocality_level_1",
+    "sublocality"
+  );
+  const neighborhood = getAddressComponentValue(result.address_components, "neighborhood");
+  const city = getAddressComponentValue(result.address_components, "locality");
+  const province = getAddressComponentValue(
+    result.address_components,
+    "administrative_area_level_2",
+    "administrative_area_level_1"
+  );
+
+  const parts = [];
+
+  if (placeName) parts.push(placeName);
+
+  const street = [streetNum, route].filter(Boolean).join(" ");
+  if (street && street !== placeName) parts.push(street);
+
+  if (sublocality) parts.push(sublocality);
+  else if (neighborhood) parts.push(neighborhood);
+
+  if (city) parts.push(city);
+  if (province && province !== city) parts.push(province);
+
+  return parts.filter(Boolean).join(", ") || null;
 };
 
-// ─── Distance utilities ───────────────────────────────────────────────────────
+const extractCleanAddressFromPlaceDetails = (place) => {
+  const displayName = place?.displayName?.text || "";
+  const built = buildAddressFromNewPlace(place);
+  const formatted = place?.formattedAddress || "";
+
+  if (displayName && !isPlusCode(displayName)) {
+    if (built && !built.toLowerCase().startsWith(displayName.toLowerCase())) {
+      return `${displayName}, ${built}`;
+    }
+    return built || displayName || formatted || null;
+  }
+
+  if (built && !isPlusCode(built.split(",")[0]?.trim() || "")) {
+    return built;
+  }
+
+  const firstSegment = formatted.split(",")[0]?.trim();
+  if (firstSegment && !isPlusCode(firstSegment)) {
+    return formatted;
+  }
+
+  return built || formatted || null;
+};
+
+const extractCleanAddressFromGeocode = (result) => {
+  const built = buildAddressFromGeocodeResult(result);
+  const formatted = result?.formatted_address || "";
+
+  if (built && !isPlusCode(built.split(",")[0]?.trim() || "")) {
+    return built;
+  }
+
+  const firstSegment = formatted.split(",")[0]?.trim();
+  if (firstSegment && !isPlusCode(firstSegment)) {
+    return formatted;
+  }
+
+  return built || formatted || null;
+};
+
+const buildExpoReverseGeocodeAddress = (a) => {
+  if (!a) return null;
+
+  const parts = [];
+
+  if (a.name && a.name !== a.street && a.name !== a.streetNumber) {
+    parts.push(a.name);
+  }
+
+  const street = [a.streetNumber, a.street].filter(Boolean).join(" ");
+  if (street) parts.push(street);
+
+  if (a.district) parts.push(a.district);
+  else if (a.subregion) parts.push(a.subregion);
+
+  if (a.city) parts.push(a.city);
+  if (a.region && a.region !== a.city) parts.push(a.region);
+
+  return parts.filter(Boolean).join(", ") || null;
+};
+
 const calculateDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
@@ -157,7 +300,84 @@ const formatDistance = (distance) => {
   return `${distance.toFixed(1)}km`;
 };
 
-// ─── Component ───────────────────────────────────────────────────────────────
+const CenterPin = ({ type, isMoving }) => {
+  const isPickup = type === "pickup";
+  const pinColor = isPickup ? "#16A34A" : "#DC2626";
+  const iconName = isPickup ? "radio-button-on" : "location";
+
+  return (
+    <View style={centerPinStyles.wrapper} pointerEvents="none">
+      <View style={[centerPinStyles.shadow, isMoving && centerPinStyles.shadowMoving]} />
+      <View
+        style={[
+          centerPinStyles.pinBody,
+          { backgroundColor: pinColor },
+          isMoving && centerPinStyles.pinBodyMoving,
+        ]}
+      >
+        <Ionicons name={iconName} size={18} color="#FFFFFF" />
+      </View>
+      <View style={[centerPinStyles.pinStem, { backgroundColor: pinColor }]} />
+      <View style={centerPinStyles.pinDot} />
+    </View>
+  );
+};
+
+const centerPinStyles = StyleSheet.create({
+  wrapper: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shadow: {
+    position: "absolute",
+    top: 52,
+    width: 22,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.18)",
+  },
+  shadowMoving: {
+    width: 28,
+    height: 10,
+    backgroundColor: "rgba(0,0,0,0.24)",
+  },
+  pinBody: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 10,
+  },
+  pinBodyMoving: {
+    transform: [{ translateY: -8 }, { scale: 1.05 }],
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 14,
+  },
+  pinStem: {
+    width: 4,
+    height: 16,
+    borderRadius: 999,
+    marginTop: -2,
+  },
+  pinDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#183B5C",
+    marginTop: -1,
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
+  },
+});
+
 export default function MapPickerScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -165,12 +385,17 @@ export default function MapPickerScreen() {
   const mapRef = useRef(null);
   const searchTimeout = useRef(null);
   const geocodeTimeout = useRef(null);
-  const bottomSheetAnim = useRef(new Animated.Value(BOTTOM_SHEET_SNAP_POINTS.EXPANDED)).current;
+  const bottomSheetAnim = useRef(
+    new Animated.Value(BOTTOM_SHEET_SNAP_POINTS.EXPANDED)
+  ).current;
   const hasAutoCentered = useRef(false);
   const geocodeAbortRef = useRef(null);
   const scrollViewRef = useRef(null);
   const isScrollingRef = useRef(false);
   const scrollOffsetRef = useRef(0);
+  const isProgrammaticMoveRef = useRef(false);
+  const regionChangeTimeoutRef = useRef(null);
+  const placesSessionTokenRef = useRef(createSessionToken());
 
   const { type, onSelect, initialLocation } = route.params || {};
 
@@ -190,8 +415,8 @@ export default function MapPickerScreen() {
   const [showAllLandmarks, setShowAllLandmarks] = useState(false);
   const [activeTab, setActiveTab] = useState("popular");
   const [isSheetExpanded, setIsSheetExpanded] = useState(true);
+  const [isMapMoving, setIsMapMoving] = useState(false);
 
-  // Favorites related state
   const [favorites, setFavorites] = useState([]);
   const [showAddFavoriteModal, setShowAddFavoriteModal] = useState(false);
   const [favoriteNickname, setFavoriteNickname] = useState("");
@@ -202,41 +427,46 @@ export default function MapPickerScreen() {
   const [selectedFavorite, setSelectedFavorite] = useState(null);
 
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
+  const isPickup = type === "pickup";
 
-  // Pan responder for bottom sheet - only works when not scrolling
+  const [mapRegion, setMapRegion] = useState({
+    latitude: initialLocation?.latitude || 7.7862,
+    longitude: initialLocation?.longitude || 122.5894,
+    latitudeDelta: 0.01,
+    longitudeDelta: 0.01,
+  });
+
+  const resetPlacesSessionToken = useCallback(() => {
+    placesSessionTokenRef.current = createSessionToken();
+  }, []);
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        // Don't allow dragging if user is scrolling
-        if (isScrollingRef.current) {
-          return false;
-        }
-        // Only allow drag if scroll is at top (scrollOffset <= 0)
-        if (scrollOffsetRef.current > 0) {
-          return false;
-        }
+        if (isScrollingRef.current) return false;
+        if (scrollOffsetRef.current > 0) return false;
         return Math.abs(gestureState.dy) > 10;
       },
       onPanResponderMove: (_, gestureState) => {
         const newHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED - gestureState.dy;
-        if (newHeight >= BOTTOM_SHEET_SNAP_POINTS.MINIMIZED && 
-            newHeight <= BOTTOM_SHEET_SNAP_POINTS.EXPANDED) {
+        if (
+          newHeight >= BOTTOM_SHEET_SNAP_POINTS.MINIMIZED &&
+          newHeight <= BOTTOM_SHEET_SNAP_POINTS.EXPANDED
+        ) {
           bottomSheetAnim.setValue(newHeight);
         }
       },
       onPanResponderRelease: (_, gestureState) => {
         const currentHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED - gestureState.dy;
         const velocity = gestureState.vy;
-        
         let targetHeight;
-        
+
         if (Math.abs(velocity) > 0.5) {
-          if (velocity > 0) {
-            targetHeight = BOTTOM_SHEET_SNAP_POINTS.MINIMIZED;
-          } else {
-            targetHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
-          }
+          targetHeight =
+            velocity > 0
+              ? BOTTOM_SHEET_SNAP_POINTS.MINIMIZED
+              : BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
         } else {
           if (currentHeight < BOTTOM_SHEET_SNAP_POINTS.PARTIAL) {
             targetHeight = BOTTOM_SHEET_SNAP_POINTS.MINIMIZED;
@@ -246,7 +476,7 @@ export default function MapPickerScreen() {
             targetHeight = BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
           }
         }
-        
+
         Animated.spring(bottomSheetAnim, {
           toValue: targetHeight,
           useNativeDriver: false,
@@ -255,31 +485,27 @@ export default function MapPickerScreen() {
         }).start(() => {
           setIsSheetExpanded(targetHeight === BOTTOM_SHEET_SNAP_POINTS.EXPANDED);
         });
-        
+
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       },
     })
   ).current;
 
-  // Function to manually toggle bottom sheet
   const toggleBottomSheet = useCallback(() => {
-    const targetHeight = isSheetExpanded 
-      ? BOTTOM_SHEET_SNAP_POINTS.MINIMIZED 
+    const targetHeight = isSheetExpanded
+      ? BOTTOM_SHEET_SNAP_POINTS.MINIMIZED
       : BOTTOM_SHEET_SNAP_POINTS.EXPANDED;
-    
+
     Animated.spring(bottomSheetAnim, {
       toValue: targetHeight,
       useNativeDriver: false,
       tension: 300,
       friction: 30,
-    }).start(() => {
-      setIsSheetExpanded(!isSheetExpanded);
-    });
-    
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [isSheetExpanded]);
+    }).start(() => setIsSheetExpanded(!isSheetExpanded));
 
-  // Handle scroll events
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [bottomSheetAnim, isSheetExpanded]);
+
   const handleScrollBeginDrag = () => {
     isScrollingRef.current = true;
   };
@@ -294,19 +520,16 @@ export default function MapPickerScreen() {
     scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
   };
 
-  // Load favorites from storage
   useEffect(() => {
     loadFavorites();
   }, []);
 
   const loadFavorites = async () => {
     try {
-      const storedFavorites = await AsyncStorage.getItem(FAVORITES_STORAGE_KEY);
-      if (storedFavorites) {
-        setFavorites(JSON.parse(storedFavorites));
-      }
-    } catch (error) {
-      console.log("Error loading favorites:", error);
+      const stored = await AsyncStorage.getItem(FAVORITES_STORAGE_KEY);
+      if (stored) setFavorites(JSON.parse(stored));
+    } catch (e) {
+      console.log("Error loading favorites:", e);
     }
   };
 
@@ -314,8 +537,8 @@ export default function MapPickerScreen() {
     try {
       await AsyncStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(newFavorites));
       setFavorites(newFavorites);
-    } catch (error) {
-      console.log("Error saving favorites:", error);
+    } catch (e) {
+      console.log("Error saving favorites:", e);
     }
   };
 
@@ -324,29 +547,34 @@ export default function MapPickerScreen() {
       Alert.alert("No Location", "Please select a location first");
       return;
     }
+
     if (!favoriteNickname.trim()) {
       Alert.alert("Required", "Please enter a nickname for this location");
       return;
     }
+
     const newFavorite = {
       id: Date.now().toString(),
       nickname: favoriteNickname.trim(),
-      address: address,
+      address,
       latitude: selectedLocation.latitude,
       longitude: selectedLocation.longitude,
       icon: favoriteIcon,
       color: favoriteColor,
-      type: type,
+      type,
       createdAt: new Date().toISOString(),
     };
+
     let updatedFavorites;
+
     if (editingFavoriteId) {
-      updatedFavorites = favorites.map(fav =>
-        fav.id === editingFavoriteId ? { ...newFavorite, id: editingFavoriteId } : fav
+      updatedFavorites = favorites.map((f) =>
+        f.id === editingFavoriteId ? { ...newFavorite, id: editingFavoriteId } : f
       );
     } else {
       updatedFavorites = [...favorites, newFavorite];
     }
+
     await saveFavorites(updatedFavorites);
     setShowAddFavoriteModal(false);
     setFavoriteNickname("");
@@ -354,317 +582,547 @@ export default function MapPickerScreen() {
     setFavoriteColor("#EF4444");
     setEditingFavoriteId(null);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert("Success", editingFavoriteId ? "Favorite updated!" : "Location added to favorites!");
-  };
-
-  const removeFromFavorites = async (id) => {
     Alert.alert(
-      "Remove Favorite",
-      "Are you sure you want to remove this location from favorites?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            const updatedFavorites = favorites.filter(fav => fav.id !== id);
-            await saveFavorites(updatedFavorites);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          },
-        },
-      ]
+      "Success",
+      editingFavoriteId ? "Favorite updated!" : "Location saved to favorites!"
     );
   };
 
-  const editFavorite = (favorite) => {
-    setEditingFavoriteId(favorite.id);
-    setFavoriteNickname(favorite.nickname);
-    setFavoriteIcon(favorite.icon || "heart");
-    setFavoriteColor(favorite.color || "#EF4444");
+  const removeFromFavorites = async (id) => {
+    Alert.alert("Remove Favorite", "Remove this saved location?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: async () => {
+          await saveFavorites(favorites.filter((f) => f.id !== id));
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        },
+      },
+    ]);
+  };
+
+  const editFavorite = (fav) => {
+    setEditingFavoriteId(fav.id);
+    setFavoriteNickname(fav.nickname);
+    setFavoriteIcon(fav.icon || "heart");
+    setFavoriteColor(fav.color || "#EF4444");
     setShowAddFavoriteModal(true);
   };
 
-  const selectFavoriteLocation = (favorite) => {
-    const coords = { latitude: favorite.latitude, longitude: favorite.longitude };
+  const selectFavoriteLocation = (fav) => {
+    const coords = {
+      latitude: fav.latitude,
+      longitude: fav.longitude,
+    };
+
+    const region = {
+      ...coords,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    };
+
     setSelectedLocation(coords);
-    setAddress(favorite.address);
-    mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
+    setAddress(fav.address);
+    setMapRegion(region);
+
+    isProgrammaticMoveRef.current = true;
+    mapRef.current?.animateToRegion(region, 500);
+
+    setTimeout(() => {
+      isProgrammaticMoveRef.current = false;
+    }, 700);
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setShowFavoriteOptions(false);
   };
 
   const isLocationFavorite = () => {
     if (!selectedLocation) return false;
-    return favorites.some(fav =>
-      Math.abs(fav.latitude - selectedLocation.latitude) < 0.0001 &&
-      Math.abs(fav.longitude - selectedLocation.longitude) < 0.0001
+    return favorites.some(
+      (f) =>
+        Math.abs(f.latitude - selectedLocation.latitude) < 0.0001 &&
+        Math.abs(f.longitude - selectedLocation.longitude) < 0.0001
     );
   };
 
-  const getCurrentFavorite = () => {
-    if (!selectedLocation) return null;
-    return favorites.find(fav =>
-      Math.abs(fav.latitude - selectedLocation.latitude) < 0.0001 &&
-      Math.abs(fav.longitude - selectedLocation.longitude) < 0.0001
-    );
-  };
+  const popularLandmarks = useMemo(
+    () =>
+      [...landmarks]
+        .sort((a, b) => (b.popularity_score || 0) - (a.popularity_score || 0))
+        .slice(0, 8),
+    [landmarks]
+  );
 
-  // Get popular landmarks (top rated)
-  const popularLandmarks = useMemo(() => {
-    return [...landmarks]
-      .sort((a, b) => (b.popularity_score || 0) - (a.popularity_score || 0))
-      .slice(0, 8);
-  }, [landmarks]);
-
-  // Get nearby landmarks based on selected location
   const nearbyLandmarks = useMemo(() => {
     if (!selectedLocation) return [];
     return [...landmarks]
-      .map(landmark => {
-        const distance = calculateDistance(
+      .map((l) => ({
+        ...l,
+        distance: calculateDistance(
           selectedLocation.latitude,
           selectedLocation.longitude,
-          landmark.latitude,
-          landmark.longitude
-        );
-        return { ...landmark, distance };
-      })
+          l.latitude,
+          l.longitude
+        ),
+      }))
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 10);
   }, [landmarks, selectedLocation]);
 
-  // ─── Fetch landmarks from Supabase ───────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
         const { data, error } = await supabase
           .from("location_landmarks")
-          .select("id, name, landmark_type, address, barangay, city, province, latitude, longitude, popularity_score")
+          .select(
+            "id, name, landmark_type, address, barangay, city, province, latitude, longitude, popularity_score"
+          )
           .eq("is_active", true)
           .order("popularity_score", { ascending: false });
-        if (!error && data) {
-          setLandmarks(data);
-        }
-      } catch (error) {
-        console.log("Error fetching landmarks:", error);
+
+        if (!error && data) setLandmarks(data);
+      } catch (e) {
+        console.log("Error fetching landmarks:", e);
       } finally {
         setLoadingLandmarks(false);
       }
     })();
   }, []);
 
-  // ─── Initial location ────────────────────────────────────────────────────────
+  const fetchPlaceDetailsNew = useCallback(
+    async (placeId, sessionToken) => {
+      const url = `https://places.googleapis.com/v1/places/${encodeURIComponent(
+        placeId
+      )}?languageCode=en&regionCode=PH${
+        sessionToken ? `&sessionToken=${encodeURIComponent(sessionToken)}` : ""
+      }`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": googleApiKey,
+          "X-Goog-FieldMask":
+            "id,displayName,formattedAddress,location,addressComponents,types,rating,userRatingCount,priceLevel",
+        },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.error?.message || "Failed to get place details");
+      }
+
+      return data;
+    },
+    [googleApiKey]
+  );
+
+  const searchNearbyPlaceName = useCallback(
+    async (coords) => {
+      console.log("=== searchNearbyPlaceName START ===", coords);
+
+      if (!googleApiKey) {
+        console.log("No Google API key");
+        return null;
+      }
+
+      try {
+        const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": googleApiKey,
+            "X-Goog-FieldMask":
+              "places.id,places.displayName,places.formattedAddress,places.location,places.addressComponents,places.types",
+          },
+          body: JSON.stringify({
+            maxResultCount: 15,                    // Increased
+            locationRestriction: {
+              circle: {
+                center: coords,
+                radius: 100.0,                     // ← Important: Increased to 100 meters
+              },
+            },
+            languageCode: "en",
+            regionCode: "PH",
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data?.places?.length) {
+          console.log("Nearby search failed or no places");
+          return null;
+        }
+
+        const sorted = data.places
+          .filter(p => typeof p?.location?.latitude === "number" && typeof p?.location?.longitude === "number")
+          .map((p) => ({
+            ...p,
+            distance: calculateDistance(
+              coords.latitude,
+              coords.longitude,
+              p.location.latitude,
+              p.location.longitude
+            ),
+          }))
+          .sort((a, b) => a.distance - b.distance);
+
+        // Prefer real building/establishment
+        const best = sorted.find((p) =>
+          p.types?.some((t) =>
+            ["establishment", "point_of_interest", "premise", "building"].includes(t)
+          )
+        ) || sorted[0];
+
+        if (!best) return null;
+
+        console.log("Best nearby place:", best.displayName?.text, "Distance:", best.distance);
+
+        return {
+          name: getBestPlaceNameFromNewPlace(best),
+          address: extractCleanAddressFromPlaceDetails(best),
+          raw: best,
+          distance: best.distance,
+        };
+      } catch (e) {
+        console.log("searchNearbyPlaceName error:", e);
+        return null;
+      }
+    },
+    [googleApiKey]
+  );
+
+  const getAddressFromCoords = useCallback(
+    async (coords, immediate = false) => {
+      if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
+
+      const run = async () => {
+        const token = {};
+        geocodeAbortRef.current = token;
+
+        try {
+          setLoading(true);
+          let resolvedAddress = null;
+          let geocodePlaceName = null;
+          let geocodeBuiltAddress = null;
+
+          // 1. Google Reverse Geocoding
+          if (googleApiKey) {
+            try {
+              const res = await fetch(
+                `https://maps.googleapis.com/maps/api/geocode/json?latlng=${coords.latitude},${coords.longitude}&key=${googleApiKey}`
+              );
+              const json = await res.json();
+
+              if (json.status === "OK" && json.results?.length > 0) {
+                for (const result of json.results) {
+                  const built = buildAddressFromGeocodeResult(result);
+                  const placeName = getBestPlaceNameFromGeocodeResult(result);
+
+                  if (placeName) {
+                    geocodePlaceName = placeName;
+                    geocodeBuiltAddress = built || extractCleanAddressFromGeocode(result);
+                    break;
+                  }
+                  if (!geocodeBuiltAddress) {
+                    geocodeBuiltAddress = extractCleanAddressFromGeocode(result) || result.formatted_address || null;
+                  }
+                }
+              }
+            } catch (e) {
+              console.log("Google geocoding error:", e);
+            }
+          }
+
+          if (geocodeAbortRef.current !== token) return;
+
+          // 2. Always try Nearby Places (main improvement)
+          const nearbyPlace = await searchNearbyPlaceName(coords);
+          if (geocodeAbortRef.current !== token) return;
+
+          // Smart combining - This is the key fix
+          if (nearbyPlace?.name && nearbyPlace.distance <= 0.12) {   // 120 meters tolerance
+            const placeName = nearbyPlace.name;
+
+            if (geocodeBuiltAddress) {
+              if (!geocodeBuiltAddress.toLowerCase().includes(placeName.toLowerCase())) {
+                resolvedAddress = `${placeName}, ${geocodeBuiltAddress}`;
+              } else {
+                resolvedAddress = geocodeBuiltAddress;
+              }
+            } else {
+              resolvedAddress = nearbyPlace.address || placeName;
+            }
+          } 
+          else if (geocodePlaceName && geocodeBuiltAddress) {
+            resolvedAddress = geocodeBuiltAddress;
+          } 
+          else if (geocodeBuiltAddress) {
+            resolvedAddress = geocodeBuiltAddress;
+          }
+
+          // 3. Expo fallback
+          if (!resolvedAddress) {
+            try {
+              const arr = await Location.reverseGeocodeAsync(coords);
+              if (geocodeAbortRef.current !== token) return;
+              if (arr[0]) {
+                resolvedAddress = buildExpoReverseGeocodeAddress(arr[0]);
+              }
+            } catch (e) {
+              console.log("Expo geocode error:", e);
+            }
+          }
+
+          if (geocodeAbortRef.current !== token) return;
+
+          setAddress(resolvedAddress || "Selected location");
+
+        } catch (e) {
+          console.log("getAddressFromCoords error:", e);
+          if (geocodeAbortRef.current === token) {
+            setAddress("Selected location");
+          }
+        } finally {
+          if (geocodeAbortRef.current === token) {
+            setLoading(false);
+          }
+        }
+      };
+
+      if (immediate) run();
+      else geocodeTimeout.current = setTimeout(run, GEOCODE_DEBOUNCE_MS);
+    },
+    [googleApiKey, searchNearbyPlaceName]
+  );
+
+  const getCurrentLocation = useCallback(
+    async ({ isInitial = false, forceRecenter = false } = {}) => {
+      try {
+        setIsLocating(true);
+        setErrorMessage("");
+
+        if (!isInitial) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+
+        const { status } = await Location.requestForegroundPermissionsAsync();
+
+        if (status !== "granted") {
+          Alert.alert(
+            "Location Required",
+            "Please enable location access to find places near you.",
+            [
+              { text: "Cancel", style: "cancel" },
+              { text: "Open Settings", onPress: () => Location.openSettings() },
+            ]
+          );
+          return;
+        }
+
+        const loc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const coords = {
+          latitude: loc.coords.latitude,
+          longitude: loc.coords.longitude,
+        };
+
+        const nextRegion = {
+          ...coords,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        };
+
+        setSelectedLocation(coords);
+        setMapRegion(nextRegion);
+
+        if ((forceRecenter || !hasAutoCentered.current) && mapRef.current) {
+          isProgrammaticMoveRef.current = true;
+          mapRef.current.animateToRegion(nextRegion, 800);
+
+          setTimeout(() => {
+            isProgrammaticMoveRef.current = false;
+          }, 900);
+
+          hasAutoCentered.current = true;
+        }
+
+        await getAddressFromCoords(coords, true);
+
+        if (!isInitial) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      } catch (e) {
+        setErrorMessage("Unable to get your location. Check your GPS.");
+        setTimeout(() => setErrorMessage(""), 3000);
+      } finally {
+        setIsLocating(false);
+      }
+    },
+    [getAddressFromCoords]
+  );
+
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         if (initialLocation) {
+          const region = {
+            latitude: initialLocation.latitude,
+            longitude: initialLocation.longitude,
+            latitudeDelta: 0.01,
+            longitudeDelta: 0.01,
+          };
+
           setSelectedLocation(initialLocation);
+          setMapRegion(region);
           await getAddressFromCoords(initialLocation, true);
+
           setTimeout(() => {
-            mapRef.current?.animateToRegion(
-              {
-                latitude: initialLocation.latitude,
-                longitude: initialLocation.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-              },
-              500
-            );
+            isProgrammaticMoveRef.current = true;
+            mapRef.current?.animateToRegion(region, 500);
+
+            setTimeout(() => {
+              isProgrammaticMoveRef.current = false;
+            }, 700);
           }, 250);
+
           hasAutoCentered.current = true;
         } else {
           await getCurrentLocation({ isInitial: true, forceRecenter: true });
         }
-      } catch (error) {
-        console.log("Error in initial location:", error);
+      } catch (e) {
+        console.log("Initial location error:", e);
       } finally {
         if (mounted) setInitialAutoLocating(false);
       }
     })();
+
     return () => {
       mounted = false;
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
       if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
+      if (regionChangeTimeoutRef.current) clearTimeout(regionChangeTimeoutRef.current);
     };
-  }, []);
+  }, [getAddressFromCoords, getCurrentLocation, initialLocation]);
 
-  // ─── Search debounce ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (searchQuery.length < 3) {
       setSearchResults([]);
       setShowSearchResults(false);
+      resetPlacesSessionToken();
       return;
     }
+
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    searchTimeout.current = setTimeout(performSearch, 500);
+    searchTimeout.current = setTimeout(() => {
+      performSearch();
+    }, 450);
+
     return () => {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
     };
-  }, [searchQuery]);
+  }, [searchQuery, resetPlacesSessionToken]);
 
-  // ─── Reverse geocode with Plus Code stripping ────────────────────────────────
-  const getAddressFromCoords = useCallback(async (coords, immediate = false) => {
-    if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
+  const handleRegionChange = useCallback((region) => {
+    setMapRegion(region);
 
-    const run = async () => {
-      const token = {};
-      geocodeAbortRef.current = token;
-      try {
-        setLoading(true);
-        let resolvedAddress = null;
+    if (!isProgrammaticMoveRef.current) {
+      setIsMapMoving(true);
+    }
+  }, []);
 
-        if (googleApiKey) {
-          try {
-            const res = await fetch(
-              `https://maps.googleapis.com/maps/api/geocode/json?latlng=${coords.latitude},${coords.longitude}&key=${googleApiKey}`
-            );
-            const json = await res.json();
-            if (json.status === "OK" && json.results.length > 0) {
-              for (const result of json.results) {
-                const clean = extractCleanAddress(result);
-                if (clean) {
-                  resolvedAddress = clean;
-                  break;
-                }
-              }
-            }
-          } catch (error) {
-            console.log("Google geocoding error:", error);
-          }
-        }
+  const handleRegionChangeComplete = useCallback(
+    (region) => {
+      setMapRegion(region);
 
-        if (geocodeAbortRef.current !== token) return;
+      if (isProgrammaticMoveRef.current) return;
+      if (isLocating || initialAutoLocating) return;
 
-        if (!resolvedAddress) {
-          try {
-            const arr = await Location.reverseGeocodeAsync(coords);
-            if (geocodeAbortRef.current !== token) return;
-            if (arr[0]) {
-              const a = arr[0];
-              const parts = [];
-              if (a.name && a.name !== a.street && a.name !== a.streetNumber) parts.push(a.name);
-              const st = [a.streetNumber, a.street].filter(Boolean).join(" ");
-              if (st) parts.push(st);
-              if (a.district) parts.push(a.district);
-              else if (a.subregion) parts.push(a.subregion);
-              if (a.city) parts.push(a.city);
-              if (a.region && a.region !== a.city) parts.push(a.region);
-              resolvedAddress = parts.filter(Boolean).join(", ") || null;
-            }
-          } catch (error) {
-            console.log("Expo location reverse geocode error:", error);
-          }
-        }
-
-        setAddress(resolvedAddress || "Selected location");
-      } catch (error) {
-        console.log("Reverse geocode error:", error);
-        if (geocodeAbortRef.current === token) setAddress("Selected location");
-      } finally {
-        if (geocodeAbortRef.current === token) setLoading(false);
+      if (regionChangeTimeoutRef.current) {
+        clearTimeout(regionChangeTimeoutRef.current);
       }
+
+      regionChangeTimeoutRef.current = setTimeout(() => {
+        const coords = {
+          latitude: region.latitude,
+          longitude: region.longitude,
+        };
+
+        setSelectedLocation(coords);
+        getAddressFromCoords(coords);
+        setIsMapMoving(false);
+      }, 120);
+    },
+    [getAddressFromCoords, initialAutoLocating, isLocating]
+  );
+
+  const handleSelectLandmark = useCallback((landmark) => {
+    const coords = {
+      latitude: landmark.latitude,
+      longitude: landmark.longitude,
     };
 
-    if (immediate) run();
-    else geocodeTimeout.current = setTimeout(run, GEOCODE_DEBOUNCE_MS);
-  }, [googleApiKey]);
+    const region = {
+      ...coords,
+      latitudeDelta: 0.008,
+      longitudeDelta: 0.008,
+    };
 
-  // ─── Device location ─────────────────────────────────────────────────────────
-  const getCurrentLocation = useCallback(async ({ isInitial = false, forceRecenter = false } = {}) => {
-    try {
-      setIsLocating(true);
-      setErrorMessage("");
-      if (!isInitial) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Location Permission Required", "Please enable location access to find places near you.", [
-          { text: "Cancel", style: "cancel" },
-          { text: "Open Settings", onPress: () => Location.openSettings() },
-        ]);
-        return;
-      }
-
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
-
-      if ((forceRecenter || !hasAutoCentered.current) && mapRef.current) {
-        mapRef.current.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 900);
-        hasAutoCentered.current = true;
-      }
-
-      if (isInitial || !initialLocation || forceRecenter) {
-        setSelectedLocation(coords);
-        await getAddressFromCoords(coords, true);
-      }
-
-      if (!isInitial) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (error) {
-      console.log("Get current location error:", error);
-      setErrorMessage("Unable to get your current location. Please check your GPS.");
-      setTimeout(() => setErrorMessage(""), 2500);
-    } finally {
-      setIsLocating(false);
-    }
-  }, [getAddressFromCoords, initialLocation]);
-
-  // ─── Map interactions ────────────────────────────────────────────────────────
-  const handleMapPress = useCallback((event) => {
-    if (isLocating || initialAutoLocating) return;
-    const coords = event.nativeEvent.coordinate;
-    setSelectedLocation(coords);
-    getAddressFromCoords(coords);
-    setSearchQuery("");
-    setSearchResults([]);
-    setShowSearchResults(false);
-    Keyboard.dismiss();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [isLocating, initialAutoLocating, getAddressFromCoords]);
-
-  const handleMarkerDragEnd = useCallback((e) => {
-    if (isLocating || initialAutoLocating) return;
-    const coords = e.nativeEvent.coordinate;
-    setSelectedLocation(coords);
-    getAddressFromCoords(coords);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [isLocating, initialAutoLocating, getAddressFromCoords]);
-
-  // ─── Select a landmark ───────────────────────────────────────────────────────
-  const handleSelectLandmark = useCallback((landmark) => {
-    const coords = { latitude: landmark.latitude, longitude: landmark.longitude };
-    setSelectedLocation(coords);
     const addrParts = [landmark.name];
-    if (landmark.address) addrParts.push(landmark.address);
-    else {
+    if (landmark.address) {
+      addrParts.push(landmark.address);
+    } else {
       if (landmark.barangay) addrParts.push(landmark.barangay);
       if (landmark.city) addrParts.push(landmark.city);
       if (landmark.province) addrParts.push(landmark.province);
     }
+
+    setSelectedLocation(coords);
     setAddress(addrParts.filter(Boolean).join(", "));
-    mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.008, longitudeDelta: 0.008 }, 500);
+    setMapRegion(region);
+
+    isProgrammaticMoveRef.current = true;
+    mapRef.current?.animateToRegion(region, 500);
+
+    setTimeout(() => {
+      isProgrammaticMoveRef.current = false;
+    }, 700);
+
     Keyboard.dismiss();
     setShowAllLandmarks(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   }, []);
 
-  // ─── Search ───────────────────────────────────────────────────────────────────
   const performSearch = useCallback(async () => {
     if (!searchQuery.trim() || searchQuery.length < 3) return;
+
     try {
       setSearching(true);
       let results = [];
-
       const q = searchQuery.toLowerCase();
-      const localMatches = landmarks.filter((l) =>
-        l.name.toLowerCase().includes(q) ||
-        (l.address || "").toLowerCase().includes(q) ||
-        (l.barangay || "").toLowerCase().includes(q)
+
+      const localMatches = landmarks.filter(
+        (l) =>
+          l.name.toLowerCase().includes(q) ||
+          (l.address || "").toLowerCase().includes(q) ||
+          (l.barangay || "").toLowerCase().includes(q)
       );
+
       if (localMatches.length > 0) {
         results = localMatches.map((l) => ({
           id: l.id,
-          address: [l.name, l.address || [l.barangay, l.city, l.province].filter(Boolean).join(", ")].filter(Boolean).join(", "),
+          address: [
+            l.name,
+            l.address || [l.barangay, l.city, l.province].filter(Boolean).join(", "),
+          ]
+            .filter(Boolean)
+            .join(", "),
           location: { lat: l.latitude, lng: l.longitude },
           isLandmark: true,
           landmarkType: l.landmark_type,
@@ -672,47 +1130,123 @@ export default function MapPickerScreen() {
       }
 
       if (googleApiKey) {
-        let url =
-          `https://maps.googleapis.com/maps/api/place/autocomplete/json` +
-          `?input=${encodeURIComponent(searchQuery)}&key=${googleApiKey}&language=en&components=country:ph`;
-        if (selectedLocation) url += `&location=${selectedLocation.latitude},${selectedLocation.longitude}&radius=50000`;
+        const autocompleteBody = {
+          input: searchQuery,
+          includedRegionCodes: ["ph"],
+          languageCode: "en",
+          sessionToken: placesSessionTokenRef.current,
+        };
 
-        const acRes = await fetch(url);
+        if (selectedLocation) {
+          autocompleteBody.locationBias = {
+            circle: {
+              center: {
+                latitude: selectedLocation.latitude,
+                longitude: selectedLocation.longitude,
+              },
+              radius: 50000,
+            },
+          };
+        }
+
+        const acRes = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": googleApiKey,
+            "X-Goog-FieldMask":
+              "suggestions.placePrediction.placeId,suggestions.placePrediction.text.text,suggestions.placePrediction.types",
+          },
+          body: JSON.stringify(autocompleteBody),
+        });
+
         const acData = await acRes.json();
 
-        if (acData.status === "OK" && acData.predictions?.length > 0) {
-          const detailRequests = acData.predictions.slice(0, 5).map((p) =>
-            fetch(
-              `https://maps.googleapis.com/maps/api/place/details/json?place_id=${p.place_id}` +
-              `&fields=geometry,formatted_address,name,address_components,place_id&key=${googleApiKey}`
-            ).then((r) => r.json())
-          );
+        const placePredictions =
+          acData?.suggestions
+            ?.map((s) => s.placePrediction)
+            ?.filter((p) => p?.placeId) || [];
+
+        if (placePredictions.length > 0) {
+          const detailRequests = placePredictions.slice(0, 5).map(async (prediction) => {
+            try {
+              const detail = await fetchPlaceDetailsNew(
+                prediction.placeId,
+                placesSessionTokenRef.current
+              );
+
+              const betterAddress =
+                extractCleanAddressFromPlaceDetails(detail) ||
+                detail?.displayName?.text ||
+                prediction?.text?.text ||
+                "Selected place";
+
+              const isEstablishment =
+                detail?.types?.includes("establishment") ||
+                detail?.types?.includes("point_of_interest") ||
+                detail?.types?.includes("premise");
+
+              return {
+                id: detail.id || prediction.placeId,
+                address: betterAddress,
+                location: {
+                  lat: detail?.location?.latitude,
+                  lng: detail?.location?.longitude,
+                },
+                isLandmark: false,
+                placeId: prediction.placeId,
+                rawPlace: detail,
+                isEstablishment,
+                establishmentName: detail?.displayName?.text || null,
+                rating: detail?.rating,
+                userRatingCount: detail?.userRatingCount,
+                priceLevel: detail?.priceLevel,
+              };
+            } catch (e) {
+              console.log("Error fetching place details:", e);
+              return null;
+            }
+          });
+
           const details = await Promise.all(detailRequests);
-          const googleResults = details
-            .filter((d) => d.status === "OK")
-            .map((d) => ({
-              id: d.result.place_id || Math.random().toString(),
-              address: extractCleanAddress(d.result) || d.result.name || d.result.formatted_address,
-              location: { lat: d.result.geometry.location.lat, lng: d.result.geometry.location.lng },
-              isLandmark: false,
-            }));
-          const unique = googleResults.filter(
-            (g) => !results.some((r) => Math.abs(r.location.lat - g.location.lat) < 0.0001)
+
+          const googleResults = details.filter(
+            (item) =>
+              item &&
+              item.location &&
+              typeof item.location.lat === "number" &&
+              typeof item.location.lng === "number"
           );
+
+          const unique = googleResults.filter(
+            (g) =>
+              !results.some(
+                (r) =>
+                  Math.abs(r.location.lat - g.location.lat) < 0.0001 &&
+                  Math.abs(r.location.lng - g.location.lng) < 0.0001
+              )
+          );
+
           results = [...results, ...unique];
         }
       }
 
       if (results.length === 0 && googleApiKey) {
         const res = await fetch(
-          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${googleApiKey}`
+          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+            searchQuery
+          )}&components=country:PH&key=${googleApiKey}`
         );
         const data = await res.json();
-        if (data.status === "OK") {
+
+        if (data.status === "OK" && data.results?.length > 0) {
           results = data.results.map((r) => ({
-            id: r.place_id,
-            address: extractCleanAddress(r) || r.formatted_address,
-            location: r.geometry.location,
+            id: r.place_id || Math.random().toString(),
+            address: extractCleanAddressFromGeocode(r) || r.formatted_address,
+            location: {
+              lat: r.geometry.location.lat,
+              lng: r.geometry.location.lng,
+            },
             isLandmark: false,
           }));
         }
@@ -720,97 +1254,182 @@ export default function MapPickerScreen() {
 
       setSearchResults(results);
       setShowSearchResults(results.length > 0);
-    } catch (error) {
-      console.log("Search error:", error);
+    } catch (e) {
+      console.log("Places search error:", e);
       setSearchResults([]);
       setShowSearchResults(false);
     } finally {
       setSearching(false);
     }
-  }, [searchQuery, googleApiKey, selectedLocation, landmarks]);
+  }, [fetchPlaceDetailsNew, googleApiKey, landmarks, searchQuery, selectedLocation]);
 
-  const handleSelectSearchResult = useCallback((result) => {
-    const coords = { latitude: result.location.lat, longitude: result.location.lng };
-    setSelectedLocation(coords);
-    setAddress(result.address);
-    setSearchQuery("");
-    setSearchResults([]);
-    setShowSearchResults(false);
-    Keyboard.dismiss();
-    mapRef.current?.animateToRegion({ ...coords, latitudeDelta: 0.01, longitudeDelta: 0.01 }, 500);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
+  const handleSelectSearchResult = useCallback(
+    async (result) => {
+      try {
+        const coords = {
+          latitude: result.location.lat,
+          longitude: result.location.lng,
+        };
 
-  // ─── Confirm ──────────────────────────────────────────────────────────────────
+        const region = {
+          ...coords,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        };
+
+        setSelectedLocation(coords);
+        setAddress(result.address);
+        setSearchQuery("");
+        setSearchResults([]);
+        setShowSearchResults(false);
+        setMapRegion(region);
+
+        isProgrammaticMoveRef.current = true;
+        mapRef.current?.animateToRegion(region, 500);
+
+        setTimeout(() => {
+          isProgrammaticMoveRef.current = false;
+        }, 700);
+
+        Keyboard.dismiss();
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+        resetPlacesSessionToken();
+      } catch (e) {
+        console.log("Select search result error:", e);
+      }
+    },
+    [resetPlacesSessionToken]
+  );
+
   const handleConfirm = useCallback(() => {
     if (!selectedLocation) {
-      Alert.alert("No Location Selected", "Please select a location by tapping on the map or choosing a landmark.");
+      Alert.alert("No Location Selected", "Drag the map to set your location.");
       return;
     }
+
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    if (onSelect) onSelect(selectedLocation, address);
+
+    if (onSelect) {
+      onSelect(selectedLocation, address);
+    }
+
     navigation.goBack();
-  }, [selectedLocation, address, onSelect, navigation]);
+  }, [address, navigation, onSelect, selectedLocation]);
 
   const handleClearSearch = useCallback(() => {
     setSearchQuery("");
     setSearchResults([]);
     setShowSearchResults(false);
-  }, []);
+    resetPlacesSessionToken();
+  }, [resetPlacesSessionToken]);
 
-  // ─── Render: search result row ────────────────────────────────────────────────
-  const renderSearchResult = useCallback(({ item }) => {
-    const color = item.isLandmark ? (LANDMARK_COLORS[item.landmarkType] || "#183B5C") : "#183B5C";
-    const icon = item.isLandmark ? (LANDMARK_ICONS[item.landmarkType] || "location") : "location-outline";
-    return (
-      <TouchableOpacity
-        style={styles.searchResultItem}
-        onPress={() => handleSelectSearchResult(item)}
-        activeOpacity={0.75}
-      >
-        <View style={[styles.searchResultIcon, { backgroundColor: `${color}18` }]}>
-          <Ionicons name={icon} size={18} color={color} />
-        </View>
-        <View style={styles.searchResultContent}>
-          <Text style={styles.searchResultText} numberOfLines={2}>{item.address}</Text>
-          {item.isLandmark && (
-            <Text style={[styles.searchResultBadge, { color }]}>
-              {LANDMARK_LABELS[item.landmarkType] || item.landmarkType}
+  const renderSearchResult = useCallback(
+    ({ item }) => {
+      const color = item.isLandmark
+        ? LANDMARK_COLORS[item.landmarkType] || "#183B5C"
+        : item.isEstablishment
+        ? "#10B981"
+        : "#183B5C";
+
+      const icon = item.isLandmark
+        ? LANDMARK_ICONS[item.landmarkType] || "location"
+        : item.isEstablishment
+        ? "business-outline"
+        : "location-outline";
+
+      return (
+        <TouchableOpacity
+          style={styles.searchResultItem}
+          onPress={() => handleSelectSearchResult(item)}
+          activeOpacity={0.75}
+        >
+          <View style={[styles.searchResultIcon, { backgroundColor: `${color}18` }]}>
+            <Ionicons name={icon} size={18} color={color} />
+          </View>
+
+          <View style={styles.searchResultContent}>
+            <Text style={styles.searchResultText} numberOfLines={2}>
+              {item.address}
             </Text>
-          )}
-        </View>
-        <Ionicons name="chevron-forward" size={16} color="#94A3B8" />
-      </TouchableOpacity>
-    );
-  }, [handleSelectSearchResult]);
 
-  // ─── Render: popular spot card ────────────────────────────────────────────────
-  const renderPopularSpot = useCallback((landmark) => {
-    const color = LANDMARK_COLORS[landmark.landmark_type] || "#94A3B8";
-    const icon = LANDMARK_ICONS[landmark.landmark_type] || "location";
-    return (
-      <TouchableOpacity
-        key={landmark.id}
-        style={styles.popularSpotCard}
-        onPress={() => handleSelectLandmark(landmark)}
-        activeOpacity={0.75}
-      >
-        <View style={[styles.popularSpotIcon, { backgroundColor: `${color}15` }]}>
-          <Ionicons name={icon} size={22} color={color} />
-        </View>
-        <Text style={styles.popularSpotName} numberOfLines={1}>
-          {landmark.name}
-        </Text>
-        <Text style={styles.popularSpotType}>
-          {LANDMARK_LABELS[landmark.landmark_type] || landmark.landmark_type}
-        </Text>
-      </TouchableOpacity>
-    );
-  }, [handleSelectLandmark]);
+            <View style={styles.searchResultMeta}>
+              {item.isEstablishment && item.establishmentName ? (
+                <Text
+                  style={[
+                    styles.searchResultBadge,
+                    { color: "#10B981", backgroundColor: "#D1FAE5" },
+                  ]}
+                >
+                  Business
+                </Text>
+              ) : null}
 
-  // ─── Render: favorite card ────────────────────────────────────────────────────
-  const renderFavoriteCard = useCallback((favorite) => {
-    return (
+              {item.rating ? (
+                <View style={styles.ratingBadge}>
+                  <Ionicons name="star" size={10} color="#F59E0B" />
+                  <Text style={styles.ratingText}>{item.rating}</Text>
+                  {item.userRatingCount ? (
+                    <Text style={styles.ratingCountText}>({item.userRatingCount})</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {item.priceLevel ? (
+                <Text style={styles.priceBadge}>{"₱".repeat(item.priceLevel)}</Text>
+              ) : null}
+
+              {item.isLandmark ? (
+                <Text
+                  style={[
+                    styles.searchResultBadge,
+                    { color, backgroundColor: `${color}15` },
+                  ]}
+                >
+                  {LANDMARK_LABELS[item.landmarkType] || item.landmarkType}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+
+          <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
+        </TouchableOpacity>
+      );
+    },
+    [handleSelectSearchResult]
+  );
+
+  const renderPopularSpot = useCallback(
+    (landmark) => {
+      const color = LANDMARK_COLORS[landmark.landmark_type] || "#94A3B8";
+      const icon = LANDMARK_ICONS[landmark.landmark_type] || "location";
+
+      return (
+        <TouchableOpacity
+          key={landmark.id}
+          style={styles.popularSpotCard}
+          onPress={() => handleSelectLandmark(landmark)}
+          activeOpacity={0.75}
+        >
+          <View style={[styles.popularSpotIcon, { backgroundColor: `${color}15` }]}>
+            <Ionicons name={icon} size={22} color={color} />
+          </View>
+
+          <Text style={styles.popularSpotName} numberOfLines={1}>
+            {landmark.name}
+          </Text>
+
+          <Text style={styles.popularSpotType}>
+            {LANDMARK_LABELS[landmark.landmark_type] || landmark.landmark_type}
+          </Text>
+        </TouchableOpacity>
+      );
+    },
+    [handleSelectLandmark]
+  );
+
+  const renderFavoriteCard = useCallback(
+    (favorite) => (
       <TouchableOpacity
         key={favorite.id}
         style={styles.favoriteCard}
@@ -821,9 +1440,10 @@ export default function MapPickerScreen() {
         }}
         activeOpacity={0.7}
       >
-        <View style={[styles.favoriteIcon, { backgroundColor: `${favorite.color}15` }]}>
-          <Ionicons name={favorite.icon} size={24} color={favorite.color} />
+        <View style={[styles.favoriteIcon, { backgroundColor: `${favorite.color}18` }]}>
+          <Ionicons name={favorite.icon} size={22} color={favorite.color} />
         </View>
+
         <View style={styles.favoriteContent}>
           <Text style={styles.favoriteName} numberOfLines={1}>
             {favorite.nickname}
@@ -832,114 +1452,145 @@ export default function MapPickerScreen() {
             {favorite.address}
           </Text>
         </View>
+
         <TouchableOpacity
           onPress={() => removeFromFavorites(favorite.id)}
-          style={styles.favoriteDelete}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons name="close-circle" size={22} color="#EF4444" />
         </TouchableOpacity>
       </TouchableOpacity>
-    );
-  }, [favorites, selectedLocation]);
+    ),
+    [selectFavoriteLocation]
+  );
 
-  // ─── Render: nearby landmark card ─────────────────────────────────────────────
-  const renderNearbyLandmark = useCallback((landmark) => {
-    const color = LANDMARK_COLORS[landmark.landmark_type] || "#94A3B8";
-    const icon = LANDMARK_ICONS[landmark.landmark_type] || "location";
-    return (
-      <TouchableOpacity
-        key={landmark.id}
-        style={styles.nearbyCard}
-        onPress={() => handleSelectLandmark(landmark)}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.nearbyIcon, { backgroundColor: `${color}15` }]}>
-          <Ionicons name={icon} size={20} color={color} />
-        </View>
-        <View style={styles.nearbyContent}>
-          <Text style={styles.nearbyName} numberOfLines={1}>
-            {landmark.name}
-          </Text>
-          <Text style={styles.nearbyType}>
-            {LANDMARK_LABELS[landmark.landmark_type] || landmark.landmark_type}
-          </Text>
-        </View>
-        <Text style={styles.nearbyDistance}>
-          {formatDistance(landmark.distance)}
-        </Text>
-      </TouchableOpacity>
-    );
-  }, [handleSelectLandmark]);
+  const renderNearbyLandmark = useCallback(
+    (landmark) => {
+      const color = LANDMARK_COLORS[landmark.landmark_type] || "#94A3B8";
+      const icon = LANDMARK_ICONS[landmark.landmark_type] || "location";
 
-  // ─── Render ───────────────────────────────────────────────────────────────────
+      return (
+        <TouchableOpacity
+          key={landmark.id}
+          style={styles.nearbyCard}
+          onPress={() => handleSelectLandmark(landmark)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.nearbyIcon, { backgroundColor: `${color}15` }]}>
+            <Ionicons name={icon} size={20} color={color} />
+          </View>
+
+          <View style={styles.nearbyContent}>
+            <Text style={styles.nearbyName} numberOfLines={1}>
+              {landmark.name}
+            </Text>
+            <Text style={styles.nearbyType}>
+              {LANDMARK_LABELS[landmark.landmark_type] || landmark.landmark_type}
+            </Text>
+          </View>
+
+          <View style={styles.distancePill}>
+            <Text style={styles.nearbyDistance}>{formatDistance(landmark.distance)}</Text>
+          </View>
+        </TouchableOpacity>
+      );
+    },
+    [handleSelectLandmark]
+  );
+
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+      <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
       <MapView
         ref={mapRef}
         style={styles.map}
         provider={PROVIDER_GOOGLE}
-        initialRegion={{
-          latitude: 7.7862,
-          longitude: 122.5894,
-          latitudeDelta: 0.04,
-          longitudeDelta: 0.04,
-        }}
-        onPress={handleMapPress}
+        initialRegion={mapRegion}
+        onRegionChange={handleRegionChange}
+        onRegionChangeComplete={handleRegionChangeComplete}
         showsUserLocation
         showsMyLocationButton={false}
         showsCompass={false}
         showsScale={false}
+        rotateEnabled={false}
+        pitchEnabled={false}
+        moveOnMarkerPress={false}
         loadingEnabled
         loadingIndicatorColor="#183B5C"
         loadingBackgroundColor="#F8FAFC"
-        onError={() => Alert.alert("Map Error", "Unable to load map. Please check your connection.")}
-      >
-        {selectedLocation && (
-          <Marker
-            coordinate={selectedLocation}
-            title={type === "pickup" ? "Pickup Location" : "Dropoff Location"}
-            description={address}
-            draggable={!isLocating && !initialAutoLocating}
-            onDragEnd={handleMarkerDragEnd}
-          >
-            <View style={[styles.marker, type === "pickup" ? styles.pickupMarker : styles.dropoffMarker]}>
-              <Ionicons name={type === "pickup" ? "location" : "flag"} size={18} color="#FFF" />
-            </View>
-          </Marker>
-        )}
-      </MapView>
+        onError={() =>
+          Alert.alert("Map Error", "Unable to load map. Please check your connection.")
+        }
+      />
 
-      {/* ── Top overlay ── */}
+      <View style={styles.centerPinContainer} pointerEvents="none">
+        <CenterPin type={type} isMoving={isMapMoving} />
+      </View>
+
+      {!initialAutoLocating && (
+        <View style={styles.tapHint} pointerEvents="none">
+          <View style={styles.tapHintBubble}>
+            <Ionicons name="move-outline" size={18} color="#183B5C" />
+            <Text style={styles.tapHintText}>
+              Drag the map to set {isPickup ? "pickup" : "drop-off"}
+            </Text>
+          </View>
+        </View>
+      )}
+
       <View style={[styles.topOverlay, { paddingTop: insets.top + 8 }]}>
-        {/* Title bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton} activeOpacity={0.75}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.iconButton}
+            activeOpacity={0.75}
+          >
             <Ionicons name="arrow-back" size={22} color="#183B5C" />
           </TouchableOpacity>
-          <Text style={styles.screenTitle}>
-            {type === "pickup" ? "Pickup Location" : "Dropoff Location"}
-          </Text>
+
+          <View
+            style={[
+              styles.titleBadge,
+              isPickup ? styles.titleBadgePickup : styles.titleBadgeDropoff,
+            ]}
+          >
+            <Ionicons
+              name={isPickup ? "radio-button-on" : "location"}
+              size={14}
+              color={isPickup ? "#059669" : "#DC2626"}
+            />
+            <Text
+              style={[
+                styles.screenTitle,
+                isPickup ? styles.titlePickup : styles.titleDropoff,
+              ]}
+            >
+              {isPickup ? "Pickup Location" : "Drop-off Location"}
+            </Text>
+          </View>
+
           <TouchableOpacity
             onPress={() => getCurrentLocation({ forceRecenter: true })}
-            style={styles.iconButton}
+            style={[styles.iconButton, isLocating && styles.iconButtonActive]}
             activeOpacity={0.75}
             disabled={isLocating}
           >
-            {isLocating
-              ? <ActivityIndicator size="small" color="#183B5C" />
-              : <Ionicons name="locate" size={20} color="#183B5C" />}
+            {isLocating ? (
+              <ActivityIndicator size="small" color="#183B5C" />
+            ) : (
+              <Ionicons name="locate" size={20} color="#183B5C" />
+            )}
           </TouchableOpacity>
         </View>
 
-        {/* Search */}
         <View style={styles.searchWrapper}>
           <View style={[styles.searchBox, searchFocused && styles.searchBoxFocused]}>
             <Ionicons name="search" size={18} color={searchFocused ? "#183B5C" : "#94A3B8"} />
+
             <TextInput
               style={styles.searchInput}
-              placeholder="Search places, landmarks, or addresses..."
+              placeholder="Search places, businesses, or addresses..."
               placeholderTextColor="#94A3B8"
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -951,13 +1602,17 @@ export default function MapPickerScreen() {
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
             />
-            {searching
-              ? <ActivityIndicator size="small" color="#183B5C" />
-              : searchQuery.length > 0
-                ? <TouchableOpacity onPress={handleClearSearch}>
-                    <Ionicons name="close-circle" size={18} color="#94A3B8" />
-                  </TouchableOpacity>
-                : null}
+
+            {searching ? (
+              <ActivityIndicator size="small" color="#183B5C" />
+            ) : searchQuery.length > 0 ? (
+              <TouchableOpacity
+                onPress={handleClearSearch}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close-circle" size={18} color="#94A3B8" />
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           {showSearchResults && searchResults.length > 0 && (
@@ -974,106 +1629,149 @@ export default function MapPickerScreen() {
           )}
         </View>
 
-        {/* Error */}
         {errorMessage ? (
           <View style={styles.errorChip}>
-            <Ionicons name="alert-circle" size={16} color="#DC2626" />
+            <Ionicons name="alert-circle" size={15} color="#DC2626" />
             <Text style={styles.errorChipText}>{errorMessage}</Text>
           </View>
         ) : null}
       </View>
 
-      {/* ── Loading overlay ── */}
       {initialAutoLocating && (
         <View style={styles.mapLoadingOverlay} pointerEvents="auto">
           <View style={styles.loadingCard}>
             <ActivityIndicator size="large" color="#183B5C" />
             <Text style={styles.mapLoadingTitle}>Finding your location</Text>
-            <Text style={styles.mapLoadingSubtext}>Discovering places near you...</Text>
+            <Text style={styles.mapLoadingSubtext}>Discovering places near you…</Text>
           </View>
         </View>
       )}
 
-      {/* ── Bottom card with drag to minimize ── */}
-      <Animated.View 
+      <Animated.View
         style={[
-          styles.bottomCard, 
-          { 
-            height: bottomSheetAnim,
-            paddingBottom: Math.max(insets.bottom + 14, 20),
-          }
+          styles.bottomCard,
+          { height: bottomSheetAnim, paddingBottom: Math.max(insets.bottom + 12, 18) },
         ]}
         {...panResponder.panHandlers}
       >
-        <TouchableOpacity 
-          onPress={toggleBottomSheet} 
+        <TouchableOpacity
+          onPress={toggleBottomSheet}
           activeOpacity={0.7}
           style={styles.sheetHandleContainer}
         >
           <View style={styles.sheetHandle} />
+          <Ionicons
+            name={isSheetExpanded ? "chevron-down" : "chevron-up"}
+            size={14}
+            color="#CBD5E1"
+            style={{ marginTop: 2 }}
+          />
         </TouchableOpacity>
 
-        {/* Tab Navigation */}
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === "popular" && styles.activeTab]}
-            onPress={() => setActiveTab("popular")}
-          >
-            <Ionicons name="flame" size={18} color={activeTab === "popular" ? "#183B5C" : "#94A3B8"} />
-            <Text style={[styles.tabText, activeTab === "popular" && styles.activeTabText]}>Popular</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === "favorites" && styles.activeTab]}
-            onPress={() => setActiveTab("favorites")}
-          >
-            <Ionicons name="heart" size={18} color={activeTab === "favorites" ? "#EF4444" : "#94A3B8"} />
-            <Text style={[styles.tabText, activeTab === "favorites" && styles.activeTabText]}>Favorites</Text>
-            {favorites.length > 0 && (
-              <View style={styles.favoriteBadge}>
-                <Text style={styles.favoriteBadgeText}>{favorites.length}</Text>
+        <View style={styles.locationStrip}>
+          <View style={[styles.locationBadge, isPickup ? styles.pickupIconBg : styles.dropoffIconBg]}>
+            <Ionicons
+              name={isPickup ? "radio-button-on" : "location"}
+              size={16}
+              color={isPickup ? "#059669" : "#DC2626"}
+            />
+          </View>
+
+          <View style={styles.locationTextWrap}>
+            {loading ? (
+              <View style={styles.inlineLoading}>
+                <ActivityIndicator size="small" color="#183B5C" />
+                <Text style={styles.inlineLoadingText}>Getting address…</Text>
               </View>
+            ) : (
+              <Text style={styles.locationAddress} numberOfLines={2}>
+                {address || `Drag the map to set ${isPickup ? "pickup" : "drop-off"}`}
+              </Text>
             )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, activeTab === "nearby" && styles.activeTab]}
-            onPress={() => setActiveTab("nearby")}
-          >
-            <Ionicons name="location" size={18} color={activeTab === "nearby" ? "#183B5C" : "#94A3B8"} />
-            <Text style={[styles.tabText, activeTab === "nearby" && styles.activeTabText]}>Nearby</Text>
-          </TouchableOpacity>
+          </View>
+
+          {selectedLocation && (
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={() => {
+                setEditingFavoriteId(null);
+                setFavoriteNickname("");
+                setFavoriteIcon("heart");
+                setFavoriteColor("#EF4444");
+                setShowAddFavoriteModal(true);
+              }}
+            >
+              <Ionicons
+                name={isLocationFavorite() ? "heart" : "heart-outline"}
+                size={20}
+                color={isLocationFavorite() ? "#EF4444" : "#94A3B8"}
+              />
+            </TouchableOpacity>
+          )}
         </View>
 
-        <ScrollView 
+        <View style={styles.tabContainer}>
+          {[
+            { key: "popular", label: "Popular", icon: "flame", activeColor: "#F59E0B" },
+            { key: "favorites", label: "Saved", icon: "heart", activeColor: "#EF4444" },
+            { key: "nearby", label: "Nearby", icon: "location", activeColor: "#10B981" },
+          ].map((tab) => (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.tab, activeTab === tab.key && styles.activeTab]}
+              onPress={() => setActiveTab(tab.key)}
+            >
+              <Ionicons
+                name={tab.icon}
+                size={15}
+                color={activeTab === tab.key ? tab.activeColor : "#94A3B8"}
+              />
+              <Text style={[styles.tabText, activeTab === tab.key && { color: "#0F172A" }]}>
+                {tab.label}
+              </Text>
+              {tab.key === "favorites" && favorites.length > 0 && (
+                <View style={styles.favoriteBadge}>
+                  <Text style={styles.favoriteBadgeText}>{favorites.length}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <ScrollView
           ref={scrollViewRef}
-          showsVerticalScrollIndicator={false} 
+          showsVerticalScrollIndicator={false}
           style={styles.bottomScrollView}
-          scrollEnabled={bottomSheetAnim._value > BOTTOM_SHEET_SNAP_POINTS.MINIMIZED + 50}
           onScrollBeginDrag={handleScrollBeginDrag}
           onScrollEndDrag={handleScrollEndDrag}
           onScroll={handleScroll}
           scrollEventThrottle={16}
+          keyboardShouldPersistTaps="handled"
         >
-          {/* Popular Spots Section */}
           {activeTab === "popular" && (
-            <View style={styles.popularSection}>
+            <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleContainer}>
-                  <Ionicons name="flame" size={18} color="#F59E0B" />
+                <View style={styles.sectionTitleRow}>
+                  <Ionicons name="flame" size={16} color="#F59E0B" />
                   <Text style={styles.sectionTitle}>Trending Places</Text>
                 </View>
+
                 <TouchableOpacity
                   onPress={() => {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     setShowAllLandmarks(!showAllLandmarks);
                   }}
                 >
-                  <Text style={styles.seeAllButton}>
-                    {showAllLandmarks ? "Show less" : "See all"}
-                  </Text>
+                  <Text style={styles.seeAll}>{showAllLandmarks ? "Show less" : "See all"}</Text>
                 </TouchableOpacity>
               </View>
 
-              {!showAllLandmarks ? (
+              {loadingLandmarks ? (
+                <View style={styles.emptyState}>
+                  <ActivityIndicator size="small" color="#183B5C" />
+                  <Text style={styles.emptyStateTitle}>Loading places...</Text>
+                </View>
+              ) : !showAllLandmarks ? (
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
@@ -1083,20 +1781,35 @@ export default function MapPickerScreen() {
                   {popularLandmarks.map(renderPopularSpot)}
                 </ScrollView>
               ) : (
-                <View style={styles.allLandmarksList}>
-                  {landmarks.map((landmark) => (
+                <View>
+                  {landmarks.map((l) => (
                     <TouchableOpacity
-                      key={landmark.id}
+                      key={l.id}
                       style={styles.allLandmarkCard}
-                      onPress={() => handleSelectLandmark(landmark)}
+                      onPress={() => handleSelectLandmark(l)}
                     >
-                      <View style={[styles.allLandmarkIcon, { backgroundColor: `${LANDMARK_COLORS[landmark.landmark_type] || "#94A3B8"}15` }]}>
-                        <Ionicons name={LANDMARK_ICONS[landmark.landmark_type] || "location"} size={20} color={LANDMARK_COLORS[landmark.landmark_type] || "#94A3B8"} />
+                      <View
+                        style={[
+                          styles.allLandmarkIcon,
+                          {
+                            backgroundColor: `${LANDMARK_COLORS[l.landmark_type] || "#94A3B8"}15`,
+                          },
+                        ]}
+                      >
+                        <Ionicons
+                          name={LANDMARK_ICONS[l.landmark_type] || "location"}
+                          size={18}
+                          color={LANDMARK_COLORS[l.landmark_type] || "#94A3B8"}
+                        />
                       </View>
+
                       <View style={styles.allLandmarkContent}>
-                        <Text style={styles.allLandmarkName}>{landmark.name}</Text>
-                        <Text style={styles.allLandmarkAddress}>{landmark.address || landmark.barangay}</Text>
+                        <Text style={styles.allLandmarkName}>{l.name}</Text>
+                        <Text style={styles.allLandmarkAddress} numberOfLines={1}>
+                          {l.address || l.barangay}
+                        </Text>
                       </View>
+
                       <Ionicons name="chevron-forward" size={16} color="#CBD5E1" />
                     </TouchableOpacity>
                   ))}
@@ -1105,216 +1818,178 @@ export default function MapPickerScreen() {
             </View>
           )}
 
-          {/* Favorites Section */}
           {activeTab === "favorites" && (
-            <View style={styles.favoritesSection}>
+            <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleContainer}>
-                  <Ionicons name="heart" size={18} color="#EF4444" />
+                <View style={styles.sectionTitleRow}>
+                  <Ionicons name="heart" size={16} color="#EF4444" />
                   <Text style={styles.sectionTitle}>Saved Locations</Text>
                 </View>
               </View>
 
               {favorites.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Ionicons name="heart-outline" size={48} color="#CBD5E1" />
-                  <Text style={styles.emptyStateTitle}>No favorites yet</Text>
+                  <Ionicons name="heart-outline" size={44} color="#E2E8F0" />
+                  <Text style={styles.emptyStateTitle}>No saved places yet</Text>
                   <Text style={styles.emptyStateText}>
-                    Save your frequently used locations by tapping the ❤️ button below
+                    Tap the ♥ next to a selected location to save it here
                   </Text>
                 </View>
               ) : (
-                <View style={styles.favoritesList}>
-                  {favorites.map(renderFavoriteCard)}
-                </View>
+                <View>{favorites.map(renderFavoriteCard)}</View>
               )}
             </View>
           )}
 
-          {/* Nearby Places Section */}
           {activeTab === "nearby" && (
-            <View style={styles.nearbySection}>
+            <View style={styles.section}>
               <View style={styles.sectionHeader}>
-                <View style={styles.sectionTitleContainer}>
-                  <Ionicons name="location" size={18} color="#183B5C" />
+                <View style={styles.sectionTitleRow}>
+                  <Ionicons name="location" size={16} color="#10B981" />
                   <Text style={styles.sectionTitle}>Nearby Places</Text>
                 </View>
+
                 {selectedLocation && (
                   <TouchableOpacity onPress={() => getCurrentLocation({ forceRecenter: true })}>
-                    <Text style={styles.refreshButton}>Refresh</Text>
+                    <Text style={styles.seeAll}>Refresh</Text>
                   </TouchableOpacity>
                 )}
               </View>
 
               {!selectedLocation ? (
                 <View style={styles.emptyState}>
-                  <Ionicons name="pin-outline" size={48} color="#CBD5E1" />
-                  <Text style={styles.emptyStateTitle}>No location selected</Text>
+                  <Ionicons name="pin-outline" size={44} color="#E2E8F0" />
+                  <Text style={styles.emptyStateTitle}>No point selected yet</Text>
                   <Text style={styles.emptyStateText}>
-                    Tap on the map or search for a location to see nearby places
+                    Drag the map to set a location and see what's nearby
                   </Text>
                 </View>
               ) : nearbyLandmarks.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Ionicons name="map-outline" size={48} color="#CBD5E1" />
-                  <Text style={styles.emptyStateTitle}>No nearby places found</Text>
-                  <Text style={styles.emptyStateText}>
-                    Try moving the pin to a different location
-                  </Text>
+                  <Ionicons name="map-outline" size={44} color="#E2E8F0" />
+                  <Text style={styles.emptyStateTitle}>Nothing found nearby</Text>
+                  <Text style={styles.emptyStateText}>Try moving the map to a different spot</Text>
                 </View>
               ) : (
-                <View style={styles.nearbyList}>
-                  {nearbyLandmarks.map(renderNearbyLandmark)}
-                </View>
+                <View>{nearbyLandmarks.map(renderNearbyLandmark)}</View>
               )}
             </View>
           )}
 
-          {/* Selected Location Section */}
-          <View style={styles.selectedLocationSection}>
-            <View style={styles.locationRow}>
-              <View style={[styles.locationBadge, type === "pickup" ? styles.pickupIconBg : styles.dropoffIconBg]}>
-                <Ionicons
-                  name={type === "pickup" ? "navigate" : "flag"}
-                  size={18}
-                  color={type === "pickup" ? "#059669" : "#DC2626"}
-                />
-              </View>
-              <View style={styles.locationTextWrap}>
-                <Text style={styles.locationLabel}>
-                  {type === "pickup" ? "Selected pickup point" : "Selected dropoff point"}
-                </Text>
-                {loading ? (
-                  <View style={styles.inlineLoading}>
-                    <ActivityIndicator size="small" color="#183B5C" />
-                    <Text style={styles.inlineLoadingText}>Getting address...</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.locationAddress} numberOfLines={2}>
-                    {address || "Tap on the map to select a location"}
-                  </Text>
-                )}
-              </View>
-            </View>
-
-            {selectedLocation && (
-              <View style={styles.locationActions}>
-                <TouchableOpacity
-                  style={styles.actionButton}
-                  onPress={() => {
-                    setEditingFavoriteId(null);
-                    setFavoriteNickname("");
-                    setFavoriteIcon("heart");
-                    setFavoriteColor("#EF4444");
-                    setShowAddFavoriteModal(true);
-                  }}
-                >
-                  <Ionicons
-                    name={isLocationFavorite() ? "heart" : "heart-outline"}
-                    size={20}
-                    color={isLocationFavorite() ? "#EF4444" : "#64748B"}
-                  />
-                  <Text style={styles.actionButtonText}>
-                    {isLocationFavorite() ? "Saved" : "Save"}
-                  </Text>
-                </TouchableOpacity>
-
-                <View style={styles.coordinatePill}>
-                  <Ionicons name="map" size={12} color="#64748B" />
-                  <Text style={styles.coordinateText}>
-                    {selectedLocation.latitude.toFixed(6)}, {selectedLocation.longitude.toFixed(6)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            <Text style={styles.helperText}>
-              💡 Tip: Long press on saved locations to edit or remove them
-            </Text>
-          </View>
+          <View style={{ height: 80 }} />
         </ScrollView>
       </Animated.View>
 
-      {/* Floating Confirm Button */}
       <TouchableOpacity
         style={[
-          styles.floatingConfirmButton,
-          (!selectedLocation || loading) && styles.floatingConfirmButtonDisabled
+          styles.confirmButton,
+          isPickup ? styles.confirmPickup : styles.confirmDropoff,
+          (!selectedLocation || loading) && styles.confirmDisabled,
         ]}
         onPress={handleConfirm}
         disabled={!selectedLocation || loading}
-        activeOpacity={0.85}
+        activeOpacity={0.88}
       >
-        <Text style={styles.floatingConfirmButtonText}>
-          Confirm {type === "pickup" ? "Pickup" : "Dropoff"}
-        </Text>
-        <Ionicons name="checkmark-circle" size={22} color="#FFF" />
+        <Ionicons name={isPickup ? "radio-button-on" : "location"} size={18} color="#FFF" />
+        <Text style={styles.confirmText}>Confirm {isPickup ? "Pickup" : "Drop-off"}</Text>
+        <Ionicons name="checkmark-circle" size={20} color="rgba(255,255,255,0.8)" />
       </TouchableOpacity>
 
-      {/* Add/Edit Favorite Modal */}
       <Modal
         visible={showAddFavoriteModal}
         animationType="slide"
-        transparent={true}
+        transparent
         onRequestClose={() => setShowAddFavoriteModal(false)}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {editingFavoriteId ? "Edit Favorite" : "Save to Favorites"}
+                {editingFavoriteId ? "Edit Saved Place" : "Save This Location"}
               </Text>
-              <TouchableOpacity onPress={() => setShowAddFavoriteModal(false)}>
-                <Ionicons name="close" size={24} color="#64748B" />
+              <TouchableOpacity
+                onPress={() => setShowAddFavoriteModal(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={22} color="#94A3B8" />
               </TouchableOpacity>
             </View>
 
             <Text style={styles.modalLabel}>Nickname</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="e.g., My Home, Office, Mall"
+              placeholder="e.g., Home, Office, School…"
+              placeholderTextColor="#94A3B8"
               value={favoriteNickname}
               onChangeText={setFavoriteNickname}
               maxLength={30}
             />
 
-            <Text style={styles.modalLabel}>Choose Icon</Text>
+            <Text style={styles.modalLabel}>Icon</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.iconPicker}>
-              {["heart", "home", "briefcase", "restaurant", "cart", "business", "school", "medkit", "bus", "cafe"].map((icon) => (
+              {[
+                "heart",
+                "home",
+                "briefcase",
+                "restaurant",
+                "cart",
+                "business",
+                "school",
+                "medkit",
+                "bus",
+                "cafe",
+              ].map((icon) => (
                 <TouchableOpacity
                   key={icon}
                   style={[styles.iconOption, favoriteIcon === icon && styles.iconOptionSelected]}
                   onPress={() => setFavoriteIcon(icon)}
                 >
-                  <Ionicons name={icon} size={24} color={favoriteIcon === icon ? "#183B5C" : "#94A3B8"} />
+                  <Ionicons
+                    name={icon}
+                    size={22}
+                    color={favoriteIcon === icon ? "#183B5C" : "#94A3B8"}
+                  />
                 </TouchableOpacity>
               ))}
             </ScrollView>
 
             <Text style={styles.modalLabel}>Color</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorPicker}>
-              {["#EF4444", "#10B981", "#3B82F6", "#F59E0B", "#8B5CF6", "#EC4899", "#06B6D4", "#183B5C"].map((color) => (
+              {[
+                "#EF4444",
+                "#10B981",
+                "#3B82F6",
+                "#F59E0B",
+                "#8B5CF6",
+                "#EC4899",
+                "#06B6D4",
+                "#183B5C",
+              ].map((color) => (
                 <TouchableOpacity
                   key={color}
-                  style={[styles.colorOption, { backgroundColor: color }, favoriteColor === color && styles.colorOptionSelected]}
+                  style={[
+                    styles.colorOption,
+                    { backgroundColor: color },
+                    favoriteColor === color && styles.colorOptionSelected,
+                  ]}
                   onPress={() => setFavoriteColor(color)}
                 />
               ))}
             </ScrollView>
 
             <TouchableOpacity style={styles.modalButton} onPress={addToFavorites}>
+              <Ionicons name="heart" size={16} color="#FFF" />
               <Text style={styles.modalButtonText}>
-                {editingFavoriteId ? "Update Favorite" : "Save Favorite"}
+                {editingFavoriteId ? "Update" : "Save Location"}
               </Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      {/* Favorite Options Modal */}
       <Modal
         visible={showFavoriteOptions}
-        transparent={true}
+        transparent
         animationType="fade"
         onRequestClose={() => setShowFavoriteOptions(false)}
       >
@@ -1324,42 +1999,48 @@ export default function MapPickerScreen() {
           onPress={() => setShowFavoriteOptions(false)}
         >
           <View style={styles.optionsModal}>
-            <TouchableOpacity
-              style={styles.optionItem}
-              onPress={() => {
-                if (selectedFavorite) {
-                  selectFavoriteLocation(selectedFavorite);
-                  setShowFavoriteOptions(false);
-                }
-              }}
-            >
-              <Ionicons name="locate" size={20} color="#183B5C" />
-              <Text style={styles.optionText}>Select Location</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.optionItem}
-              onPress={() => {
-                if (selectedFavorite) {
-                  editFavorite(selectedFavorite);
-                  setShowFavoriteOptions(false);
-                }
-              }}
-            >
-              <Ionicons name="create-outline" size={20} color="#3B82F6" />
-              <Text style={styles.optionText}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.optionItem, styles.optionItemDanger]}
-              onPress={() => {
-                if (selectedFavorite) {
-                  removeFromFavorites(selectedFavorite.id);
-                  setShowFavoriteOptions(false);
-                }
-              }}
-            >
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
-              <Text style={[styles.optionText, styles.optionTextDanger]}>Remove</Text>
-            </TouchableOpacity>
+            {[
+              {
+                icon: "locate",
+                color: "#183B5C",
+                label: "Go Here",
+                onPress: () => selectedFavorite && selectFavoriteLocation(selectedFavorite),
+              },
+              {
+                icon: "create-outline",
+                color: "#3B82F6",
+                label: "Edit",
+                onPress: () => {
+                  if (selectedFavorite) {
+                    editFavorite(selectedFavorite);
+                    setShowFavoriteOptions(false);
+                  }
+                },
+              },
+              {
+                icon: "trash-outline",
+                color: "#EF4444",
+                label: "Remove",
+                onPress: () => {
+                  if (selectedFavorite) {
+                    removeFromFavorites(selectedFavorite.id);
+                    setShowFavoriteOptions(false);
+                  }
+                },
+                danger: true,
+              },
+            ].map((opt, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[styles.optionItem, opt.danger && styles.optionItemDanger]}
+                onPress={opt.onPress}
+              >
+                <Ionicons name={opt.icon} size={20} color={opt.color} />
+                <Text style={[styles.optionText, opt.danger && styles.optionTextDanger]}>
+                  {opt.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </TouchableOpacity>
       </Modal>
@@ -1371,119 +2052,197 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F8FAFC" },
   map: { flex: 1 },
 
+  centerPinContainer: {
+    position: "absolute",
+    top: "50%",
+    left: "50%",
+    transform: [{ translateX: -23 }, { translateY: -58 }],
+    zIndex: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  tapHint: {
+    position: "absolute",
+    top: "38%",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 5,
+  },
+  tapHintBubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  tapHintText: { fontSize: 14, color: "#183B5C", fontWeight: "600" },
+
   topOverlay: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     zIndex: 10,
   },
-
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 10,
+    gap: 10,
   },
-  screenTitle: {
+  titleBadge: {
     flex: 1,
-    textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#183B5C",
-    backgroundColor: "rgba(255,255,255,0.95)",
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.97)",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 5,
   },
+  titleBadgePickup: { borderBottomWidth: 2, borderBottomColor: "#10B981" },
+  titleBadgeDropoff: { borderBottomWidth: 2, borderBottomColor: "#EF4444" },
+  screenTitle: { fontSize: 15, fontWeight: "700" },
+  titlePickup: { color: "#059669" },
+  titleDropoff: { color: "#DC2626" },
+
   iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "rgba(255,255,255,0.95)",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.97)",
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 6 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 6,
+    shadowRadius: 10,
+    elevation: 5,
   },
+  iconButtonActive: { backgroundColor: "#EBF4FF" },
 
   searchWrapper: { zIndex: 11 },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "rgba(255,255,255,0.98)",
-    borderRadius: 18,
+    borderRadius: 16,
     paddingHorizontal: 14,
-    minHeight: 52,
+    minHeight: 50,
     borderWidth: 1.5,
     borderColor: "transparent",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 8 },
+    shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.08,
-    shadowRadius: 16,
+    shadowRadius: 14,
     elevation: 6,
   },
   searchBoxFocused: { borderColor: "#183B5C" },
   searchInput: {
     flex: 1,
     marginLeft: 8,
-    fontSize: 15,
+    fontSize: 14,
     color: "#0F172A",
-    paddingVertical: 14,
+    paddingVertical: 13,
   },
-
   searchResultsContainer: {
-    marginTop: 8,
+    marginTop: 6,
     backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    maxHeight: SCREEN_HEIGHT * 0.35,
+    borderRadius: 16,
+    maxHeight: SCREEN_HEIGHT * 0.32,
     overflow: "hidden",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 10 },
+    shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.1,
-    shadowRadius: 18,
+    shadowRadius: 16,
     elevation: 8,
   },
   searchResultItem: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 14,
-    paddingVertical: 13,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#F1F5F9",
   },
   searchResultIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 10,
   },
   searchResultContent: { flex: 1 },
   searchResultText: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    lineHeight: 19,
     color: "#0F172A",
+    fontWeight: "500",
+  },
+  searchResultMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+    flexWrap: "wrap",
   },
   searchResultBadge: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "600",
     textTransform: "capitalize",
-    marginTop: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  ratingBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 2,
+  },
+  ratingText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#D97706",
+  },
+  ratingCountText: {
+    fontSize: 9,
+    color: "#B45309",
+  },
+  priceBadge: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#059669",
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
 
   errorChip: {
-    marginTop: 10,
+    marginTop: 8,
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
@@ -1492,31 +2251,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 7,
+    gap: 6,
   },
-  errorChipText: {
-    marginLeft: 6,
-    fontSize: 12,
-    color: "#DC2626",
-    fontWeight: "500",
-  },
-
-  marker: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 3,
-    borderColor: "#FFFFFF",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
-    shadowRadius: 8,
-    elevation: 7,
-  },
-  pickupMarker: { backgroundColor: "#10B981" },
-  dropoffMarker: { backgroundColor: "#EF4444" },
+  errorChipText: { fontSize: 12, color: "#DC2626", fontWeight: "500" },
 
   mapLoadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1526,445 +2264,268 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   loadingCard: {
-    width: "78%",
+    width: "72%",
     backgroundColor: "#FFFFFF",
-    borderRadius: 24,
+    borderRadius: 22,
     paddingVertical: 28,
     paddingHorizontal: 22,
     alignItems: "center",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 12 },
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.12,
-    shadowRadius: 22,
+    shadowRadius: 20,
     elevation: 10,
   },
-  mapLoadingTitle: {
-    marginTop: 14,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#183B5C",
-  },
-  mapLoadingSubtext: {
-    marginTop: 6,
-    textAlign: "center",
-    fontSize: 13,
-    lineHeight: 19,
-    color: "#64748B",
-  },
+  mapLoadingTitle: { marginTop: 14, fontSize: 16, fontWeight: "700", color: "#183B5C" },
+  mapLoadingSubtext: { marginTop: 6, fontSize: 13, color: "#64748B", textAlign: "center" },
 
   bottomCard: {
     position: "absolute",
-    left: 14,
-    right: 14,
-    bottom: 14,
+    left: 12,
+    right: 12,
+    bottom: 12,
     backgroundColor: "#FFFFFF",
-    borderRadius: 28,
-    paddingTop: 14,
-    paddingHorizontal: 18,
+    borderRadius: 26,
+    paddingTop: 12,
+    paddingHorizontal: 16,
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.12,
-    shadowRadius: 20,
-    elevation: 12,
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 18,
+    elevation: 14,
     zIndex: 12,
-    minHeight: 300,
   },
   sheetHandleContainer: {
-    alignSelf: "center",
-    marginBottom: 16,
-    paddingVertical: 5,
-    paddingHorizontal: 20,
+    alignItems: "center",
+    marginBottom: 12,
+    paddingVertical: 4,
   },
   sheetHandle: {
-    width: 42,
-    height: 5,
+    width: 36,
+    height: 4,
     borderRadius: 999,
     backgroundColor: "#E2E8F0",
+    marginBottom: 2,
   },
 
-  bottomScrollView: {
-    flex: 1,
+  locationStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    gap: 10,
   },
+  locationBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  pickupIconBg: { backgroundColor: "#ECFDF5" },
+  dropoffIconBg: { backgroundColor: "#FEF2F2" },
+  locationTextWrap: { flex: 1 },
+  locationAddress: { fontSize: 13, lineHeight: 19, color: "#0F172A", fontWeight: "500" },
+  inlineLoading: { flexDirection: "row", alignItems: "center", gap: 8 },
+  inlineLoadingText: { fontSize: 13, color: "#64748B" },
+  saveButton: { padding: 6 },
 
-  // Tab Styles
   tabContainer: {
     flexDirection: "row",
     backgroundColor: "#F1F5F9",
     borderRadius: 12,
     padding: 4,
-    marginBottom: 16,
+    marginBottom: 14,
   },
   tab: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 10,
-    gap: 6,
+    gap: 5,
   },
   activeTab: {
     backgroundColor: "#FFFFFF",
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 4,
     elevation: 2,
   },
-  tabText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#64748B",
-  },
-  activeTabText: {
-    color: "#183B5C",
-  },
+  tabText: { fontSize: 12, fontWeight: "600", color: "#94A3B8" },
   favoriteBadge: {
     backgroundColor: "#EF4444",
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
+    borderRadius: 9,
+    minWidth: 16,
+    height: 16,
     justifyContent: "center",
     alignItems: "center",
     paddingHorizontal: 4,
-    marginLeft: 4,
   },
-  favoriteBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 10,
-    fontWeight: "700",
-  },
+  favoriteBadgeText: { color: "#FFF", fontSize: 9, fontWeight: "700" },
 
-  popularSection: {
-    marginBottom: 20,
-  },
+  bottomScrollView: { flex: 1 },
+
+  section: { marginBottom: 16 },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  sectionTitleContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0F172A",
-  },
-  seeAllButton: {
-    fontSize: 13,
-    color: "#183B5C",
-    fontWeight: "600",
-  },
-  refreshButton: {
-    fontSize: 13,
-    color: "#183B5C",
-    fontWeight: "600",
-  },
-  popularScroll: {
-    paddingRight: 4,
-    gap: 12,
-  },
+  sectionTitleRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  sectionTitle: { fontSize: 15, fontWeight: "700", color: "#0F172A" },
+  seeAll: { fontSize: 13, color: "#183B5C", fontWeight: "600" },
+
+  popularScroll: { paddingRight: 4, gap: 10 },
   popularSpotCard: {
-    width: 100,
+    width: 96,
     alignItems: "center",
     backgroundColor: "#F8FAFC",
     borderRadius: 16,
     padding: 12,
-    marginRight: 12,
+    marginRight: 10,
     borderWidth: 1,
     borderColor: "#E2E8F0",
   },
   popularSpotIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 8,
   },
   popularSpotName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
     color: "#0F172A",
     textAlign: "center",
-    marginBottom: 4,
+    marginBottom: 3,
   },
-  popularSpotType: {
-    fontSize: 11,
-    color: "#64748B",
-    textAlign: "center",
-  },
+  popularSpotType: { fontSize: 10, color: "#64748B", textAlign: "center" },
 
-  allLandmarksList: {
-    marginTop: 8,
-  },
   allLandmarkCard: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderBottomWidth: 1,
     borderBottomColor: "#F1F5F9",
+    gap: 10,
   },
   allLandmarkIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
-  allLandmarkContent: {
-    flex: 1,
-  },
-  allLandmarkName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0F172A",
-    marginBottom: 2,
-  },
-  allLandmarkAddress: {
-    fontSize: 12,
-    color: "#64748B",
-  },
+  allLandmarkContent: { flex: 1 },
+  allLandmarkName: { fontSize: 13, fontWeight: "600", color: "#0F172A", marginBottom: 2 },
+  allLandmarkAddress: { fontSize: 11, color: "#64748B" },
 
-  // Favorites Styles
-  favoritesSection: {
-    marginBottom: 20,
-  },
-  favoritesList: {
-    marginTop: 8,
-  },
   favoriteCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 12,
-    marginBottom: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: "#E2E8F0",
+    gap: 10,
     shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
     shadowRadius: 4,
     elevation: 2,
   },
   favoriteIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
-  favoriteContent: {
-    flex: 1,
-  },
-  favoriteName: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#0F172A",
-    marginBottom: 4,
-  },
-  favoriteAddress: {
-    fontSize: 12,
-    color: "#64748B",
-  },
-  favoriteDelete: {
-    padding: 8,
-  },
+  favoriteContent: { flex: 1 },
+  favoriteName: { fontSize: 14, fontWeight: "600", color: "#0F172A", marginBottom: 3 },
+  favoriteAddress: { fontSize: 12, color: "#64748B" },
 
-  // Nearby Styles
-  nearbySection: {
-    marginBottom: 20,
-  },
-  nearbyList: {
-    marginTop: 8,
-  },
   nearbyCard: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderBottomWidth: 1,
     borderBottomColor: "#F1F5F9",
+    gap: 10,
   },
   nearbyIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
-  nearbyContent: {
-    flex: 1,
+  nearbyContent: { flex: 1 },
+  nearbyName: { fontSize: 13, fontWeight: "600", color: "#0F172A", marginBottom: 2 },
+  nearbyType: { fontSize: 11, color: "#64748B" },
+  distancePill: {
+    backgroundColor: "#F1F5F9",
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  nearbyName: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#0F172A",
-    marginBottom: 2,
-  },
-  nearbyType: {
-    fontSize: 12,
-    color: "#64748B",
-  },
-  nearbyDistance: {
-    fontSize: 12,
-    color: "#94A3B8",
-    fontWeight: "500",
-  },
+  nearbyDistance: { fontSize: 11, color: "#475569", fontWeight: "600" },
 
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 32,
-  },
+  emptyState: { alignItems: "center", paddingVertical: 28 },
   emptyStateTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
-    color: "#64748B",
-    marginTop: 12,
-    marginBottom: 8,
+    color: "#94A3B8",
+    marginTop: 10,
+    marginBottom: 6,
   },
   emptyStateText: {
-    fontSize: 13,
-    color: "#94A3B8",
+    fontSize: 12,
+    color: "#CBD5E1",
     textAlign: "center",
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     lineHeight: 18,
   },
 
-  // Selected Location Section
-  selectedLocationSection: {
-    borderTopWidth: 1,
-    borderTopColor: "#E2E8F0",
-    paddingTop: 16,
-  },
-  locationRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 12,
-  },
-  locationBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  pickupIconBg: { backgroundColor: "#ECFDF5" },
-  dropoffIconBg: { backgroundColor: "#FEF2F2" },
-  locationTextWrap: { flex: 1 },
-  locationLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#64748B",
-    marginBottom: 4,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  locationAddress: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: "#0F172A",
-    fontWeight: "500",
-  },
-  inlineLoading: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  inlineLoadingText: {
-    marginLeft: 8,
-    fontSize: 13,
-    color: "#64748B",
-  },
-
-  locationActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  actionButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#F1F5F9",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  actionButtonText: {
-    fontSize: 13,
-    color: "#64748B",
-    fontWeight: "500",
-  },
-
-  coordinatePill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "#F8FAFC",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-  },
-  coordinateText: {
-    fontSize: 12,
-    color: "#475569",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-  },
-  helperText: {
-    fontSize: 12,
-    lineHeight: 18,
-    color: "#64748B",
-    marginBottom: 14,
-    backgroundColor: "#F1F5F9",
-    padding: 10,
-    borderRadius: 12,
-  },
-
-  // Floating Confirm Button
-  floatingConfirmButton: {
+  confirmButton: {
     position: "absolute",
-    bottom: 30,
-    left: "50%",
-    transform: [{ translateX: -100 }],
-    backgroundColor: "#183B5C",
+    bottom: 28,
+    left: "10%",
+    right: "10%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 30,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    zIndex: 13,
+    paddingVertical: 16,
+    borderRadius: 28,
     gap: 8,
-    width: 200,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 10,
+    zIndex: 20,
   },
-  floatingConfirmButtonDisabled: {
-    backgroundColor: "#CBD5E1",
-    shadowOpacity: 0.1,
-  },
-  floatingConfirmButtonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "700",
-  },
+  confirmPickup: { backgroundColor: "#059669" },
+  confirmDropoff: { backgroundColor: "#DC2626" },
+  confirmDisabled: { backgroundColor: "#CBD5E1", shadowOpacity: 0.1, elevation: 2 },
+  confirmText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
 
-  // Modal Styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: "rgba(0,0,0,0.45)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -1972,22 +2533,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 20,
-    width: "85%",
+    width: "88%",
     maxWidth: 400,
   },
   modalHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: 18,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#0F172A",
-  },
+  modalTitle: { fontSize: 17, fontWeight: "700", color: "#0F172A" },
   modalLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: "600",
     color: "#475569",
     marginBottom: 8,
@@ -1997,39 +2554,30 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E2E8F0",
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
     fontSize: 14,
     color: "#0F172A",
   },
-  iconPicker: {
-    flexDirection: "row",
-    marginBottom: 8,
-  },
+  iconPicker: { flexDirection: "row", marginBottom: 4 },
   iconOption: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
+    marginRight: 10,
     backgroundColor: "#F8FAFC",
     borderWidth: 2,
     borderColor: "transparent",
   },
-  iconOptionSelected: {
-    borderColor: "#183B5C",
-    backgroundColor: "#EBF4FF",
-  },
-  colorPicker: {
-    flexDirection: "row",
-    marginBottom: 20,
-  },
+  iconOptionSelected: { borderColor: "#183B5C", backgroundColor: "#EBF4FF" },
+  colorPicker: { flexDirection: "row", marginBottom: 20 },
   colorOption: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    marginRight: 10,
     borderWidth: 3,
     borderColor: "transparent",
   },
@@ -2037,47 +2585,36 @@ const styles = StyleSheet.create({
     borderColor: "#FFFFFF",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
-    elevation: 3,
+    elevation: 4,
   },
   modalButton: {
     backgroundColor: "#183B5C",
-    borderRadius: 12,
+    borderRadius: 14,
     paddingVertical: 14,
     alignItems: "center",
-    marginTop: 8,
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 8,
   },
-  modalButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
-    fontWeight: "600",
-  },
+  modalButtonText: { color: "#FFFFFF", fontSize: 15, fontWeight: "600" },
 
-  // Options Modal
   optionsModal: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 8,
-    width: "70%",
-    maxWidth: 280,
+    borderRadius: 18,
+    padding: 6,
+    width: "65%",
+    maxWidth: 260,
   },
   optionItem: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
+    paddingVertical: 13,
     paddingHorizontal: 16,
     gap: 12,
   },
-  optionItemDanger: {
-    borderTopWidth: 1,
-    borderTopColor: "#F1F5F9",
-  },
-  optionText: {
-    fontSize: 15,
-    color: "#0F172A",
-  },
-  optionTextDanger: {
-    color: "#EF4444",
-  },
+  optionItemDanger: { borderTopWidth: 1, borderTopColor: "#F1F5F9" },
+  optionText: { fontSize: 14, color: "#0F172A", fontWeight: "500" },
+  optionTextDanger: { color: "#EF4444" },
 });

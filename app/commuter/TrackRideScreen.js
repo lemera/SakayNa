@@ -1065,9 +1065,9 @@ export default function TrackRide({ navigation, route }) {
     return (
       <View style={styles.container}>
         <LinearGradient colors={['#183B5C', '#183B5C']} style={styles.headerGradient}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
+          {/* <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={24} color="#FFF" />
-          </Pressable>
+          </Pressable> */}
           <View style={styles.headerContent}>
             <Text style={styles.headerTitle}>Track Your Ride</Text>
             <Text style={styles.headerSubtitle}>No Active Ride</Text>
