@@ -1,10 +1,5 @@
 // screens/commuter/HomeScreen.js
-import React, {
-  useState,
-  useEffect,
-  useRef,
-  useCallback,
-} from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -63,8 +58,7 @@ const isSmallDevice = SCREEN_HEIGHT < 668;
 const isMediumDevice = SCREEN_HEIGHT >= 668 && SCREEN_HEIGHT < 812;
 const isLargeDevice = SCREEN_HEIGHT >= 812 && SCREEN_HEIGHT < 900;
 const isXLDevice = SCREEN_HEIGHT >= 900;
-const isNotchDevice =
-  Platform.OS === "ios" && (isLargeDevice || isXLDevice);
+const isNotchDevice = Platform.OS === "ios" && (isLargeDevice || isXLDevice);
 
 // Draggable sheet snap points
 const SHEET_TOP_EXPANDED = SCREEN_HEIGHT * 0.14;
@@ -138,10 +132,7 @@ const ModernAlert = ({
     >
       <Animated.View style={[styles.alertOverlay, { opacity: opacityAnim }]}>
         <Animated.View
-          style={[
-            styles.alertContainer,
-            { transform: [{ scale: scaleAnim }] },
-          ]}
+          style={[styles.alertContainer, { transform: [{ scale: scaleAnim }] }]}
         >
           <View
             style={[
@@ -315,7 +306,7 @@ const LocationCard = ({
             duration: 800,
             useNativeDriver: false,
           }),
-        ])
+        ]),
       );
 
       borderGlow = Animated.loop(
@@ -330,7 +321,7 @@ const LocationCard = ({
             duration: 1000,
             useNativeDriver: false,
           }),
-        ])
+        ]),
       );
 
       badgeScale = Animated.loop(
@@ -347,7 +338,7 @@ const LocationCard = ({
             friction: 3,
             tension: 40,
           }),
-        ])
+        ]),
       );
 
       pulseGlow.start();
@@ -516,10 +507,7 @@ const LocationCard = ({
           </Text>
 
           <Text
-            style={[
-              styles.locationValue,
-              !value && styles.locationPlaceholder,
-            ]}
+            style={[styles.locationValue, !value && styles.locationPlaceholder]}
             numberOfLines={2}
           >
             {value || placeholder}
@@ -630,7 +618,7 @@ const GlowGuide = ({ visible, onClose }) => {
               duration: 500,
               useNativeDriver: true,
             }),
-          ])
+          ]),
         ),
         Animated.spring(translateY, {
           toValue: 0,
@@ -649,10 +637,7 @@ const GlowGuide = ({ visible, onClose }) => {
 
   return (
     <Animated.View
-      style={[
-        styles.glowGuideContainer,
-        { transform: [{ translateY }] },
-      ]}
+      style={[styles.glowGuideContainer, { transform: [{ translateY }] }]}
     >
       <Animated.View style={[styles.glowGuide, { opacity: fadeAnim }]}>
         <Ionicons name="flash-outline" size={moderateScale(18)} color="#FFF" />
@@ -668,12 +653,7 @@ const GlowGuide = ({ visible, onClose }) => {
 };
 
 // ==================== PASSENGER SELECTOR ====================
-const PassengerSelector = ({
-  count,
-  onChange,
-  max = 6,
-  trackUserAction,
-}) => {
+const PassengerSelector = ({ count, onChange, max = 6, trackUserAction }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
   return (
@@ -747,7 +727,7 @@ const PassengerSelector = ({
 };
 
 // ==================== TRIP SUMMARY CARD ====================
-const TripSummaryCard = ({ distance, time, passengers, fare }) => (
+const TripSummaryCard = ({ distance, time, passengers, fare, appFee }) => (
   <View style={styles.summaryCard}>
     <View style={styles.summaryMetrics}>
       <View style={styles.metricItem}>
@@ -782,6 +762,11 @@ const TripSummaryCard = ({ distance, time, passengers, fare }) => (
     </View>
 
     <View style={styles.fareRow}>
+      <Text style={styles.fareLabel}>Service Fee</Text>
+      <Text style={styles.fareLabel}>₱{appFee}</Text>
+    </View>
+
+    <View style={styles.fareRow}>
       <Text style={styles.fareLabel}>Total Fare</Text>
       <Text style={styles.fareAmount}>₱{fare}</Text>
     </View>
@@ -809,9 +794,9 @@ const FloatingActionButtons = ({
 
   const tabBarHeight = useBottomTabBarHeight();
 
-const getBottomPosition = useCallback(() => {
-  return tabBarHeight + insets.bottom + 10;
-}, [tabBarHeight, insets.bottom]);
+  const getBottomPosition = useCallback(() => {
+    return tabBarHeight + insets.bottom + 10;
+  }, [tabBarHeight, insets.bottom]);
 
   const getButtonDimensions = useCallback(() => {
     if (isSmallDevice) {
@@ -1044,11 +1029,7 @@ const getBottomPosition = useCallback(() => {
               },
             ]}
           >
-            <Ionicons
-              name="location"
-              size={buttonDims.iconSize}
-              color="#FFF"
-            />
+            <Ionicons name="location" size={buttonDims.iconSize} color="#FFF" />
           </View>
 
           <View style={styles.floatingActionTextContainer}>
@@ -1128,11 +1109,7 @@ const ProximityModal = ({
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Search Radius</Text>
             <TouchableOpacity onPress={onClose} style={styles.modalClose}>
-              <Ionicons
-                name="close"
-                size={moderateScale(22)}
-                color="#9CA3AF"
-              />
+              <Ionicons name="close" size={moderateScale(22)} color="#9CA3AF" />
             </TouchableOpacity>
           </View>
 
@@ -1212,9 +1189,10 @@ export default function CommuterHomeScreen() {
   const [estimatedTime, setEstimatedTime] = useState(null);
   const [routeCoordinates, setRouteCoordinates] = useState([]);
   const [fareSettings, setFareSettings] = useState({
-    baseFare: 15,
-    perKmRate: 15,
-    minimumFare: 15,
+    baseFare: 20,
+    perKmRate: 5,
+    minimumFare: 20,
+    appFee: 0,
   });
   const [showProximityFilter, setShowProximityFilter] = useState(false);
   const [proximityRadius, setProximityRadius] = useState(0.1);
@@ -1259,10 +1237,10 @@ export default function CommuterHomeScreen() {
 
   // Force re-render for Android when locations are set
   useEffect(() => {
-    if (pickup && dropoff && Platform.OS === 'android') {
+    if (pickup && dropoff && Platform.OS === "android") {
       // Small delay to ensure Android layout updates
       const timer = setTimeout(() => {
-        setForceUpdate(prev => !prev);
+        setForceUpdate((prev) => !prev);
       }, 100);
       return () => clearTimeout(timer);
     }
@@ -1270,12 +1248,15 @@ export default function CommuterHomeScreen() {
 
   // Keyboard listener for Android
   useEffect(() => {
-    const keyboardDidHideListener = Keyboard.addListener('keyboardDidHide', () => {
-      if (pickup && dropoff && Platform.OS === 'android') {
-        setForceUpdate(prev => !prev);
-      }
-    });
-    
+    const keyboardDidHideListener = Keyboard.addListener(
+      "keyboardDidHide",
+      () => {
+        if (pickup && dropoff && Platform.OS === "android") {
+          setForceUpdate((prev) => !prev);
+        }
+      },
+    );
+
     return () => {
       keyboardDidHideListener.remove();
     };
@@ -1295,7 +1276,7 @@ export default function CommuterHomeScreen() {
         friction: 12,
       }).start();
     },
-    [sheetTopAnim]
+    [sheetTopAnim],
   );
 
   const toggleSheet = useCallback(() => {
@@ -1340,19 +1321,20 @@ export default function CommuterHomeScreen() {
         let destination = SHEET_TOP_MID;
 
         if (velocity < -0.5) {
-          destination = finalTop > SHEET_TOP_MID ? SHEET_TOP_MID : SHEET_TOP_EXPANDED;
+          destination =
+            finalTop > SHEET_TOP_MID ? SHEET_TOP_MID : SHEET_TOP_EXPANDED;
         } else if (velocity > 0.5) {
           destination =
             finalTop < SHEET_TOP_MID ? SHEET_TOP_MID : SHEET_TOP_COLLAPSED;
         } else {
           destination = snapPoints.reduce((prev, curr) =>
-            Math.abs(curr - finalTop) < Math.abs(prev - finalTop) ? curr : prev
+            Math.abs(curr - finalTop) < Math.abs(prev - finalTop) ? curr : prev,
           );
         }
 
         animateSheetTo(destination);
       },
-    })
+    }),
   ).current;
 
   useEffect(() => {
@@ -1438,7 +1420,7 @@ export default function CommuterHomeScreen() {
     const checkFirstTime = async () => {
       try {
         const hasSeenGlowGuide = await AsyncStorage.getItem(
-          "has_seen_glow_guide"
+          "has_seen_glow_guide",
         );
 
         if (!hasSeenGlowGuide) {
@@ -1481,7 +1463,7 @@ export default function CommuterHomeScreen() {
       return () => {
         isActive = false;
       };
-    }, [])
+    }, []),
   );
 
   useEffect(() => {
@@ -1565,10 +1547,13 @@ export default function CommuterHomeScreen() {
       setProximityRadius(validRadius);
       await AsyncStorage.setItem(
         "proximity_radius_home",
-        validRadius.toString()
+        validRadius.toString(),
       );
       setShowProximityFilter(false);
-      showToast(`Showing drivers within ${validRadius.toFixed(1)} km`, "success");
+      showToast(
+        `Showing drivers within ${validRadius.toFixed(1)} km`,
+        "success",
+      );
 
       if (pickup && allDrivers.length > 0) {
         filterDriversByProximity(pickup, allDrivers, validRadius);
@@ -1596,7 +1581,7 @@ export default function CommuterHomeScreen() {
   const filterDriversByProximity = (
     pickupCoords = pickup,
     drivers = allDrivers,
-    radius = proximityRadius
+    radius = proximityRadius,
   ) => {
     if (!pickupCoords || drivers.length === 0) {
       setFilteredDrivers([]);
@@ -1609,7 +1594,7 @@ export default function CommuterHomeScreen() {
         pickupCoords.latitude,
         pickupCoords.longitude,
         driver.latitude,
-        driver.longitude
+        driver.longitude,
       );
       return distance <= radius;
     });
@@ -1650,11 +1635,13 @@ export default function CommuterHomeScreen() {
         const baseFareData = data.find((f) => f.fare_type === "base_fare");
         const perKmFareData = data.find((f) => f.fare_type === "per_km");
         const minFareData = data.find((f) => f.fare_type === "minimum_fare");
+        const appFeeData = data.find((f) => f.fare_type === "app_fee");
 
         setFareSettings({
-          baseFare: baseFareData?.amount || 15,
-          perKmRate: perKmFareData?.amount || 15,
-          minimumFare: minFareData?.amount || 15,
+          baseFare: Number(baseFareData?.amount ?? 20),
+          perKmRate: Number(perKmFareData?.amount ?? 5),
+          minimumFare: Number(minFareData?.amount ?? 20),
+          appFee: Number(appFeeData?.amount ?? 0),
         });
       }
     } catch (err) {
@@ -1689,7 +1676,7 @@ export default function CommuterHomeScreen() {
 
       recents = [recent, ...recents.filter((r) => r.address !== address)].slice(
         0,
-        10
+        10,
       );
 
       await AsyncStorage.setItem("recent_locations", JSON.stringify(recents));
@@ -1743,7 +1730,8 @@ export default function CommuterHomeScreen() {
     try {
       const { data: drivers, error } = await supabase
         .from("driver_locations")
-        .select(`
+        .select(
+          `
           driver_id,
           latitude,
           longitude,
@@ -1756,7 +1744,8 @@ export default function CommuterHomeScreen() {
             is_active,
             driver_vehicles(vehicle_type, vehicle_color, plate_number)
           )
-        `)
+        `,
+        )
         .eq("is_online", true)
         .eq("drivers.status", "approved")
         .eq("drivers.is_active", true);
@@ -1769,7 +1758,7 @@ export default function CommuterHomeScreen() {
             coords.latitude,
             coords.longitude,
             driver.latitude,
-            driver.longitude
+            driver.longitude,
           );
 
           const vehicle = driver.drivers?.driver_vehicles?.[0] || {};
@@ -1791,7 +1780,11 @@ export default function CommuterHomeScreen() {
         setAllDrivers(driversWithDistance);
 
         if (pickup) {
-          filterDriversByProximity(pickup, driversWithDistance, proximityRadius);
+          filterDriversByProximity(
+            pickup,
+            driversWithDistance,
+            proximityRadius,
+          );
         }
       } else {
         setAllDrivers([]);
@@ -1972,18 +1965,27 @@ export default function CommuterHomeScreen() {
     const exactDistance = parseFloat(distanceKm);
     setEstimatedDistance(exactDistance.toFixed(2));
 
-    let farePerPassenger;
+    const baseFare = Number(fareSettings.baseFare || 20);
+    const perKmRate = Number(fareSettings.perKmRate || 5);
+    const minimumFare = Number(fareSettings.minimumFare || 20);
+    const appFee = Number(fareSettings.appFee || 0);
 
-    if (exactDistance <= 1.0) {
-      farePerPassenger = 20;
-    } else if (exactDistance < 2.0) {
-      farePerPassenger = 30;
+    let farePerPassenger = 0;
+
+    if (exactDistance <= 1) {
+      farePerPassenger = baseFare;
     } else {
-      const roundedToHalf = Math.ceil(exactDistance * 2) / 2;
-      farePerPassenger = roundedToHalf * 20;
+      const remainingKm = Math.ceil(exactDistance - 1);
+      farePerPassenger = baseFare + remainingKm * perKmRate;
     }
 
-    setEstimatedFare(farePerPassenger * passengerCount);
+    // apply minimum fare
+    farePerPassenger = Math.max(farePerPassenger, minimumFare);
+
+    // add app fee separately
+    const totalPerPassenger = farePerPassenger + appFee;
+
+    setEstimatedFare(totalPerPassenger * passengerCount);
   };
 
   const calculateRoute = async (startCoords, endCoords) => {
@@ -2061,7 +2063,7 @@ export default function CommuterHomeScreen() {
         type: "warning",
         title: "No Drivers Available",
         message: `No drivers found within ${proximityRadius.toFixed(
-          1
+          1,
         )} km. Would you like to increase the search radius?`,
         confirmText: "Increase Radius",
         cancelText: "Cancel",
@@ -2099,6 +2101,7 @@ export default function CommuterHomeScreen() {
             fare: estimatedFare,
             base_fare: fareSettings.baseFare,
             per_km_rate: fareSettings.perKmRate,
+            app_fee: fareSettings.appFee,
             distance_km: estimatedDistance,
             duration_minutes: estimatedTime,
             status: "pending",
@@ -2240,6 +2243,7 @@ export default function CommuterHomeScreen() {
             fare: estimatedFare,
             base_fare: fareSettings.baseFare,
             per_km_rate: fareSettings.perKmRate,
+            app_fee: fareSettings.appFee,
             distance_km: estimatedDistance,
             duration_minutes: estimatedTime,
             status: "accepted",
@@ -2310,14 +2314,16 @@ export default function CommuterHomeScreen() {
 
       const { data: driverData, error: driverError } = await supabase
         .from("drivers")
-        .select(`
+        .select(
+          `
           id,
           first_name,
           last_name,
           phone,
           profile_picture,
           driver_vehicles(vehicle_type, vehicle_color, plate_number)
-        `)
+        `,
+        )
         .eq("id", driverId)
         .single();
 
@@ -2421,7 +2427,7 @@ export default function CommuterHomeScreen() {
         type: "warning",
         title: "No Drivers Available",
         message: `No drivers found within ${proximityRadius.toFixed(
-          1
+          1,
         )} km. Would you like to increase the search radius?`,
         confirmText: "Increase Radius",
         cancelText: "Cancel",
@@ -2446,29 +2452,29 @@ export default function CommuterHomeScreen() {
 
   const shouldShowButtons = !!(pickup && dropoff);
 
-// Also add a more robust check:
-const isPickupValid =
-  !!pickup &&
-  typeof pickup.latitude === "number" &&
-  typeof pickup.longitude === "number";
+  // Also add a more robust check:
+  const isPickupValid =
+    !!pickup &&
+    typeof pickup.latitude === "number" &&
+    typeof pickup.longitude === "number";
 
-const isDropoffValid =
-  !!dropoff &&
-  typeof dropoff.latitude === "number" &&
-  typeof dropoff.longitude === "number";
+  const isDropoffValid =
+    !!dropoff &&
+    typeof dropoff.latitude === "number" &&
+    typeof dropoff.longitude === "number";
 
-const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
+  const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
 
   // Debug log (remove in production)
   useEffect(() => {
-  console.log('Button Debug:', {
-    pickup: !!pickup,
-    dropoff: !!dropoff,
-    shouldShow: !!(pickup && dropoff),
-    pickupValid: isPickupValid,
-    dropoffValid: isDropoffValid
-  });
-}, [pickup, dropoff, isPickupValid, isDropoffValid]);
+    console.log("Button Debug:", {
+      pickup: !!pickup,
+      dropoff: !!dropoff,
+      shouldShow: !!(pickup && dropoff),
+      pickupValid: isPickupValid,
+      dropoffValid: isDropoffValid,
+    });
+  }, [pickup, dropoff, isPickupValid, isDropoffValid]);
 
   if (initialLoad && loading) {
     return (
@@ -2497,7 +2503,9 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
   if (showScanner) {
     return (
       <View style={styles.container}>
-        <View style={[styles.scannerHeader, { paddingTop: insets.top + scale(12) }]}>
+        <View
+          style={[styles.scannerHeader, { paddingTop: insets.top + scale(12) }]}
+        >
           <TouchableOpacity
             onPress={handleCancelScanning}
             style={styles.scannerBackButton}
@@ -2519,7 +2527,9 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
               <View style={styles.scanArea}>
                 <View style={styles.scanCorner} />
                 <View style={[styles.scanCorner, styles.scanCornerTopRight]} />
-                <View style={[styles.scanCorner, styles.scanCornerBottomLeft]} />
+                <View
+                  style={[styles.scanCorner, styles.scanCornerBottomLeft]}
+                />
                 <View
                   style={[styles.scanCorner, styles.scanCornerBottomRight]}
                 />
@@ -2656,7 +2666,7 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                   latitudeDelta: 0.01,
                   longitudeDelta: 0.01,
                 },
-                500
+                500,
               );
             }
           }}
@@ -2688,7 +2698,7 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
         </View>
 
         {/* Fixed KeyboardAvoidingView for Android */}
-        {Platform.OS === 'ios' ? (
+        {Platform.OS === "ios" ? (
           <KeyboardAvoidingView
             behavior="padding"
             style={styles.sheetContentWrapper}
@@ -2757,17 +2767,19 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                       {proximityRadius === 0.1
                         ? "Nearest"
                         : proximityRadius === 0.2
-                        ? "Near"
-                        : proximityRadius === 0.3
-                        ? "Standard"
-                        : "Wide"}
+                          ? "Near"
+                          : proximityRadius === 0.3
+                            ? "Standard"
+                            : "Wide"}
                     </Text>
                   </View>
                 </TouchableOpacity>
               </View>
 
               {/* Pickup */}
-              <Animated.View style={{ transform: [{ translateX: shakeAnimPickup }] }}>
+              <Animated.View
+                style={{ transform: [{ translateX: shakeAnimPickup }] }}
+              >
                 <LocationCard
                   icon="location"
                   iconColor="#10B981"
@@ -2808,8 +2820,8 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                   color="#9CA3AF"
                 />
                 <Text style={styles.instructionText}>
-                  ✨ Tap on any glowing box above to choose your location from the
-                  map
+                  ✨ Tap on any glowing box above to choose your location from
+                  the map
                 </Text>
               </View>
 
@@ -2855,6 +2867,7 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                   time={estimatedTime}
                   passengers={passengerCount}
                   fare={estimatedFare}
+                  appFee={fareSettings.appFee}
                 />
               )}
 
@@ -2931,17 +2944,19 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                       {proximityRadius === 0.1
                         ? "Nearest"
                         : proximityRadius === 0.2
-                        ? "Near"
-                        : proximityRadius === 0.3
-                        ? "Standard"
-                        : "Wide"}
+                          ? "Near"
+                          : proximityRadius === 0.3
+                            ? "Standard"
+                            : "Wide"}
                     </Text>
                   </View>
                 </TouchableOpacity>
               </View>
 
               {/* Pickup */}
-              <Animated.View style={{ transform: [{ translateX: shakeAnimPickup }] }}>
+              <Animated.View
+                style={{ transform: [{ translateX: shakeAnimPickup }] }}
+              >
                 <LocationCard
                   icon="location"
                   iconColor="#10B981"
@@ -2982,8 +2997,8 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                   color="#9CA3AF"
                 />
                 <Text style={styles.instructionText}>
-                  ✨ Tap on any glowing box above to choose your location from the
-                  map
+                  ✨ Tap on any glowing box above to choose your location from
+                  the map
                 </Text>
               </View>
 
@@ -3029,6 +3044,7 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
                   time={estimatedTime}
                   passengers={passengerCount}
                   fare={estimatedFare}
+                  appFee={fareSettings.appFee}
                 />
               )}
 
@@ -3043,15 +3059,14 @@ const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
       </Animated.View>
 
       {/* Wrapper for floating buttons to ensure proper positioning on Android */}
-    
-  <FloatingActionButtons
-    onScan={openScanner}
-    onFind={handleBookRide}
-    disabled={!isPickupValid || !isDropoffValid}
-    trackUserAction={trackUserAction}
-    visible={shouldShowButtonsFixed}
-  />
 
+      <FloatingActionButtons
+        onScan={openScanner}
+        onFind={handleBookRide}
+        disabled={!isPickupValid || !isDropoffValid}
+        trackUserAction={trackUserAction}
+        visible={shouldShowButtonsFixed}
+      />
     </View>
   );
 }
@@ -3997,74 +4012,75 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#F0F0F0",
     marginBottom: 70,
-  },floatingActionContainer: {
-  position: "absolute",
-  left: 0,
-  right: 0,
-  zIndex: 999,
-  elevation: 999,
-},
+  },
+  floatingActionContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    zIndex: 999,
+    elevation: 999,
+  },
 
-floatingActionButtons: {
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "space-between",
-  backgroundColor: "rgba(255,255,255,0.96)",
-  marginHorizontal: scale(2),
-  shadowColor: "#000000",
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.12,
-  shadowRadius: 14,
-  elevation: 10,
-  borderWidth: 1,
-  borderColor: "#F3F4F6",
-},
+  floatingActionButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "rgba(255,255,255,0.96)",
+    marginHorizontal: scale(2),
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: "#F3F4F6",
+  },
 
-floatingActionButton: {
-  flex: 1,
-  flexDirection: "row",
-  alignItems: "center",
-  backgroundColor: "#FFFFFF",
-},
+  floatingActionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+  },
 
-floatingActionButtonPrimary: {
-  backgroundColor: "#183B5C",
-},
+  floatingActionButtonPrimary: {
+    backgroundColor: "#183B5C",
+  },
 
-floatingActionButtonDisabled: {
-  opacity: 0.45,
-},
+  floatingActionButtonDisabled: {
+    opacity: 0.45,
+  },
 
-floatingActionIconWrapper: {
-  justifyContent: "center",
-  alignItems: "center",
-  backgroundColor: "#ECFDF5",
-},
+  floatingActionIconWrapper: {
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#ECFDF5",
+  },
 
-floatingActionIconWrapperPrimary: {
-  backgroundColor: "rgba(255,255,255,0.18)",
-},
+  floatingActionIconWrapperPrimary: {
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
 
-floatingActionTextContainer: {
-  flex: 1,
-},
+  floatingActionTextContainer: {
+    flex: 1,
+  },
 
-floatingActionTitle: {
-  color: "#111827",
-  fontWeight: "700",
-},
+  floatingActionTitle: {
+    color: "#111827",
+    fontWeight: "700",
+  },
 
-floatingActionTitleLight: {
-  color: "#FFFFFF",
-},
+  floatingActionTitleLight: {
+    color: "#FFFFFF",
+  },
 
-floatingActionSubtitle: {
-  color: "#6B7280",
-  fontWeight: "500",
-  marginTop: 1,
-},
+  floatingActionSubtitle: {
+    color: "#6B7280",
+    fontWeight: "500",
+    marginTop: 1,
+  },
 
-floatingActionSubtitleLight: {
-  color: "rgba(255,255,255,0.82)",
-},
+  floatingActionSubtitleLight: {
+    color: "rgba(255,255,255,0.82)",
+  },
 });

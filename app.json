@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.lemera.sakayna",
-      "versionCode": 17,
+      "versionCode": 18,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon_app.png",
         "backgroundColor": "#ffffff"

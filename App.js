@@ -237,51 +237,62 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const hasLocationPermission = await checkLocationPermissionStatus();
-
-        if (!hasLocationPermission) {
-          showLocationProminentDisclosure();
-        }
-
-        const route = await checkSessionAndNavigate();
-        setInitialRoute(route);
-
-        const granted = await requestNotificationPermission();
-
-        await setupNotificationChannels();
-
-        if (granted) {
-          const savedSession = await getUserSession();
-          const driverId = await AsyncStorage.getItem("user_id");
-
-          if (driverId && !(savedSession && savedSession.isTestAccount)) {
-            await registerForPushNotifications(driverId);
-          }
-        }
-
-        notificationSub.current = addNotificationResponseListener((response) => {
-          const data = response?.notification?.request?.content?.data;
-          if (data?.type === "booking_request") {
-            console.log("📲 Notification tapped — booking request", data);
-          }
-        });
-      } catch (error) {
-        console.log("App init error:", error);
-      } finally {
-        setAppReady(true);
+useEffect(() => {
+  const init = async () => {
+    try {
+      const hasLocationPermission = await checkLocationPermissionStatus();
+      if (!hasLocationPermission) {
+        showLocationProminentDisclosure();
       }
-    };
 
-    init();
+      const route = await checkSessionAndNavigate();
+      setInitialRoute(route);
 
-    return () => {
-      notificationSub.current?.remove?.();
-      unloadBookingSound();
-    };
-  }, []);
+      // === NOTIFICATION SETUP ===
+      await setupNotificationChannels();
+
+      if (typeof configureNotificationHandler === "function") {
+        configureNotificationHandler();
+      } else {
+        console.warn("configureNotificationHandler is not available");
+      }
+
+      // Register push token for driver
+      const userId = await AsyncStorage.getItem("user_id");
+      if (userId) {
+        const { data: user } = await supabase
+          .from("users")
+          .select("user_type")
+          .eq("id", userId)
+          .maybeSingle();
+
+        if (user?.user_type === "driver") {
+          await registerForPushNotifications(userId);
+        }
+      }
+
+      // Notification tap listener
+      notificationSub.current = addNotificationResponseListener((response) => {
+        const data = response?.notification?.request?.content?.data;
+        if (data?.type === "booking_request") {
+          console.log("📲 Notification tapped - Booking Request", data);
+        }
+      });
+
+    } catch (error) {
+      console.log("App init error:", error);
+    } finally {
+      setAppReady(true);
+    }
+  };
+
+  init();
+
+  return () => {
+    notificationSub.current?.remove?.();
+    unloadBookingSound();
+  };
+}, []);
 
   if (!appReady) {
     return (

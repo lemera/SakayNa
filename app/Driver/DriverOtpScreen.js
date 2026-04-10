@@ -15,8 +15,11 @@ import {
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
 import { verifyOtp, sendOtp } from "../../lib/otp";
-import { supabase } from '../../lib/supabase'; // adjust path if needed
+import { supabase } from '../../lib/supabase';
 import AsyncStorage from "@react-native-async-storage/async-storage";
+
+// Import the push notification function
+import { registerForPushNotifications } from "../../lib/notifications";   // ← ADD THIS
 
 export default function OtpScreen({ route, navigation }) {
   const { phone, userType } = route.params;
@@ -24,17 +27,15 @@ export default function OtpScreen({ route, navigation }) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState(0); // 👈 Add countdown state
+  const [countdown, setCountdown] = useState(0);
 
   const inputs = useRef([]);
 
-  // 👇 Countdown effect
+  // Countdown effect
   useEffect(() => {
     let timer;
     if (countdown > 0) {
-      timer = setTimeout(() => {
-        setCountdown(countdown - 1);
-      }, 1000);
+      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
     }
     return () => clearTimeout(timer);
   }, [countdown]);
@@ -43,18 +44,14 @@ export default function OtpScreen({ route, navigation }) {
     if (!/^\d*$/.test(text)) return;
 
     const newCode = [...code];
-
-    if (text === "") {
-      newCode[index] = "";
-      setCode(newCode);
-      if (index > 0) inputs.current[index - 1].focus();
-      return;
-    }
-
     newCode[index] = text;
     setCode(newCode);
 
-    if (index < 5) inputs.current[index + 1].focus();
+    if (text !== "" && index < 5) {
+      inputs.current[index + 1]?.focus();
+    } else if (text === "" && index > 0) {
+      inputs.current[index - 1]?.focus();
+    }
   };
 
   const handleVerify = async () => {
@@ -76,14 +73,29 @@ export default function OtpScreen({ route, navigation }) {
 
       const user = data.user;
 
-      // ✅ SAVE SESSION LOCALLY
+      // Save session
       await AsyncStorage.setItem("user_id", user.id);
       await AsyncStorage.setItem("user_phone", user.phone);
       await AsyncStorage.setItem("user_type", user.user_type);
 
-      // 🔥 Navigate based on type
-      // After saving AsyncStorage
+      console.log(`✅ OTP Verified - User: ${user.id} (${user.user_type})`);
 
+      // ================== REGISTER PUSH NOTIFICATION ==================
+      if (user.user_type === "driver") {
+        console.log("🚀 Registering Expo Push Token for Driver...");
+
+        // Register push token
+        const token = await registerForPushNotifications(user.id);
+
+        if (token) {
+          console.log("✅ Push token successfully registered for driver");
+        } else {
+          console.warn("⚠️ Push token registration returned null");
+        }
+      }
+      // =================================================================
+
+      // Navigate based on user type
       if (user.user_type === "driver") {
         const { data: driver } = await supabase
           .from("drivers")
@@ -96,7 +108,6 @@ export default function OtpScreen({ route, navigation }) {
         } else {
           navigation.replace("DriverDetails");
         }
-
       } else {
         const { data: commuter } = await supabase
           .from("commuters")
@@ -112,26 +123,21 @@ export default function OtpScreen({ route, navigation }) {
       }
 
     } catch (err) {
-      Alert.alert("Verification Failed", err.message);
+      Alert.alert("Verification Failed", err.message || "Something went wrong");
     } finally {
       setLoading(false);
     }
   };
 
   const handleResend = async () => {
-    if (countdown > 0) return; // 👈 Prevent resend if countdown active
+    if (countdown > 0) return;
 
     try {
       await sendOtp(phone, userType);
-
-      // ✅ CLEAR OLD INPUTS
       setCode(["", "", "", "", "", ""]);
       inputs.current[0]?.focus();
-
-      // 👇 Start 60-second countdown
       setCountdown(60);
-
-      Alert.alert("Resent", "OTP has been sent again.");
+      Alert.alert("Resent", "A new OTP has been sent to your phone.");
     } catch (err) {
       Alert.alert("Error", err.message);
     }
@@ -176,8 +182,6 @@ export default function OtpScreen({ route, navigation }) {
 
           <Pressable
             onPress={handleVerify}
-            onPressIn={() => setOtpPressed(true)}
-            onPressOut={() => setOtpPressed(false)}
             disabled={loading}
             style={[
               styles.button,
@@ -186,6 +190,8 @@ export default function OtpScreen({ route, navigation }) {
                 opacity: loading ? 0.7 : 1,
               },
             ]}
+            onPressIn={() => setOtpPressed(true)}
+            onPressOut={() => setOtpPressed(false)}
           >
             {loading ? (
               <ActivityIndicator color="#fff" size="small" />
@@ -194,7 +200,6 @@ export default function OtpScreen({ route, navigation }) {
             )}
           </Pressable>
 
-          {/* 👇 Updated Resend Text with Countdown */}
           <Text style={styles.resend}>
             Didn't receive code?{" "}
             {countdown > 0 ? (
