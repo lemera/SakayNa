@@ -88,7 +88,7 @@ const LANDMARK_LABELS = {
   hotel: "Hotels",
   bank: "Banks",
   government: "Government",
-  park: "Parks",
+  park: "Peaks",
   cafe: "Cafes",
   gym: "Gyms",
   pharmacy: "Pharmacies",
@@ -396,6 +396,7 @@ export default function MapPickerScreen() {
   const isProgrammaticMoveRef = useRef(false);
   const regionChangeTimeoutRef = useRef(null);
   const placesSessionTokenRef = useRef(createSessionToken());
+  const dragStartTimeoutRef = useRef(null); // Add this for drag detection
 
   const { type, onSelect, initialLocation } = route.params || {};
 
@@ -416,6 +417,7 @@ export default function MapPickerScreen() {
   const [activeTab, setActiveTab] = useState("popular");
   const [isSheetExpanded, setIsSheetExpanded] = useState(true);
   const [isMapMoving, setIsMapMoving] = useState(false);
+  const [dragStartTriggered, setDragStartTriggered] = useState(false); // Track if drag has triggered minimize
 
   const [favorites, setFavorites] = useState([]);
   const [showAddFavoriteModal, setShowAddFavoriteModal] = useState(false);
@@ -439,6 +441,23 @@ export default function MapPickerScreen() {
   const resetPlacesSessionToken = useCallback(() => {
     placesSessionTokenRef.current = createSessionToken();
   }, []);
+
+  // Function to minimize the bottom sheet
+  const minimizeBottomSheet = useCallback(() => {
+    if (isSheetExpanded && !dragStartTriggered) {
+      Animated.spring(bottomSheetAnim, {
+        toValue: BOTTOM_SHEET_SNAP_POINTS.MINIMIZED,
+        useNativeDriver: false,
+        tension: 300,
+        friction: 30,
+      }).start(() => {
+        setIsSheetExpanded(false);
+        setDragStartTriggered(true);
+      });
+      
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  }, [bottomSheetAnim, isSheetExpanded, dragStartTriggered]);
 
   const panResponder = useRef(
     PanResponder.create({
@@ -1008,6 +1027,7 @@ export default function MapPickerScreen() {
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
       if (geocodeTimeout.current) clearTimeout(geocodeTimeout.current);
       if (regionChangeTimeoutRef.current) clearTimeout(regionChangeTimeoutRef.current);
+      if (dragStartTimeoutRef.current) clearTimeout(dragStartTimeoutRef.current);
     };
   }, [getAddressFromCoords, getCurrentLocation, initialLocation]);
 
@@ -1034,8 +1054,19 @@ export default function MapPickerScreen() {
 
     if (!isProgrammaticMoveRef.current) {
       setIsMapMoving(true);
+      
+      // Auto-minimize bottom sheet when user starts dragging the map
+      // Clear any existing timeout
+      if (dragStartTimeoutRef.current) {
+        clearTimeout(dragStartTimeoutRef.current);
+      }
+      
+      // Small delay to ensure it's not triggered by programmatic moves or initial render
+      dragStartTimeoutRef.current = setTimeout(() => {
+        minimizeBottomSheet();
+      }, 50);
     }
-  }, []);
+  }, [minimizeBottomSheet]);
 
   const handleRegionChangeComplete = useCallback(
     (region) => {
@@ -1043,6 +1074,11 @@ export default function MapPickerScreen() {
 
       if (isProgrammaticMoveRef.current) return;
       if (isLocating || initialAutoLocating) return;
+
+      // Reset the drag start trigger flag after map movement is complete
+      setTimeout(() => {
+        setDragStartTriggered(false);
+      }, 500);
 
       if (regionChangeTimeoutRef.current) {
         clearTimeout(regionChangeTimeoutRef.current);
@@ -2502,7 +2538,7 @@ const styles = StyleSheet.create({
 
   confirmButton: {
     position: "absolute",
-    bottom: 40,
+    bottom: 45,
     left: "10%",
     right: "10%",
     flexDirection: "row",
