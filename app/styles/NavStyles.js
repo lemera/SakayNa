@@ -1,5 +1,17 @@
 import { StyleSheet, Platform } from "react-native";
 
+const COLORS = {
+  primary: "#183B5C",
+  primaryDark: "#10293F",
+  accent: "#E97A3E",
+  white: "#FFFFFF",
+  text: "#183B5C",
+  textMuted: "#6B7A8C",
+  border: "rgba(24, 59, 92, 0.08)",
+  shadow: "#0F172A",
+  surface: "#FFFFFF",
+};
+
 const scale = (size, width) => {
   const baseWidth = 375;
   return Math.round((width / baseWidth) * size);
@@ -10,58 +22,84 @@ const navStylesFactory = (width) =>
     headerContainer: {
       flexDirection: "row",
       alignItems: "center",
-      marginLeft: scale(14, width),
+      marginLeft: scale(16, width),
     },
 
     logo: {
-      width: width < 360 ? 38 : 44,
-      height: width < 360 ? 38 : 44,
+      width: width < 360 ? 40 : 46,
+      height: width < 360 ? 40 : 46,
       resizeMode: "contain",
     },
 
     helpButton: {
       marginRight: scale(14, width),
+      width: width < 360 ? 40 : 44,
+      height: width < 360 ? 40 : 44,
+      borderRadius: 22,
+      backgroundColor: "rgba(24, 59, 92, 0.06)",
       alignItems: "center",
       justifyContent: "center",
+      borderWidth: 1,
+      borderColor: "rgba(24, 59, 92, 0.06)",
     },
 
     helpText: {
-      fontSize: width < 360 ? 10 : 11,
-      color: "#183B5C",
-      fontWeight: "600",
-      marginTop: 2,
+      fontSize: width < 360 ? 9 : 10,
+      color: COLORS.textMuted,
+      fontWeight: "700",
+      marginTop: 1,
+      letterSpacing: 0.2,
     },
 
     tabBar: {
       position: "absolute",
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: "#FFFFFF",
-      paddingTop: 8,
+      left: 14,
+      right: 14,
+      bottom: 10,
+      backgroundColor: "rgba(255, 255, 255, 0.96)",
       borderTopWidth: 0,
-      elevation: 12,
-      shadowColor: "#000",
-      shadowOpacity: 0.06,
-      shadowOffset: { width: 0, height: -2 },
-      shadowRadius: 8,
+      borderWidth: 1,
+      borderColor: COLORS.border,
+      borderRadius: 50,
+      paddingTop: 10,
+      
+
+      ...Platform.select({
+        ios: {
+          shadowColor: COLORS.shadow,
+          shadowOpacity: 0.08,
+          shadowOffset: { width: 0, height: 10 },
+          shadowRadius: 20,
+        },
+        android: {
+          elevation: 16,
+        },
+      }),
     },
 
     trackRideButton: {
-  top: -20,
-  justifyContent: "center",
-  alignItems: "center",
-  backgroundColor: "#183B5C",
-  width: 65,
-  height: 65,
-  borderRadius: 32.5,
+      top: -24,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: COLORS.primary,
+      width: width < 360 ? 68 : 74,
+      height: width < 360 ? 68 : 74,
+      borderRadius: width < 360 ? 34 : 37,
+      borderWidth: 5,
+      borderColor: COLORS.white,
 
-  shadowColor: "#183B5C",
-  shadowOpacity: 0.3,
-  shadowOffset: { width: 0, height: 5 },
-  shadowRadius: 5,
-  elevation: 8,
-},
+      ...Platform.select({
+        ios: {
+          shadowColor: COLORS.primary,
+          shadowOpacity: 0.28,
+          shadowOffset: { width: 0, height: 10 },
+          shadowRadius: 16,
+        },
+        android: {
+          elevation: 12,
+        },
+      }),
+    },
   });
 
 export default navStylesFactory;

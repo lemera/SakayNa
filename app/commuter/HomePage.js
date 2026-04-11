@@ -53,7 +53,7 @@ function HomeButton({ accessibilityState, onPress }) {
     </Pressable>
   );
 }
-
+ 
 export default function HomePage() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -164,7 +164,7 @@ export default function HomePage() {
 
   // FIXED: Proper tab bar height calculation for Android
   const getTabBarHeight = () => {
-    const baseHeight = width < 360 ? 64 : 72;
+    const baseHeight = width < 360 ? 50 : 58; // mas slim
     
     if (Platform.OS === 'android') {
       const navigationBarHeight = insets.bottom;
@@ -189,16 +189,18 @@ export default function HomePage() {
         initialRouteName="Home"
         screenOptions={({ route }) => ({
           headerStyle: {
-            backgroundColor: "#fff",
-            elevation: 0,
-            shadowOpacity: 0,
-            borderBottomWidth: 0,
-          },
-          headerTitleStyle: {
-            fontWeight: "700",
-            fontSize: width < 360 ? 17 : 19,
-            color: "#183B5C",
-          },
+  backgroundColor: "#fff",
+  elevation: 0,
+  shadowOpacity: 0,
+  borderBottomWidth: 0,
+},
+
+headerTitleStyle: {
+  fontWeight: "800",
+  fontSize: width < 360 ? 17 : 20,
+  color: "#183B5C",
+  letterSpacing: 0.3,
+},
           headerTitleAlign: "center",
 
           headerLeft: () => (
@@ -215,8 +217,8 @@ export default function HomePage() {
               onPress={() => navigation.navigate("Support")}
               style={navStyles.helpButton}
             >
-              <Ionicons name="help-circle-outline" size={24} color="#183B5C" />
-              <Text style={navStyles.helpText}>Help</Text>
+              <Ionicons name="help-circle-outline" size={width < 360 ? 18 : 20} color="#183B5C" />
+<Text style={navStyles.helpText}>Help</Text>
             </Pressable>
           ),
 
@@ -224,10 +226,11 @@ export default function HomePage() {
           tabBarActiveTintColor: "#E97A3E",
           tabBarInactiveTintColor: "#183B5C",
           tabBarLabelStyle: {
-            fontSize: width < 360 ? 10 : 11,
-            fontWeight: "600",
-            marginBottom: Platform.OS === "ios" ? 0 : 2,
-          },
+  fontSize: width < 360 ? 10 : 11,
+  fontWeight: "700",
+  marginBottom: Platform.OS === "ios" ? 2 : 4,
+  letterSpacing: 0.2,
+},
           // FIXED: Tab bar style with proper Android handling
           tabBarStyle: [
             navStyles.tabBar,
@@ -244,9 +247,9 @@ export default function HomePage() {
               }),
               // Important for Android
               position: 'absolute',
-              bottom: 0,
-              left: 0,
-              right: 0,
+              bottom: 5,
+              left: 5,
+              right: 5,
             },
           ],
           // FIXED: Safe area insets
@@ -358,17 +361,18 @@ export default function HomePage() {
 const stylesLocal = StyleSheet.create({
   iconWrapper: {
     position: "relative",
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
     alignItems: "center",
     justifyContent: "center",
   },
+
   badge: {
     position: "absolute",
-    top: -5,
+    top: -4,
     right: -10,
-    backgroundColor: "#FF3B30",
-    borderRadius: 10,
+    backgroundColor: "#FF4D4F",
+    borderRadius: 999,
     minWidth: 18,
     height: 18,
     justifyContent: "center",
@@ -376,17 +380,20 @@ const stylesLocal = StyleSheet.create({
     paddingHorizontal: 4,
     borderWidth: 1.5,
     borderColor: "#FFF",
-    elevation: 4,
+    elevation: 5,
   },
+
   badgeText: {
     color: "#FFF",
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "800",
   },
+
   buttonLabel: {
     color: "#fff",
     fontSize: 10,
-    marginTop: 2,
-    fontWeight: "700",
+    marginTop: 3,
+    fontWeight: "800",
+    letterSpacing: 0.2,
   },
 });
