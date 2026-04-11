@@ -2,7 +2,7 @@
   "expo": {
     "name": "SakayNa",
     "slug": "SakayNa",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon_app.png",
     "userInterfaceStyle": "light",

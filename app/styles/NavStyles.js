@@ -60,7 +60,7 @@ const navStylesFactory = (width) =>
       borderTopWidth: 0,
       borderWidth: 1,
       borderColor: COLORS.border,
-      borderRadius: 50,
+      borderRadius: 25,
       paddingTop: 10,
       
 
