@@ -10,6 +10,13 @@ import * as Notifications from "expo-notifications";
 import { supabase } from "./lib/supabase";
 import { getUserSession, clearUserSession } from "./app/utils/authStorage";
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+/* ============================= */
+/* Force Update Import */
+/* ============================= */
+import { checkAppVersion } from "./app/utils/versionChecker";
+import ForceUpdateModal from "./app/components/ForceUpdateModal";
+
 /* ============================= */
 /* Screens Import */
 /* ============================= */
@@ -98,6 +105,12 @@ export default function App() {
 
   const [appReady, setAppReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState("UserType");
+  
+  /* ============================= */
+  /* Force Update State - Modal Approach */
+  /* ============================= */
+  const [showForceUpdateModal, setShowForceUpdateModal] = useState(false);
+  const [forceUpdateData, setForceUpdateData] = useState(null);
 
   const [showLocationDisclosure, setShowLocationDisclosure] = useState(false);
   const [locationPermissionGranted, setLocationPermissionGranted] = useState(false);
@@ -237,62 +250,85 @@ export default function App() {
     }
   };
 
-useEffect(() => {
-  const init = async () => {
-    try {
-      const hasLocationPermission = await checkLocationPermissionStatus();
-      if (!hasLocationPermission) {
-        showLocationProminentDisclosure();
-      }
-
-      const route = await checkSessionAndNavigate();
-      setInitialRoute(route);
-
-      // === NOTIFICATION SETUP ===
-      await setupNotificationChannels();
-
-      if (typeof configureNotificationHandler === "function") {
-        configureNotificationHandler();
-      } else {
-        console.warn("configureNotificationHandler is not available");
-      }
-
-      // Register push token for driver
-      const userId = await AsyncStorage.getItem("user_id");
-      if (userId) {
-        const { data: user } = await supabase
-          .from("users")
-          .select("user_type")
-          .eq("id", userId)
-          .maybeSingle();
-
-        if (user?.user_type === "driver") {
-          await registerForPushNotifications(userId);
+  useEffect(() => {
+    const init = async () => {
+      try {
+        /* ============================= */
+        /* FORCE UPDATE CHECK - HIGHEST PRIORITY */
+        /* ============================= */
+        const versionCheck = await checkAppVersion();
+        
+        console.log("Version check result:", versionCheck);
+        
+        if (versionCheck.needsUpdate && versionCheck.isForceUpdate) {
+          // Show modal instead of separate screen
+          setForceUpdateData({
+            releaseNotes: versionCheck.releaseNotes,
+            updateUrl: versionCheck.updateUrl,
+            currentVersion: versionCheck.currentVersion,
+            minVersion: versionCheck.minVersion,
+          });
+          setShowForceUpdateModal(true);
+          setAppReady(true);
+          return; // Stop other initialization, but modal will show on top
         }
-      }
-
-      // Notification tap listener
-      notificationSub.current = addNotificationResponseListener((response) => {
-        const data = response?.notification?.request?.content?.data;
-        if (data?.type === "booking_request") {
-          console.log("📲 Notification tapped - Booking Request", data);
+        
+        /* ============================= */
+        /* NORMAL APP INITIALIZATION */
+        /* ============================= */
+        const hasLocationPermission = await checkLocationPermissionStatus();
+        if (!hasLocationPermission) {
+          showLocationProminentDisclosure();
         }
-      });
 
-    } catch (error) {
-      console.log("App init error:", error);
-    } finally {
-      setAppReady(true);
-    }
-  };
+        const route = await checkSessionAndNavigate();
+        setInitialRoute(route);
 
-  init();
+        // === NOTIFICATION SETUP ===
+        await setupNotificationChannels();
 
-  return () => {
-    notificationSub.current?.remove?.();
-    unloadBookingSound();
-  };
-}, []);
+        if (typeof configureNotificationHandler === "function") {
+          configureNotificationHandler();
+        } else {
+          console.warn("configureNotificationHandler is not available");
+        }
+
+        // Register push token for driver
+        const userId = await AsyncStorage.getItem("user_id");
+        if (userId) {
+          const { data: user } = await supabase
+            .from("users")
+            .select("user_type")
+            .eq("id", userId)
+            .maybeSingle();
+
+          if (user?.user_type === "driver") {
+            await registerForPushNotifications(userId);
+          }
+        }
+
+        // Notification tap listener
+        notificationSub.current = addNotificationResponseListener((response) => {
+          const data = response?.notification?.request?.content?.data;
+          if (data?.type === "booking_request") {
+            console.log("📲 Notification tapped - Booking Request", data);
+          }
+        });
+
+      } catch (error) {
+        console.log("App init error:", error);
+      } finally {
+        setAppReady(true);
+      }
+    };
+
+    init();
+
+    return () => {
+      notificationSub.current?.remove?.();
+      unloadBookingSound();
+    };
+  }, []);
 
   if (!appReady) {
     return (
@@ -311,77 +347,82 @@ useEffect(() => {
     );
   }
 
+  /* ============================= */
+  /* MAIN APP RENDER */
+  /* ============================= */
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-      <NavigationContainer linking={linking}>
-        <Stack.Navigator
-          initialRouteName={initialRoute}
-          screenOptions={{ headerShown: false }}
-        >
-          <Stack.Screen name="UserType" component={UserTypeScreen} />
-          
-          <Stack.Screen name="TermsScreen" component={TermsScreen} />
-          <Stack.Screen name="PrivacyScreen" component={PrivacyScreen} />
-          <Stack.Screen name="CommuterLogin" component={CommuterLoginScreen} />
-          <Stack.Screen name="OtpScreen" component={OtpScreen} />
-          <Stack.Screen name="CommuterDetails" component={CommuterDetails} />
-          <Stack.Screen name="HomePage" component={HomePage} />
-          <Stack.Screen name="SelectDriverScreen" component={SelectDriverScreen} />
-          <Stack.Screen name="TrackRideScreen" component={TrackRideScreen} />
-          <Stack.Screen name="PaymentScreen" component={PaymentScreen} />
-          <Stack.Screen name="MapPicker" component={MapPickerScreen} />
-          <Stack.Screen name="TransactionHistory" component={TransactionHistory} />
-          <Stack.Screen name="PaymentMethods" component={PaymentMethods} />
-          <Stack.Screen name="PointsRewards" component={PointsRewards} />
-          <Stack.Screen name="BookingDetails" component={BookingDetails} />
-          <Stack.Screen name="Support" component={Support} />
-          <Stack.Screen name="TransactionDetails" component={TransactionDetails} />
-          <Stack.Screen name="TicketDetails" component={TicketDetails} />
-          <Stack.Screen name="HelpCenter" component={HelpCenter} />
-          <Stack.Screen name="RateDriver" component={RateDriver} />
-          <Stack.Screen name="RateRide" component={RateRide} />
-          <Stack.Screen name="RideHistoryScreen" component={RideHistoryScreen} />
-          <Stack.Screen name="ReferralScreen" component={ReferralScreen} />
-          <Stack.Screen name="FloatingMenu" component={FloatingMenu} />
-          <Stack.Screen name="MenuButton" component={MenuButton} />
-          <Stack.Screen name="FoodStoreScreen" component={FoodStoreScreen} />
-          <Stack.Screen
-            name="WithdrawalDetails"
-            component={WithdrawalDetailsScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="RateDriverScreen"
-            component={RateDriverScreen}
-            options={{ headerShown: false }}
-          />
-          <Stack.Screen
-            name="TopRatedDrivers"
-            component={TopRatedDriversScreen}
-            options={{ headerShown: false }}
-          />
+        <NavigationContainer linking={linking}>
+          <Stack.Navigator
+            initialRouteName={initialRoute}
+            screenOptions={{ headerShown: false }}
+          >
+            <Stack.Screen name="UserType" component={UserTypeScreen} />
+            
+            <Stack.Screen name="TermsScreen" component={TermsScreen} />
+            <Stack.Screen name="PrivacyScreen" component={PrivacyScreen} />
+            <Stack.Screen name="CommuterLogin" component={CommuterLoginScreen} />
+            <Stack.Screen name="OtpScreen" component={OtpScreen} />
+            <Stack.Screen name="CommuterDetails" component={CommuterDetails} />
+            <Stack.Screen name="HomePage" component={HomePage} />
+            <Stack.Screen name="SelectDriverScreen" component={SelectDriverScreen} />
+            <Stack.Screen name="TrackRideScreen" component={TrackRideScreen} />
+            <Stack.Screen name="PaymentScreen" component={PaymentScreen} />
+            <Stack.Screen name="MapPicker" component={MapPickerScreen} />
+            <Stack.Screen name="TransactionHistory" component={TransactionHistory} />
+            <Stack.Screen name="PaymentMethods" component={PaymentMethods} />
+            <Stack.Screen name="PointsRewards" component={PointsRewards} />
+            <Stack.Screen name="BookingDetails" component={BookingDetails} />
+            <Stack.Screen name="Support" component={Support} />
+            <Stack.Screen name="TransactionDetails" component={TransactionDetails} />
+            <Stack.Screen name="TicketDetails" component={TicketDetails} />
+            <Stack.Screen name="HelpCenter" component={HelpCenter} />
+            <Stack.Screen name="RateDriver" component={RateDriver} />
+            <Stack.Screen name="RateRide" component={RateRide} />
+            <Stack.Screen name="RideHistoryScreen" component={RideHistoryScreen} />
+            <Stack.Screen name="ReferralScreen" component={ReferralScreen} />
+            <Stack.Screen name="FloatingMenu" component={FloatingMenu} />
+            <Stack.Screen name="MenuButton" component={MenuButton} />
+            <Stack.Screen name="FoodStoreScreen" component={FoodStoreScreen} />
+            <Stack.Screen
+              name="WithdrawalDetails"
+              component={WithdrawalDetailsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="RateDriverScreen"
+              component={RateDriverScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="TopRatedDrivers"
+              component={TopRatedDriversScreen}
+              options={{ headerShown: false }}
+            />
 
-          <Stack.Screen name="DriverLoginScreen" component={DriverLoginScreen} />
-          <Stack.Screen name="DriverOtpScreen" component={DriverOtpScreen} />
-          <Stack.Screen name="DriverDetails" component={DriverDetails} />
-          <Stack.Screen name="DriverHomePage" component={DriverHomePage} />
-          <Stack.Screen name="RankingPage" component={RankingPage} />
-          <Stack.Screen
-            name="DriverVerificationScreen"
-            component={DriverVerificationScreen}
-          />
-          <Stack.Screen name="SubscriptionScreen" component={SubscriptionScreen} />
-          <Stack.Screen name="TripDetailsScreen" component={TripDetailsScreen} />
-          <Stack.Screen name="ActiveRideScreen" component={ActiveRideScreen} />
-          <Stack.Screen name="PaymentWebView" component={PaymentWebView} />
-          <Stack.Screen name="PaymentSuccess" component={PaymentSuccess} />
-          <Stack.Screen name="inbox" component={DriverInboxScreen} />
-          <Stack.Screen name="account" component={DriverAccountScreen} />
-          <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
+            <Stack.Screen name="DriverLoginScreen" component={DriverLoginScreen} />
+            <Stack.Screen name="DriverOtpScreen" component={DriverOtpScreen} />
+            <Stack.Screen name="DriverDetails" component={DriverDetails} />
+            <Stack.Screen name="DriverHomePage" component={DriverHomePage} />
+            <Stack.Screen name="RankingPage" component={RankingPage} />
+            <Stack.Screen
+              name="DriverVerificationScreen"
+              component={DriverVerificationScreen}
+            />
+            <Stack.Screen name="SubscriptionScreen" component={SubscriptionScreen} />
+            <Stack.Screen name="TripDetailsScreen" component={TripDetailsScreen} />
+            <Stack.Screen name="ActiveRideScreen" component={ActiveRideScreen} />
+            <Stack.Screen name="PaymentWebView" component={PaymentWebView} />
+            <Stack.Screen name="PaymentSuccess" component={PaymentSuccess} />
+            <Stack.Screen name="inbox" component={DriverInboxScreen} />
+            <Stack.Screen name="account" component={DriverAccountScreen} />
+            <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
+          </Stack.Navigator>
+        </NavigationContainer>
       </SafeAreaProvider>
+      
+      {/* Location Disclosure Modal */}
       <Modal
         visible={showLocationDisclosure}
         transparent={true}
@@ -488,6 +529,15 @@ useEffect(() => {
           </View>
         </View>
       </Modal>
+
+      {/* Force Update Modal - This will show on top of everything */}
+      <ForceUpdateModal
+        visible={showForceUpdateModal}
+        releaseNotes={forceUpdateData?.releaseNotes}
+        updateUrl={forceUpdateData?.updateUrl}
+        currentVersion={forceUpdateData?.currentVersion}
+        minVersion={forceUpdateData?.minVersion}
+      />
     </GestureHandlerRootView>
   );
 }

@@ -2502,7 +2502,7 @@ const styles = StyleSheet.create({
 
   confirmButton: {
     position: "absolute",
-    bottom: 28,
+    bottom: 40,
     left: "10%",
     right: "10%",
     flexDirection: "row",
