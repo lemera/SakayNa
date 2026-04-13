@@ -190,7 +190,7 @@ export default function UserTypeScreen({ navigation }) {
                         selectedType === "commuter" && styles.optionTitleSelected,
                         { fontSize: isTablet ? 22 : (isSmallPhone ? 16 : 18) }
                       ]}>
-                        Ride as Commuter
+                        Login as Commuter
                       </Text>
                       <Text style={[
                         styles.optionDescription,
@@ -250,7 +250,7 @@ export default function UserTypeScreen({ navigation }) {
                         selectedType === "driver" && styles.optionTitleSelected,
                         { fontSize: isTablet ? 22 : (isSmallPhone ? 16 : 18) }
                       ]}>
-                        Drive as Partner
+                        Login as Drive
                       </Text>
                       <Text style={[
                         styles.optionDescription,

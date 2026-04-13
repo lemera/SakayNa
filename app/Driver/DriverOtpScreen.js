@@ -27,7 +27,7 @@ export default function OtpScreen({ route, navigation }) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState(0);
+  const [countdown, setCountdown] = useState(60);
 
   const inputs = useRef([]);
 

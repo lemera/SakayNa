@@ -1043,7 +1043,7 @@ export default function DriverAccountScreen({ navigation }) {
               </Text>
             </View>
 
-            <View
+            {/* <View
               style={{
                 flex: 1,
                 backgroundColor: "#F9FAFB",
@@ -1058,7 +1058,7 @@ export default function DriverAccountScreen({ navigation }) {
               <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
                 Lifetime Earnings
               </Text>
-            </View>
+            </View> */}
 
             <View
               style={{

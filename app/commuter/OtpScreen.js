@@ -1,4 +1,3 @@
-// commuterOtpScreen.js
 import React, { useState, useRef, useEffect } from "react";
 import {
   View,
@@ -23,19 +22,25 @@ export default function OtpScreen({ route, navigation }) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [countdown, setCountdown] = useState(0); // 👈 Add countdown state
+  const [resending, setResending] = useState(false);
+  const [countdown, setCountdown] = useState(60); // start immediately
 
   const inputs = useRef([]);
 
-  // 👇 Countdown effect
   useEffect(() => {
-    let timer;
-    if (countdown > 0) {
-      timer = setTimeout(() => {
-        setCountdown(countdown - 1);
-      }, 1000);
-    }
-    return () => clearTimeout(timer);
+    if (countdown <= 0) return;
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
   }, [countdown]);
 
   const handleChange = (text, index) => {
@@ -46,14 +51,14 @@ export default function OtpScreen({ route, navigation }) {
     if (text === "") {
       newCode[index] = "";
       setCode(newCode);
-      if (index > 0) inputs.current[index - 1].focus();
+      if (index > 0) inputs.current[index - 1]?.focus();
       return;
     }
 
     newCode[index] = text;
     setCode(newCode);
 
-    if (index < 5) inputs.current[index + 1].focus();
+    if (index < 5) inputs.current[index + 1]?.focus();
   };
 
   const handleVerify = async () => {
@@ -75,12 +80,10 @@ export default function OtpScreen({ route, navigation }) {
 
       const user = data.user;
 
-      // ✅ SAVE SESSION LOCALLY
       await AsyncStorage.setItem("user_id", user.id);
       await AsyncStorage.setItem("user_phone", user.phone);
       await AsyncStorage.setItem("user_type", user.user_type);
 
-      // 🔥 Navigate based on type
       if (user.user_type === "commuter") {
         navigation.replace("CommuterDetails");
       } else {
@@ -94,21 +97,22 @@ export default function OtpScreen({ route, navigation }) {
   };
 
   const handleResend = async () => {
-    if (countdown > 0) return; // 👈 Prevent resend if countdown active
+    if (countdown > 0 || resending) return;
+
+    setResending(true);
 
     try {
       await sendOtp(phone, userType);
 
-      // ✅ CLEAR OLD INPUTS
       setCode(["", "", "", "", "", ""]);
       inputs.current[0]?.focus();
-
-      // 👇 Start 60-second countdown
       setCountdown(60);
 
       Alert.alert("Resent", "OTP has been sent again.");
     } catch (err) {
       Alert.alert("Error", err.message);
+    } finally {
+      setResending(false);
     }
   };
 
@@ -134,7 +138,6 @@ export default function OtpScreen({ route, navigation }) {
           <Text style={styles.title}>We sent a code to your phone</Text>
           <Text style={styles.subtitle}>{phone}</Text>
 
-          {/* OTP Inputs */}
           <View style={styles.otpContainer}>
             {code.map((digit, index) => (
               <TextInput
@@ -169,13 +172,14 @@ export default function OtpScreen({ route, navigation }) {
             )}
           </Pressable>
 
-          {/* 👇 Updated Resend Text with Countdown */}
           <Text style={styles.resend}>
             Didn't receive code?{" "}
             {countdown > 0 ? (
               <Text style={styles.resendDisabled}>
                 Resend available in {countdown}s
               </Text>
+            ) : resending ? (
+              <Text style={styles.resendDisabled}>Resending...</Text>
             ) : (
               <Text style={styles.resendLink} onPress={handleResend}>
                 Resend

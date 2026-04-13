@@ -7,14 +7,13 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
-  Alert,
+  Dimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import { Dimensions } from "react-native";
 
 export default function RankingPage({ navigation }) {
   const insets = useSafeAreaInsets();
@@ -25,8 +24,7 @@ export default function RankingPage({ navigation }) {
   const [driverId, setDriverId] = useState(null);
   const [driver, setDriver] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState("week"); // week, month, all
-  
-  // Ranking data
+
   const [driverRank, setDriverRank] = useState({
     currentRank: 0,
     totalDrivers: 0,
@@ -40,29 +38,31 @@ export default function RankingPage({ navigation }) {
   const [leaderboard, setLeaderboard] = useState([]);
   const [topDrivers, setTopDrivers] = useState([]);
   const [nearbyDrivers, setNearbyDrivers] = useState([]);
-  
+
   const [performance, setPerformance] = useState({
     tripsThisWeek: 0,
     earningsThisWeek: 0,
-    rating: 0,
+    rating: "0.0",
     acceptanceRate: 0,
     completionRate: 0,
   });
 
   const [weeklyPoints, setWeeklyPoints] = useState([0, 0, 0, 0, 0, 0, 0]);
 
-  // Fetch driver ID
   useFocusEffect(
     useCallback(() => {
       const getDriverId = async () => {
-        const id = await AsyncStorage.getItem("user_id");
-        setDriverId(id);
+        try {
+          const id = await AsyncStorage.getItem("user_id");
+          setDriverId(id);
+        } catch (error) {
+          console.log("Error getting driver ID:", error);
+        }
       };
       getDriverId();
     }, [])
   );
 
-  // Fetch ranking data
   useEffect(() => {
     if (driverId) {
       loadRankingData();
@@ -74,8 +74,7 @@ export default function RankingPage({ navigation }) {
       setLoading(true);
       await Promise.all([
         fetchDriverProfile(),
-        fetchDriverRank(),
-        fetchLeaderboard(),
+        fetchDriverRankAndLeaderboard(),
         fetchPerformance(),
         fetchWeeklyPoints(),
       ]);
@@ -87,22 +86,39 @@ export default function RankingPage({ navigation }) {
   };
 
   const onRefresh = async () => {
-    setRefreshing(true);
-    await loadRankingData();
-    setRefreshing(false);
+    try {
+      setRefreshing(true);
+      await loadRankingData();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const getPeriodStartDate = (period) => {
+    const now = new Date();
+    let startDate = new Date(now);
+
+    if (period === "week") {
+      // Monday start, Sunday-safe
+      const day = now.getDay(); // Sun=0, Mon=1 ... Sat=6
+      const diffToMonday = day === 0 ? 6 : day - 1;
+      startDate.setDate(now.getDate() - diffToMonday);
+      startDate.setHours(0, 0, 0, 0);
+    } else if (period === "month") {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      startDate.setHours(0, 0, 0, 0);
+    } else {
+      startDate = new Date("2000-01-01T00:00:00");
+    }
+
+    return startDate;
   };
 
   const fetchDriverProfile = async () => {
     try {
       const { data, error } = await supabase
         .from("drivers")
-        .select(`
-          id,
-          first_name,
-          last_name,
-          profile_picture,
-          status
-        `)
+        .select("id, first_name, last_name, profile_picture, status")
         .eq("id", driverId)
         .single();
 
@@ -113,61 +129,86 @@ export default function RankingPage({ navigation }) {
     }
   };
 
-  const fetchDriverRank = async () => {
+  const fetchDriverRankAndLeaderboard = async () => {
     try {
-      // Get all drivers with their stats
-      const { data: allDrivers, error } = await supabase
+      const startDate = getPeriodStartDate(selectedPeriod);
+
+      const { data: allDrivers, error: driversError } = await supabase
         .from("drivers")
-        .select(`
-          id,
-          first_name,
-          last_name,
-          profile_picture
-        `)
+        .select("id, first_name, last_name, profile_picture")
         .eq("status", "approved");
 
-      if (error) throw error;
+      if (driversError) throw driversError;
 
-      // Get trip counts for each driver
-      const driverStats = await Promise.all(
-        allDrivers.map(async (d) => {
-          const { count, error: countError } = await supabase
+      const leaderboardData = await Promise.all(
+        (allDrivers || []).map(async (d) => {
+          const { data: bookings, error: bookingsError } = await supabase
             .from("bookings")
-            .select("*", { count: "exact", head: true })
+            .select("fare, commuter_rating, ride_completed_at, status")
             .eq("driver_id", d.id)
-            .eq("status", "completed");
+            .eq("status", "completed")
+            .not("ride_completed_at", "is", null)
+            .gte("ride_completed_at", startDate.toISOString());
 
-          if (countError) throw countError;
+          if (bookingsError) throw bookingsError;
 
-          // Calculate points (example formula: 10 points per trip)
-          const points = (count || 0) * 10;
+          const trips = bookings?.length || 0;
+          const points = trips * 10;
+
+          const ratings = (bookings || [])
+            .filter((b) => b.commuter_rating != null)
+            .map((b) => Number(b.commuter_rating));
+
+          const avgRating =
+            ratings.length > 0
+              ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
+              : 0;
 
           return {
             ...d,
-            trips: count || 0,
-            points: points,
+            trips,
+            points,
+            rating: avgRating,
           };
         })
       );
 
-      // Sort by points
-      const sortedDrivers = driverStats.sort((a, b) => b.points - a.points);
-      
-      // Find current driver's rank
-      const currentDriverIndex = sortedDrivers.findIndex(d => d.id === driverId);
-      const currentRank = currentDriverIndex + 1;
-      const totalDrivers = sortedDrivers.length;
-      const percentile = ((totalDrivers - currentRank) / totalDrivers) * 100;
-      
-      // Get current driver's points
-      const currentDriverPoints = sortedDrivers[currentDriverIndex]?.points || 0;
+      const sortedDrivers = leaderboardData
+        .sort((a, b) => {
+          if (b.points !== a.points) return b.points - a.points;
+          if (b.rating !== a.rating) return b.rating - a.rating;
+          return b.trips - a.trips;
+        })
+        .map((item, index) => ({
+          ...item,
+          rank: index + 1,
+          ratingText: item.rating.toFixed(1),
+        }));
 
-      // Determine level based on points
+      setLeaderboard(sortedDrivers);
+      setTopDrivers(sortedDrivers.slice(0, 3));
+
+      const currentDriverIndex = sortedDrivers.findIndex((d) => d.id === driverId);
+      const currentRank = currentDriverIndex >= 0 ? currentDriverIndex + 1 : 0;
+      const totalDrivers = sortedDrivers.length;
+
+      const percentile =
+        currentRank > 0 && totalDrivers > 0
+          ? ((totalDrivers - currentRank) / totalDrivers) * 100
+          : 0;
+
+      const currentDriverPoints =
+        currentDriverIndex >= 0 ? sortedDrivers[currentDriverIndex].points : 0;
+
       let level = "Bronze";
       let nextLevel = "Silver";
       let pointsToNextLevel = 500 - currentDriverPoints;
 
-      if (currentDriverPoints >= 2000) {
+      if (currentDriverPoints >= 3000) {
+        level = "Legend";
+        nextLevel = "Max";
+        pointsToNextLevel = 0;
+      } else if (currentDriverPoints >= 2000) {
         level = "Diamond";
         nextLevel = "Legend";
         pointsToNextLevel = 3000 - currentDriverPoints;
@@ -179,8 +220,6 @@ export default function RankingPage({ navigation }) {
         level = "Silver";
         nextLevel = "Gold";
         pointsToNextLevel = 1000 - currentDriverPoints;
-      } else {
-        pointsToNextLevel = 500 - currentDriverPoints;
       }
 
       setDriverRank({
@@ -193,104 +232,36 @@ export default function RankingPage({ navigation }) {
         pointsToNextLevel: Math.max(0, pointsToNextLevel),
       });
 
-      // Get top 3 drivers
-      setTopDrivers(sortedDrivers.slice(0, 3));
-
-      // Get nearby drivers (2 above, 2 below)
-      const start = Math.max(0, currentDriverIndex - 2);
-      const end = Math.min(totalDrivers, currentDriverIndex + 3);
-      setNearbyDrivers(sortedDrivers.slice(start, end));
-
+      if (currentDriverIndex >= 0) {
+        const start = Math.max(0, currentDriverIndex - 2);
+        const end = Math.min(totalDrivers, currentDriverIndex + 3);
+        setNearbyDrivers(sortedDrivers.slice(start, end));
+      } else {
+        setNearbyDrivers([]);
+      }
     } catch (err) {
-      console.log("Error fetching rank:", err.message);
-    }
-  };
-
-  const fetchLeaderboard = async () => {
-    try {
-      // Get top 10 drivers
-      const { data: drivers, error } = await supabase
-        .from("drivers")
-        .select(`
-          id,
-          first_name,
-          last_name,
-          profile_picture
-        `)
-        .eq("status", "approved")
-        .limit(10);
-
-      if (error) throw error;
-
-      // Get stats for each driver
-      const leaderboardData = await Promise.all(
-        drivers.map(async (d, index) => {
-          const { count, error: countError } = await supabase
-            .from("bookings")
-            .select("*", { count: "exact", head: true })
-            .eq("driver_id", d.id)
-            .eq("status", "completed");
-
-          if (countError) throw countError;
-
-          // Get average rating
-          const { data: ratings, error: ratingError } = await supabase
-            .from("bookings")
-            .select("commuter_rating")
-            .eq("driver_id", d.id)
-            .not("commuter_rating", "is", null);
-
-          if (ratingError) throw ratingError;
-
-          const avgRating = ratings?.length > 0
-            ? ratings.reduce((sum, r) => sum + r.commuter_rating, 0) / ratings.length
-            : 0;
-
-          // Calculate points
-          const trips = count || 0;
-          const points = trips * 10;
-
-          return {
-            ...d,
-            rank: index + 1,
-            trips,
-            points,
-            rating: avgRating.toFixed(1),
-          };
-        })
-      );
-
-      // Sort by points
-      const sortedLeaderboard = leaderboardData.sort((a, b) => b.points - a.points);
-      setLeaderboard(sortedLeaderboard);
-
-    } catch (err) {
-      console.log("Error fetching leaderboard:", err.message);
+      console.log("Error fetching rank/leaderboard:", err.message);
     }
   };
 
   const fetchPerformance = async () => {
     try {
-      const today = new Date();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - today.getDay() + 1);
-      startOfWeek.setHours(0, 0, 0, 0);
+      const startDate = getPeriodStartDate(selectedPeriod);
 
-      // Get this week's trips
-      const { data: weeklyBookings, error: weeklyError } = await supabase
+      const { data: periodBookings, error: periodError } = await supabase
         .from("bookings")
-        .select("actual_fare, commuter_rating, status")
+        .select("fare, commuter_rating, status, ride_completed_at")
         .eq("driver_id", driverId)
-        .gte("created_at", startOfWeek.toISOString());
+        .eq("status", "completed")
+        .not("ride_completed_at", "is", null)
+        .gte("ride_completed_at", startDate.toISOString());
 
-      if (weeklyError) throw weeklyError;
+      if (periodError) throw periodError;
 
-      const tripsThisWeek = weeklyBookings?.filter(b => b.status === "completed").length || 0;
-      const earningsThisWeek = weeklyBookings
-        ?.filter(b => b.status === "completed")
-        .reduce((sum, b) => sum + (b.actual_fare || 0), 0) || 0;
+      const tripsCount = periodBookings?.length || 0;
+      const earningsTotal =
+        periodBookings?.reduce((sum, b) => sum + Number(b.fare || 0), 0) || 0;
 
-      // Get all time ratings
       const { data: allBookings, error: allError } = await supabase
         .from("bookings")
         .select("commuter_rating, status")
@@ -298,34 +269,30 @@ export default function RankingPage({ navigation }) {
 
       if (allError) throw allError;
 
-      const completedBookings = allBookings?.filter(b => b.status === "completed") || [];
+      const completedBookings =
+        allBookings?.filter((b) => b.status === "completed") || [];
       const totalBookings = allBookings?.length || 0;
-      
-      // Calculate average rating
+
       const ratings = completedBookings
-        .filter(b => b.commuter_rating)
-        .map(b => b.commuter_rating);
-      
-      const avgRating = ratings.length > 0
-        ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
-        : 0;
+        .filter((b) => b.commuter_rating != null)
+        .map((b) => Number(b.commuter_rating));
 
-      // Calculate acceptance rate (example: 95%)
+      const avgRating =
+        ratings.length > 0
+          ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
+          : 0;
+
       const acceptanceRate = 95;
-
-      // Calculate completion rate
-      const completionRate = totalBookings > 0
-        ? (completedBookings.length / totalBookings) * 100
-        : 0;
+      const completionRate =
+        totalBookings > 0 ? (completedBookings.length / totalBookings) * 100 : 0;
 
       setPerformance({
-        tripsThisWeek,
-        earningsThisWeek,
+        tripsThisWeek: tripsCount,
+        earningsThisWeek: earningsTotal,
         rating: avgRating.toFixed(1),
         acceptanceRate,
         completionRate: Math.round(completionRate),
       });
-
     } catch (err) {
       console.log("Error fetching performance:", err.message);
     }
@@ -333,31 +300,28 @@ export default function RankingPage({ navigation }) {
 
   const fetchWeeklyPoints = async () => {
     try {
-      const today = new Date();
-      const startOfWeek = new Date(today);
-      startOfWeek.setDate(today.getDate() - today.getDay() + 1);
-      startOfWeek.setHours(0, 0, 0, 0);
+      const startOfWeek = getPeriodStartDate("week");
 
       const { data, error } = await supabase
         .from("bookings")
-        .select("created_at")
+        .select("ride_completed_at")
         .eq("driver_id", driverId)
         .eq("status", "completed")
-        .gte("created_at", startOfWeek.toISOString());
+        .not("ride_completed_at", "is", null)
+        .gte("ride_completed_at", startOfWeek.toISOString());
 
       if (error) throw error;
 
       const dailyPoints = [0, 0, 0, 0, 0, 0, 0];
 
-      data?.forEach(booking => {
-        const date = new Date(booking.created_at);
-        let dayIndex = date.getDay();
-        dayIndex = dayIndex === 0 ? 6 : dayIndex - 1;
-        dailyPoints[dayIndex] += 10; // 10 points per trip
+      (data || []).forEach((booking) => {
+        const date = new Date(booking.ride_completed_at);
+        let dayIndex = date.getDay(); // Sun=0
+        dayIndex = dayIndex === 0 ? 6 : dayIndex - 1; // Mon=0 ... Sun=6
+        dailyPoints[dayIndex] += 10;
       });
 
       setWeeklyPoints(dailyPoints);
-
     } catch (err) {
       console.log("Error fetching weekly points:", err.message);
     }
@@ -365,11 +329,18 @@ export default function RankingPage({ navigation }) {
 
   const getLevelColor = (level) => {
     switch (level) {
-      case "Bronze": return "#CD7F32";
-      case "Silver": return "#C0C0C0";
-      case "Gold": return "#FFD700";
-      case "Diamond": return "#B9F2FF";
-      default: return "#6B7280";
+      case "Bronze":
+        return "#CD7F32";
+      case "Silver":
+        return "#C0C0C0";
+      case "Gold":
+        return "#FFD700";
+      case "Diamond":
+        return "#B9F2FF";
+      case "Legend":
+        return "#8B5CF6";
+      default:
+        return "#6B7280";
     }
   };
 
@@ -386,9 +357,37 @@ export default function RankingPage({ navigation }) {
     }
   };
 
+  const tripLabel =
+    selectedPeriod === "week"
+      ? "Trips/Week"
+      : selectedPeriod === "month"
+      ? "Trips/Month"
+      : "All Trips";
+
+  const earningsLabel =
+    selectedPeriod === "week"
+      ? "Weekly Earnings"
+      : selectedPeriod === "month"
+      ? "Monthly Earnings"
+      : "Total Earnings";
+
+  const performanceTitle =
+    selectedPeriod === "week"
+      ? "📊 Weekly Performance"
+      : selectedPeriod === "month"
+      ? "📊 Monthly Performance"
+      : "📊 Overall Performance";
+
   if (loading && !refreshing) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F5F7FA" }}>
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: "#F5F7FA",
+        }}
+      >
         <ActivityIndicator size="large" color="#183B5C" />
       </View>
     );
@@ -431,7 +430,6 @@ export default function RankingPage({ navigation }) {
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Period Selector crown */}
         <View style={{ flexDirection: "row", marginTop: 20, gap: 8 }}>
           {[
             { key: "week", label: "This Week" },
@@ -483,7 +481,6 @@ export default function RankingPage({ navigation }) {
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "center" }}>
-          {/* Rank Badge */}
           <View
             style={{
               width: 80,
@@ -497,14 +494,25 @@ export default function RankingPage({ navigation }) {
               borderColor: getLevelColor(driverRank.level),
             }}
           >
-            <Text style={{ fontSize: 32, fontWeight: "bold", color: getLevelColor(driverRank.level) }}>
-              #{driverRank.currentRank}
+            <Text
+              style={{
+                fontSize: 32,
+                fontWeight: "bold",
+                color: getLevelColor(driverRank.level),
+              }}
+            >
+              #{driverRank.currentRank || 0}
             </Text>
           </View>
 
-          {/* Rank Info */}
           <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 5 }}>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: 5,
+              }}
+            >
               <Text style={{ fontSize: 18, fontWeight: "bold", color: "#333" }}>
                 {driverRank.level}
               </Text>
@@ -517,7 +525,12 @@ export default function RankingPage({ navigation }) {
                   marginLeft: 8,
                 }}
               >
-                <Text style={{ fontSize: 10, color: getLevelColor(driverRank.level) }}>
+                <Text
+                  style={{
+                    fontSize: 10,
+                    color: getLevelColor(driverRank.level),
+                  }}
+                >
                   {driverRank.percentile}%
                 </Text>
               </View>
@@ -527,11 +540,20 @@ export default function RankingPage({ navigation }) {
               {driverRank.points} points • Top {driverRank.percentile}%
             </Text>
 
-            {/* Progress to next level */}
             <View style={{ marginTop: 5 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 2 }}>
-                <Text style={{ fontSize: 10, color: "#666" }}>Next: {driverRank.nextLevel}</Text>
-                <Text style={{ fontSize: 10, color: "#666" }}>{driverRank.pointsToNextLevel} pts needed</Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  marginBottom: 2,
+                }}
+              >
+                <Text style={{ fontSize: 10, color: "#666" }}>
+                  Next: {driverRank.nextLevel}
+                </Text>
+                <Text style={{ fontSize: 10, color: "#666" }}>
+                  {driverRank.pointsToNextLevel} pts needed
+                </Text>
               </View>
               <View
                 style={{
@@ -543,7 +565,17 @@ export default function RankingPage({ navigation }) {
               >
                 <View
                   style={{
-                    width: `${Math.min(100, (driverRank.points / (driverRank.points + driverRank.pointsToNextLevel)) * 100)}%`,
+                    width: `${
+                      Math.min(
+                        100,
+                        driverRank.points + driverRank.pointsToNextLevel > 0
+                          ? (driverRank.points /
+                              (driverRank.points +
+                                driverRank.pointsToNextLevel)) *
+                            100
+                          : 0
+                      )
+                    }%`,
                     height: "100%",
                     backgroundColor: getLevelColor(driverRank.level),
                   }}
@@ -553,7 +585,6 @@ export default function RankingPage({ navigation }) {
           </View>
         </View>
 
-        {/* Stats Grid */}
         <View style={{ flexDirection: "row", marginTop: 20, gap: 10 }}>
           <View
             style={{
@@ -567,7 +598,9 @@ export default function RankingPage({ navigation }) {
             <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
               {driverRank.totalDrivers}
             </Text>
-            <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>Total Drivers</Text>
+            <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+              Total Drivers
+            </Text>
           </View>
 
           <View
@@ -583,9 +616,16 @@ export default function RankingPage({ navigation }) {
               <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
                 {performance.rating}
               </Text>
-              <Ionicons name="star" size={14} color="#F59E0B" style={{ marginLeft: 2 }} />
+              <Ionicons
+                name="star"
+                size={14}
+                color="#F59E0B"
+                style={{ marginLeft: 2 }}
+              />
             </View>
-            <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>Rating</Text>
+            <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+              Rating
+            </Text>
           </View>
 
           <View
@@ -600,38 +640,55 @@ export default function RankingPage({ navigation }) {
             <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
               {performance.tripsThisWeek}
             </Text>
-            <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>Trips/Week</Text>
+            <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+              {tripLabel}
+            </Text>
           </View>
         </View>
       </View>
 
       {/* Top 3 Drivers */}
       <View style={{ marginHorizontal: 20, marginTop: 20 }}>
-        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            color: "#333",
+            marginBottom: 15,
+          }}
+        >
           🏆 Top Performers
         </Text>
 
-        <View style={{ flexDirection: "row", alignItems: "flex-end", justifyContent: "center" }}>
-          {topDrivers.map((driver, index) => {
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "flex-end",
+            justifyContent: "center",
+          }}
+        >
+          {topDrivers.map((item, index) => {
             const rank = index + 1;
             const badge = getRankBadge(rank);
-            const height = rank === 1 ? 100 : rank === 2 ? 80 : 60;
 
             return (
               <View
-                key={driver.id}
+                key={item.id}
                 style={{
                   flex: 1,
                   alignItems: "center",
                   marginHorizontal: 5,
                 }}
               >
-                {/* Crown for 1st place */}
                 {rank === 1 && (
-                  <Ionicons name="trophy" size={24} color="#FFD700" style={{ marginBottom: 5 }} />
+                  <Ionicons
+                    name="trophy"
+                    size={24}
+                    color="#FFD700"
+                    style={{ marginBottom: 5 }}
+                  />
                 )}
 
-                {/* Avatar */}
                 <View
                   style={{
                     width: 60,
@@ -644,9 +701,9 @@ export default function RankingPage({ navigation }) {
                     borderColor: badge.color,
                   }}
                 >
-                  {driver.profile_picture ? (
+                  {item.profile_picture ? (
                     <Image
-                      source={{ uri: driver.profile_picture }}
+                      source={{ uri: item.profile_picture }}
                       style={{ width: 54, height: 54, borderRadius: 27 }}
                     />
                   ) : (
@@ -654,7 +711,6 @@ export default function RankingPage({ navigation }) {
                   )}
                 </View>
 
-                {/* Name */}
                 <Text
                   style={{
                     fontSize: 12,
@@ -665,10 +721,9 @@ export default function RankingPage({ navigation }) {
                   }}
                   numberOfLines={1}
                 >
-                  {driver.first_name}
+                  {item.first_name}
                 </Text>
 
-                {/* Points */}
                 <View
                   style={{
                     backgroundColor: badge.bg,
@@ -678,12 +733,17 @@ export default function RankingPage({ navigation }) {
                     marginTop: 4,
                   }}
                 >
-                  <Text style={{ fontSize: 10, color: badge.color, fontWeight: "600" }}>
-                    {driver.points} pts
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      color: badge.color,
+                      fontWeight: "600",
+                    }}
+                  >
+                    {item.points} pts
                   </Text>
                 </View>
 
-                {/* Rank Badge */}
                 <View
                   style={{
                     position: "absolute",
@@ -699,7 +759,9 @@ export default function RankingPage({ navigation }) {
                     borderColor: "#FFF",
                   }}
                 >
-                  <Text style={{ color: "#FFF", fontSize: 12, fontWeight: "bold" }}>
+                  <Text
+                    style={{ color: "#FFF", fontSize: 12, fontWeight: "bold" }}
+                  >
                     {rank}
                   </Text>
                 </View>
@@ -708,56 +770,6 @@ export default function RankingPage({ navigation }) {
           })}
         </View>
       </View>
-
-      {/* Performance Chart */}
-      {/* <View
-        style={{
-          marginHorizontal: 20,
-          marginTop: 20,
-          backgroundColor: "#FFF",
-          borderRadius: 24,
-          padding: 20,
-          shadowColor: "#000",
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.05,
-          shadowRadius: 8,
-          elevation: 2,
-        }}
-      >
-        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>
-          📈 Points This Week
-        </Text>
-
-        <View style={{ alignItems: "center" }}>
-          <LineChart
-            data={{
-              labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-              datasets: [
-                {
-                  data: weeklyPoints,
-                  color: () => "#FFB37A",
-                  strokeWidth: 2,
-                },
-              ],
-            }}
-            width={screenWidth - 60}
-            height={150}
-            yAxisLabel=""
-            yAxisSuffix=" pts"
-            chartConfig={{
-              backgroundGradientFrom: "#FFF",
-              backgroundGradientTo: "#FFF",
-              decimalPlaces: 0,
-              color: (opacity = 1) => `rgba(24, 59, 92, ${opacity})`,
-              labelColor: (opacity = 1) => `rgba(0,0,0,${opacity})`,
-              style: { borderRadius: 16 },
-              propsForDots: { r: "4", strokeWidth: "2", stroke: "#183B5C" },
-            }}
-            style={{ marginVertical: 8, borderRadius: 16 }}
-            fromZero={true}
-          />
-        </View>
-      </View> */}
 
       {/* Nearby Drivers */}
       <View
@@ -774,98 +786,116 @@ export default function RankingPage({ navigation }) {
           elevation: 2,
         }}
       >
-        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            color: "#333",
+            marginBottom: 15,
+          }}
+        >
           🎯 Nearby in Ranking
         </Text>
 
-        {nearbyDrivers.map((driver, index) => {
-          const isCurrentDriver = driver.id === driverId;
-          const driverRank = leaderboard.findIndex(d => d.id === driver.id) + 1;
+        {nearbyDrivers.length === 0 ? (
+          <Text style={{ fontSize: 13, color: "#666" }}>
+            No nearby ranking data yet.
+          </Text>
+        ) : (
+          nearbyDrivers.map((item, index) => {
+            const isCurrentDriver = item.id === driverId;
 
-          return (
-            <View
-              key={driver.id}
-              style={[
-                {
-                  flexDirection: "row",
-                  alignItems: "center",
-                  paddingVertical: 12,
-                  borderBottomWidth: index === nearbyDrivers.length - 1 ? 0 : 1,
-                  borderBottomColor: "#F3F4F6",
-                },
-                isCurrentDriver && {
-                  backgroundColor: "#F0F9FF",
-                  borderRadius: 12,
-                  paddingHorizontal: 10,
-                  marginHorizontal: -10,
-                },
-              ]}
-            >
-              <Text
-                style={{
-                  width: 30,
-                  fontSize: 16,
-                  fontWeight: isCurrentDriver ? "bold" : "400",
-                  color: isCurrentDriver ? "#183B5C" : "#666",
-                }}
-              >
-                #{driverRank}
-              </Text>
-
+            return (
               <View
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 20,
-                  backgroundColor: "#F3F4F6",
-                  justifyContent: "center",
-                  alignItems: "center",
-                  marginRight: 12,
-                }}
+                key={item.id}
+                style={[
+                  {
+                    flexDirection: "row",
+                    alignItems: "center",
+                    paddingVertical: 12,
+                    borderBottomWidth: index === nearbyDrivers.length - 1 ? 0 : 1,
+                    borderBottomColor: "#F3F4F6",
+                  },
+                  isCurrentDriver && {
+                    backgroundColor: "#F0F9FF",
+                    borderRadius: 12,
+                    paddingHorizontal: 10,
+                    marginHorizontal: -10,
+                  },
+                ]}
               >
-                {driver.profile_picture ? (
-                  <Image
-                    source={{ uri: driver.profile_picture }}
-                    style={{ width: 36, height: 36, borderRadius: 18 }}
-                  />
-                ) : (
-                  <Ionicons name="person" size={20} color="#9CA3AF" />
-                )}
-              </View>
-
-              <View style={{ flex: 1 }}>
                 <Text
                   style={{
-                    fontSize: 14,
-                    fontWeight: isCurrentDriver ? "bold" : "500",
-                    color: isCurrentDriver ? "#183B5C" : "#333",
+                    width: 30,
+                    fontSize: 16,
+                    fontWeight: isCurrentDriver ? "bold" : "400",
+                    color: isCurrentDriver ? "#183B5C" : "#666",
                   }}
                 >
-                  {driver.first_name} {driver.last_name}
-                  {isCurrentDriver && " (You)"}
+                  #{item.rank}
                 </Text>
-                <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
-                  {driver.points} points
-                </Text>
-              </View>
 
-              {isCurrentDriver && (
                 <View
                   style={{
-                    backgroundColor: "#183B5C",
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                    borderRadius: 12,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 20,
+                    backgroundColor: "#F3F4F6",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    marginRight: 12,
                   }}
                 >
-                  <Text style={{ color: "#FFF", fontSize: 10, fontWeight: "bold" }}>
-                    Current
+                  {item.profile_picture ? (
+                    <Image
+                      source={{ uri: item.profile_picture }}
+                      style={{ width: 36, height: 36, borderRadius: 18 }}
+                    />
+                  ) : (
+                    <Ionicons name="person" size={20} color="#9CA3AF" />
+                  )}
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 14,
+                      fontWeight: isCurrentDriver ? "bold" : "500",
+                      color: isCurrentDriver ? "#183B5C" : "#333",
+                    }}
+                  >
+                    {item.first_name} {item.last_name}
+                    {isCurrentDriver ? " (You)" : ""}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: "#666", marginTop: 2 }}>
+                    {item.points} points
                   </Text>
                 </View>
-              )}
-            </View>
-          );
-        })}
+
+                {isCurrentDriver && (
+                  <View
+                    style={{
+                      backgroundColor: "#183B5C",
+                      paddingHorizontal: 8,
+                      paddingVertical: 4,
+                      borderRadius: 12,
+                    }}
+                  >
+                    <Text
+                      style={{
+                        color: "#FFF",
+                        fontSize: 10,
+                        fontWeight: "bold",
+                      }}
+                    >
+                      Current
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })
+        )}
       </View>
 
       {/* Performance Metrics */}
@@ -883,41 +913,68 @@ export default function RankingPage({ navigation }) {
           elevation: 2,
         }}
       >
-        <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333", marginBottom: 15 }}>
-          📊 Performance Metrics
+        <Text
+          style={{
+            fontSize: 16,
+            fontWeight: "bold",
+            color: "#333",
+            marginBottom: 15,
+          }}
+        >
+          {performanceTitle}
         </Text>
 
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 15 }}>
           <View style={{ width: "48%" }}>
-            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>Acceptance Rate</Text>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+              Acceptance Rate
+            </Text>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
                 {performance.acceptanceRate}%
               </Text>
-              <Ionicons name="checkmark-circle" size={16} color="#10B981" style={{ marginLeft: 5 }} />
+              <Ionicons
+                name="checkmark-circle"
+                size={16}
+                color="#10B981"
+                style={{ marginLeft: 5 }}
+              />
             </View>
           </View>
 
           <View style={{ width: "48%" }}>
-            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>Completion Rate</Text>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+              Completion Rate
+            </Text>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
                 {performance.completionRate}%
               </Text>
-              <Ionicons name="flag" size={16} color="#3B82F6" style={{ marginLeft: 5 }} />
+              <Ionicons
+                name="flag"
+                size={16}
+                color="#3B82F6"
+                style={{ marginLeft: 5 }}
+              />
             </View>
           </View>
 
           <View style={{ width: "48%" }}>
-            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>Weekly Earnings</Text>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+              {earningsLabel}
+            </Text>
             <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
-              ₱{performance.earningsThisWeek.toFixed(0)}
+              ₱{Number(performance.earningsThisWeek || 0).toFixed(0)}
             </Text>
           </View>
 
           <View style={{ width: "48%" }}>
-            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>Response Time</Text>
-            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>2.5 min</Text>
+            <Text style={{ fontSize: 12, color: "#666", marginBottom: 2 }}>
+              Response Time
+            </Text>
+            <Text style={{ fontSize: 18, fontWeight: "bold", color: "#183B5C" }}>
+              2.5 min
+            </Text>
           </View>
         </View>
       </View>
@@ -936,7 +993,14 @@ export default function RankingPage({ navigation }) {
       >
         <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
           <Ionicons name="information-circle" size={20} color="#3B82F6" />
-          <Text style={{ fontSize: 14, fontWeight: "600", color: "#183B5C", marginLeft: 8 }}>
+          <Text
+            style={{
+              fontSize: 14,
+              fontWeight: "600",
+              color: "#183B5C",
+              marginLeft: 8,
+            }}
+          >
             How Rankings Work
           </Text>
         </View>
@@ -947,7 +1011,7 @@ export default function RankingPage({ navigation }) {
           • Higher ratings and completion rates boost your ranking
         </Text>
         <Text style={{ fontSize: 12, color: "#4B5563" }}>
-          • Rankings update in real-time based on your performance
+          • Rankings update based on the selected period
         </Text>
       </View>
     </ScrollView>
