@@ -74,7 +74,7 @@ import DriverAccountScreen from "./app/Driver/DriverAccountScreen.js";
 import RateDriverScreen from "./app/commuter/RateDriverScreen.js";
 import TopRatedDriversScreen from "./app/commuter/TopRatedDrivers";
 import AllTripsScreen from "./app/Driver/AllTripsScreen.js";
-
+import RideMissionsScreen from "./app/Driver/RideMissionsScreen";
 import {
   configureNotificationHandler,
   setupNotificationChannels,
@@ -453,6 +453,7 @@ export default function App() {
             <Stack.Screen name="inbox" component={DriverInboxScreen} />
             <Stack.Screen name="account" component={DriverAccountScreen} />
             <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
+            <Stack.Screen name="RideMissionsScreen" component={RideMissionsScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

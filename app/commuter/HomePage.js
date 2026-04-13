@@ -1,10 +1,8 @@
-// app/commuter/HomePage.js
 import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Image,
   Pressable,
-  StyleSheet,
   Text,
   Platform,
   useWindowDimensions,
@@ -42,23 +40,27 @@ function HomeButton({ accessibilityState, onPress }) {
       onPressOut={() => setPressed(false)}
       style={[
         styles.trackRideButton,
+        isActive && styles.trackRideButtonActive,
         {
-          backgroundColor: pressed || isActive ? "#E97A3E" : "#183B5C",
+          backgroundColor: pressed
+            ? "#E97A3E"
+            : isActive
+              ? "#E97A3E"
+              : "#183B5C",
           transform: [{ scale: pressed ? 0.96 : 1 }],
         },
       ]}
     >
       <Ionicons name="location" size={width < 360 ? 24 : 28} color="#fff" />
-      <Text style={stylesLocal.buttonLabel}>Booking</Text>
+      <Text style={styles.buttonLabel}>Booking</Text>
     </Pressable>
   );
 }
- 
+
 export default function HomePage() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-
   const navStyles = navStylesFactory(width);
 
   const [unreadCount, setUnreadCount] = useState(0);
@@ -72,9 +74,7 @@ export default function HomePage() {
     const getUserId = async () => {
       try {
         const id = await AsyncStorage.getItem("user_id");
-        if (mounted) {
-          setUserId(id);
-        }
+        if (mounted) setUserId(id);
       } catch (error) {
         console.log("Error getting user_id:", error?.message || error);
       }
@@ -138,7 +138,7 @@ export default function HomePage() {
         },
         () => {
           fetchUnreadCount();
-        }
+        },
       )
       .subscribe();
 
@@ -162,25 +162,20 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, [userId, fetchUnreadCount]);
 
-  // FIXED: Proper tab bar height calculation for Android
   const getTabBarHeight = () => {
-    const baseHeight = width < 360 ? 50 : 58; // mas slim
-    
-    if (Platform.OS === 'android') {
+    const baseHeight = width < 360 ? 56 : 62;
+
+    if (Platform.OS === "android") {
       const navigationBarHeight = insets.bottom;
-      
-      // For gesture navigation (no visible buttons)
+
       if (navigationBarHeight === 0) {
-        return baseHeight + 20;
+        return baseHeight + 18;
       }
-      
-      // For devices with 3-button navigation
+
       return baseHeight + navigationBarHeight;
     }
-    
-    // iOS
-    const extraBottom = Math.max(insets.bottom, 8);
-    return baseHeight + extraBottom;
+
+    return baseHeight + Math.max(insets.bottom, 8);
   };
 
   return (
@@ -188,19 +183,8 @@ export default function HomePage() {
       <Tab.Navigator
         initialRouteName="Home"
         screenOptions={({ route }) => ({
-          headerStyle: {
-  backgroundColor: "#fff",
-  elevation: 0,
-  shadowOpacity: 0,
-  borderBottomWidth: 0,
-},
-
-headerTitleStyle: {
-  fontWeight: "800",
-  fontSize: width < 360 ? 17 : 20,
-  color: "#183B5C",
-  letterSpacing: 0.3,
-},
+          headerStyle: navStyles.headerStyle,
+          headerTitleStyle: navStyles.headerTitleStyle,
           headerTitleAlign: "center",
 
           headerLeft: () => (
@@ -217,44 +201,41 @@ headerTitleStyle: {
               onPress={() => navigation.navigate("Support")}
               style={navStyles.helpButton}
             >
-              <Ionicons name="help-circle-outline" size={width < 360 ? 18 : 20} color="#183B5C" />
-<Text style={navStyles.helpText}>Help</Text>
+              <Ionicons
+                name="help-circle-outline"
+                size={width < 360 ? 18 : 20}
+                color="#183B5C"
+              />
+              <Text style={navStyles.helpText}>Help</Text>
             </Pressable>
           ),
 
           tabBarShowLabel: true,
           tabBarActiveTintColor: "#E97A3E",
           tabBarInactiveTintColor: "#183B5C",
-          tabBarLabelStyle: {
-  fontSize: width < 360 ? 10 : 11,
-  fontWeight: "700",
-  marginBottom: Platform.OS === "ios" ? 2 : 4,
-  letterSpacing: 0.2,
-},
-          // FIXED: Tab bar style with proper Android handling
+          tabBarLabelStyle: navStyles.tabBarLabel,
           tabBarStyle: [
             navStyles.tabBar,
             {
-              height: getTabBarHeight(),
-              paddingBottom: Platform.select({
-                android: Math.max(insets.bottom, 16),
-                ios: Math.max(insets.bottom, 8),
-                default: 10,
-              }),
-              paddingTop: Platform.select({
-                android: 8,
-                default: 0,
-              }),
-              // Important for Android
-              position: 'absolute',
-              bottom: 5,
-              left: 5,
-              right: 5,
+              height: width < 360 ? 80 : 80,
+              paddingBottom: Platform.OS === "android" ? 10 : 8,
+              paddingTop: Platform.OS === "android" ? 8 : 6,
+              left: 10,
+              right: 10,
+              bottom:
+                Platform.OS === "android"
+                  ? Math.max(insets.bottom, 8)
+                  : Math.max(insets.bottom, 6),
             },
           ],
-          // FIXED: Safe area insets
           tabBarSafeAreaInsets: {
-            bottom: Platform.OS === 'android' ? Math.max(insets.bottom, 16) : insets.bottom,
+            bottom: 0,
+          },
+          tabBarSafeAreaInsets: {
+            bottom:
+              Platform.OS === "android"
+                ? Math.max(insets.bottom, 16)
+                : insets.bottom,
           },
           sceneContainerStyle: {
             backgroundColor: "#fff",
@@ -283,11 +264,11 @@ headerTitleStyle: {
 
             if (route.name === "Inbox") {
               return (
-                <View style={stylesLocal.iconWrapper}>
+                <View style={navStyles.iconWrapper}>
                   <Ionicons name={iconName} size={size} color={color} />
                   {unreadCount > 0 && (
-                    <View style={stylesLocal.badge}>
-                      <Text style={stylesLocal.badgeText}>
+                    <View style={navStyles.badge}>
+                      <Text style={navStyles.badgeText}>
                         {unreadCount > 9 ? "9+" : unreadCount}
                       </Text>
                     </View>
@@ -357,43 +338,3 @@ headerTitleStyle: {
     </>
   );
 }
-
-const stylesLocal = StyleSheet.create({
-  iconWrapper: {
-    position: "relative",
-    width: 30,
-    height: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  badge: {
-    position: "absolute",
-    top: -4,
-    right: -10,
-    backgroundColor: "#FF4D4F",
-    borderRadius: 999,
-    minWidth: 18,
-    height: 18,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 4,
-    borderWidth: 1.5,
-    borderColor: "#FFF",
-    elevation: 5,
-  },
-
-  badgeText: {
-    color: "#FFF",
-    fontSize: 10,
-    fontWeight: "800",
-  },
-
-  buttonLabel: {
-    color: "#fff",
-    fontSize: 10,
-    marginTop: 3,
-    fontWeight: "800",
-    letterSpacing: 0.2,
-  },
-});
