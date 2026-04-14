@@ -1,6 +1,31 @@
 import { StyleSheet } from "react-native";
 
 export const styles = StyleSheet.create({
+  referralBanner: {
+  flexDirection: "row",
+  backgroundColor: "#FFF8E1",
+  borderRadius: 12,
+  padding: 16,
+  marginBottom: 20,
+  marginTop: 10,
+  alignItems: "center",
+  borderWidth: 1,
+  borderColor: "#FFE082",
+},
+referralBannerContent: {
+  flex: 1,
+  marginLeft: 12,
+},
+referralBannerTitle: {
+  fontSize: 14,
+  fontWeight: "bold",
+  color: "#F59E0B",
+  marginBottom: 4,
+},
+referralBannerText: {
+  fontSize: 12,
+  color: "#666",
+},
   container: {
     flex: 1,
     paddingHorizontal: 25,

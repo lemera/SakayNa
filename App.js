@@ -18,6 +18,7 @@ import { supabase } from "./lib/supabase";
 import { getUserSession, clearUserSession } from "./app/utils/authStorage";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+
 /* ============================= */
 /* Force Update Import */
 /* ============================= */
@@ -51,7 +52,7 @@ import HelpCenter from "./app/commuter/HelpCenter.js";
 import RateDriver from "./app/commuter/RateDriver.js";
 import RateRide from "./app/commuter/RateRide";
 import RideHistoryScreen from "./app/commuter/RideHistoryScreen.js";
-import ReferralScreen from "./app/commuter/ReferralScreen.js";
+import ReferralScreen from "./app/ReferralScreen.js";
 import FloatingMenu from "./app/components/FloatingMenu.js";
 import MenuButton from "./app/components/MenuButton.js";
 import FoodStoreScreen from "./app/commuter/FoodStoreScreen";
@@ -78,8 +79,11 @@ import RideMissionsScreen from "./app/Driver/RideMissionsScreen";
 import {
   configureNotificationHandler,
   setupNotificationChannels,
+  setupNotificationCategories,
   registerForPushNotifications,
   addNotificationResponseListener,
+  addNotificationReceivedListener,
+  playBookingSound,
   unloadBookingSound,
 } from "./lib/notifications";
 
@@ -109,10 +113,11 @@ const TEST_ACCOUNTS = {
 
 export default function App() {
   const notificationSub = useRef(null);
+const notificationReceivedSub = useRef(null);
 
   const [appReady, setAppReady] = useState(false);
   const [initialRoute, setInitialRoute] = useState("UserType");
-
+  
   /* ============================= */
   /* Force Update State - Modal Approach */
   /* ============================= */
@@ -259,84 +264,131 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    const init = async () => {
-      try {
-        /* ============================= */
-        /* FORCE UPDATE CHECK - HIGHEST PRIORITY */
-        /* ============================= */
-        const versionCheck = await checkAppVersion();
+useEffect(() => {
+  const init = async () => {
+    try {
+      /* ============================= */
+      /* FORCE UPDATE CHECK - HIGHEST PRIORITY */
+      /* ============================= */
+      const versionCheck = await checkAppVersion();
 
-        console.log("Version check result:", versionCheck);
+      console.log("Version check result:", versionCheck);
 
-        if (versionCheck.needsUpdate && versionCheck.isForceUpdate) {
-          setForceUpdateData({
-            releaseNotes: versionCheck.releaseNotes,
-            updateUrl: versionCheck.updateUrl,
-            currentVersion: versionCheck.currentVersion,
-            minVersion: versionCheck.minVersion,
-          });
-          setShowForceUpdateModal(true);
-          return;
+      if (versionCheck.needsUpdate && versionCheck.isForceUpdate) {
+        setForceUpdateData({
+          releaseNotes: versionCheck.releaseNotes,
+          updateUrl: versionCheck.updateUrl,
+          currentVersion: versionCheck.currentVersion,
+          minVersion: versionCheck.minVersion,
+        });
+        setShowForceUpdateModal(true);
+        return;
+      }
+
+      /* ============================= */
+      /* NORMAL APP INITIALIZATION */
+      /* ============================= */
+      const hasLocationPermission = await checkLocationPermissionStatus();
+      if (!hasLocationPermission) {
+        showLocationProminentDisclosure();
+      }
+
+      const route = await checkSessionAndNavigate();
+      setInitialRoute(route);
+
+      /* ============================= */
+      /* NOTIFICATION SETUP */
+      /* ============================= */
+      await setupNotificationChannels();
+      await setupNotificationCategories();
+
+      if (typeof configureNotificationHandler === "function") {
+        configureNotificationHandler();
+      } else {
+        console.warn("configureNotificationHandler is not available");
+      }
+
+      // Register push token for logged-in driver
+      const userId = await AsyncStorage.getItem("user_id");
+
+      if (userId) {
+        const { data: user, error: userError } = await supabase
+          .from("users")
+          .select("user_type")
+          .eq("id", userId)
+          .maybeSingle();
+
+        if (userError) {
+          console.log("User fetch error during notification setup:", userError);
         }
 
-        /* ============================= */
-        /* NORMAL APP INITIALIZATION */
-        /* ============================= */
-        const hasLocationPermission = await checkLocationPermissionStatus();
-        if (!hasLocationPermission) {
-          showLocationProminentDisclosure();
+        if (user?.user_type === "driver") {
+          const token = await registerForPushNotifications(userId);
+          console.log("Registered driver push token:", token);
         }
+      }
 
-        const route = await checkSessionAndNavigate();
-        setInitialRoute(route);
+      // Foreground notification listener
+      notificationReceivedSub.current = addNotificationReceivedListener(
+        async (notification) => {
+          try {
+            const data = notification?.request?.content?.data;
+            console.log("Foreground notification received:", data);
 
-        // === NOTIFICATION SETUP ===
-        await setupNotificationChannels();
-
-        if (typeof configureNotificationHandler === "function") {
-          configureNotificationHandler();
-        } else {
-          console.warn("configureNotificationHandler is not available");
-        }
-
-        // Register push token for driver
-        const userId = await AsyncStorage.getItem("user_id");
-        if (userId) {
-          const { data: user } = await supabase
-            .from("users")
-            .select("user_type")
-            .eq("id", userId)
-            .maybeSingle();
-
-          if (user?.user_type === "driver") {
-            await registerForPushNotifications(userId);
+            if (data?.type === "booking_request") {
+              await playBookingSound();
+            }
+          } catch (err) {
+            console.log("Foreground notification listener error:", err);
           }
         }
+      );
 
-        // Notification tap listener
-        notificationSub.current = addNotificationResponseListener(
-          (response) => {
+      // Notification tap listener
+      notificationSub.current = addNotificationResponseListener(
+        async (response) => {
+          try {
+            const actionIdentifier = response?.actionIdentifier;
             const data = response?.notification?.request?.content?.data;
+
+            console.log("Notification tapped/responded:", {
+              actionIdentifier,
+              data,
+            });
+
             if (data?.type === "booking_request") {
-              console.log("📲 Notification tapped - Booking Request", data);
+              if (actionIdentifier === "ACCEPT_BOOKING") {
+                console.log("Driver tapped ACCEPT_BOOKING", data);
+                // Dito mo ilalagay later ang accept booking logic
+              } else if (actionIdentifier === "CANCEL_BOOKING") {
+                console.log("Driver tapped CANCEL_BOOKING", data);
+                // Dito mo ilalagay later ang cancel booking logic
+              } else {
+                console.log("Opened booking request notification", data);
+                // Optional:
+                // navigationRef.current?.navigate("DriverHomePage");
+              }
             }
-          },
-        );
-      } catch (error) {
-        console.log("App init error:", error);
-      } finally {
-        setAppReady(true);
-      }
-    };
+          } catch (err) {
+            console.log("Notification response listener error:", err);
+          }
+        }
+      );
+    } catch (error) {
+      console.log("App init error:", error);
+    } finally {
+      setAppReady(true);
+    }
+  };
 
-    init();
+  init();
 
-    return () => {
-      notificationSub.current?.remove?.();
-      unloadBookingSound();
-    };
-  }, []);
+  return () => {
+    notificationSub.current?.remove?.();
+    notificationReceivedSub.current?.remove?.();
+    unloadBookingSound();
+  };
+}, []);
 
   if (!appReady) {
     return (

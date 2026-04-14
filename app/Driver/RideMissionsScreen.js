@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -6,9 +6,9 @@ import {
   ScrollView,
   TouchableOpacity,
   RefreshControl,
-  Dimensions,
   ActivityIndicator,
   Alert,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,13 +17,53 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LinearGradient } from "expo-linear-gradient";
 import Svg, { Circle } from "react-native-svg";
 
-const { width } = Dimensions.get("window");
+const COLORS = {
+  primary: "#183B5C",
+  primaryDark: "#10293F",
+  accent: "#E97A3E",
+  accentSoft: "rgba(233, 122, 62, 0.14)",
+  success: "#22C55E",
+  successSoft: "rgba(34, 197, 94, 0.12)",
+  info: "#3B82F6",
+  infoSoft: "rgba(59, 130, 246, 0.12)",
+  danger: "#EF4444",
+  dangerSoft: "rgba(239, 68, 68, 0.12)",
+  warning: "#F59E0B",
+  warningSoft: "rgba(245, 158, 11, 0.12)",
+  text: "#183B5C",
+  textMuted: "#64748B",
+  textLight: "#94A3B8",
+  white: "#FFFFFF",
+  background: "#F4F7FB",
+  card: "#FFFFFF",
+  border: "rgba(24, 59, 92, 0.08)",
+  borderStrong: "rgba(24, 59, 92, 0.14)",
+  shadow: "#0F172A",
+  track: "#E8EEF5",
+};
+
+const shadow = Platform.select({
+  ios: {
+    shadowColor: COLORS.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 16,
+  },
+  android: {
+    elevation: 4,
+  },
+});
 
 const RideMissionsScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mission, setMission] = useState(null);
-  const [credits, setCredits] = useState(null);
+  const [credits, setCredits] = useState({
+    credit_balance: 0,
+    total_earned: 0,
+    total_used: 0,
+    recent_transactions: [],
+  });
   const [history, setHistory] = useState([]);
   const [stats, setStats] = useState({
     totalMissions: 0,
@@ -31,7 +71,7 @@ const RideMissionsScreen = ({ navigation }) => {
     totalBonusEarned: 0,
     averageRides: 0,
   });
-  const [selectedTab, setSelectedTab] = useState("current"); // 'current' or 'history'
+  const [selectedTab, setSelectedTab] = useState("current");
   const [driverId, setDriverId] = useState(null);
 
   useEffect(() => {
@@ -49,9 +89,12 @@ const RideMissionsScreen = ({ navigation }) => {
       const userId = await AsyncStorage.getItem("user_id");
       if (userId) {
         setDriverId(userId);
+      } else {
+        setLoading(false);
       }
     } catch (error) {
       console.error("Error fetching driver ID:", error);
+      setLoading(false);
     }
   };
 
@@ -63,7 +106,7 @@ const RideMissionsScreen = ({ navigation }) => {
         fetchMissionHistory(),
       ]);
     } catch (error) {
-      console.error("Error fetching data:", error);
+      console.error("Error fetching all data:", error);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -72,75 +115,27 @@ const RideMissionsScreen = ({ navigation }) => {
 
   const fetchCurrentMission = async () => {
     try {
-      const currentDate = new Date();
-      const weekStart = new Date(currentDate);
-      weekStart.setDate(currentDate.getDate() - currentDate.getDay() + 1);
-      weekStart.setHours(0, 0, 0, 0);
-
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
-      weekEnd.setHours(23, 59, 59, 999);
+      const nowIso = new Date().toISOString();
 
       const { data, error } = await supabase
         .from("ride_missions")
         .select("*")
         .eq("driver_id", driverId)
-        .eq("week_start", weekStart.toISOString().split("T")[0])
+        .eq("status", "active")
+        .lte("start_at", nowIso)
+        .gte("end_at", nowIso)
         .order("created_at", { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code !== "PGRST116") {
-        console.error("Error fetching mission:", error);
+      if (error) {
+        console.error("Error fetching current mission:", error);
         return;
       }
 
-      if (!data) {
-        // Create mission if doesn't exist
-        await createWeeklyMission(weekStart, weekEnd);
-      } else {
-        setMission(data);
-      }
+      setMission(data || null);
     } catch (error) {
       console.error("Error in fetchCurrentMission:", error);
-    }
-  };
-
-  const createWeeklyMission = async (weekStart, weekEnd) => {
-    try {
-      // Get default settings
-      const { data: settings } = await supabase
-        .from("system_settings")
-        .select("value")
-        .eq("key", "mission_default_target")
-        .single();
-
-      const targetRides = settings?.value || 50;
-      const bonusAmount = 100;
-
-      const { data, error } = await supabase
-        .from("ride_missions")
-        .insert({
-          driver_id: driverId,
-          week_start: weekStart.toISOString().split("T")[0],
-          week_end: weekEnd.toISOString().split("T")[0],
-          target_rides: targetRides,
-          actual_rides: 0,
-          bonus_amount: bonusAmount,
-          reward_type: "credit",
-          reward_value: bonusAmount,
-          status: "active",
-        })
-        .select()
-        .single();
-
-      if (error) {
-        console.error("Error creating mission:", error);
-      } else {
-        setMission(data);
-      }
-    } catch (error) {
-      console.error("Error in createWeeklyMission:", error);
     }
   };
 
@@ -150,27 +145,33 @@ const RideMissionsScreen = ({ navigation }) => {
         .from("driver_subscription_credits")
         .select("*")
         .eq("driver_id", driverId)
-        .single();
+        .maybeSingle();
 
-      if (error && error.code !== "PGRST116") {
+      if (error) {
         console.error("Error fetching credits:", error);
-        return;
       }
 
-      setCredits(data || { credit_balance: 0, total_earned: 0, total_used: 0 });
+      const baseCredits = data || {
+        credit_balance: 0,
+        total_earned: 0,
+        total_used: 0,
+      };
 
-      // Fetch recent transactions
-      const { data: transactions } = await supabase
+      const { data: transactions, error: txError } = await supabase
         .from("driver_subscription_credit_transactions")
         .select("*")
         .eq("driver_id", driverId)
         .order("created_at", { ascending: false })
         .limit(10);
 
-      setCredits((prev) => ({
-        ...prev,
+      if (txError) {
+        console.error("Error fetching transactions:", txError);
+      }
+
+      setCredits({
+        ...baseCredits,
         recent_transactions: transactions || [],
-      }));
+      });
     } catch (error) {
       console.error("Error in fetchCredits:", error);
     }
@@ -182,7 +183,7 @@ const RideMissionsScreen = ({ navigation }) => {
         .from("ride_missions")
         .select("*")
         .eq("driver_id", driverId)
-        .order("week_start", { ascending: false })
+        .order("start_at", { ascending: false })
         .limit(20);
 
       if (error) {
@@ -190,20 +191,26 @@ const RideMissionsScreen = ({ navigation }) => {
         return;
       }
 
-      setHistory(data || []);
+      const historyData = data || [];
+      setHistory(historyData);
 
-      // Calculate stats
-      const completed = data?.filter((m) => m.status === "achieved") || [];
-      const totalBonus =
-        completed.reduce((sum, m) => sum + (m.bonus_amount || 0), 0) || 0;
+      const completed = historyData.filter(
+        (m) => m.status === "achieved" || m.status === "paid"
+      );
+
+      const totalBonus = completed.reduce(
+        (sum, m) => sum + Number(m.reward_value || 0),
+        0
+      );
+
       const avgRides =
-        data?.length > 0
-          ? data.reduce((sum, m) => sum + (m.actual_rides || 0), 0) /
-            data.length
+        historyData.length > 0
+          ? historyData.reduce((sum, m) => sum + Number(m.actual_rides || 0), 0) /
+            historyData.length
           : 0;
 
       setStats({
-        totalMissions: data?.length || 0,
+        totalMissions: historyData.length,
         completedMissions: completed.length,
         totalBonusEarned: totalBonus,
         averageRides: Math.round(avgRides * 10) / 10,
@@ -219,229 +226,238 @@ const RideMissionsScreen = ({ navigation }) => {
   }, [driverId]);
 
   const formatDate = (dateString) => {
+    if (!dateString) return "-";
     const date = new Date(dateString);
     return date.toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
+      year: "numeric",
+    });
+  };
+
+  const formatDateTime = (dateString) => {
+    if (!dateString) return "-";
+    const date = new Date(dateString);
+    return date.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
     });
   };
 
   const formatCurrency = (amount) => {
-    return `₱${parseFloat(amount || 0).toFixed(2)}`;
+    return `₱${Number(amount || 0).toFixed(2)}`;
   };
 
-  const getDaysRemaining = () => {
-    if (!mission) return 0;
-    const endDate = new Date(mission.week_end);
-    const today = new Date();
-    const diffTime = endDate - today;
-    return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
+  const getTimeRemaining = () => {
+    if (!mission?.end_at) return "0h";
+    const now = new Date();
+    const end = new Date(mission.end_at);
+    const diff = end.getTime() - now.getTime();
+
+    if (diff <= 0) return "Ended";
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+    if (hours >= 24) {
+      const days = Math.floor(hours / 24);
+      return `${days} day(s) left`;
+    }
+
+    return `${hours}h ${minutes}m left`;
   };
 
-  const getStatusColor = (status) => {
+  const getStatusMeta = (status) => {
     switch (status) {
       case "active":
-        return "#FF9800";
+        return {
+          label: "In Progress",
+          color: COLORS.accent,
+          bg: COLORS.accentSoft,
+          icon: "time-outline",
+        };
       case "achieved":
-        return "#4CAF50";
+        return {
+          label: "Completed",
+          color: COLORS.success,
+          bg: COLORS.successSoft,
+          icon: "checkmark-circle",
+        };
       case "paid":
-        return "#2196F3";
+        return {
+          label: "Reward Paid",
+          color: COLORS.info,
+          bg: COLORS.infoSoft,
+          icon: "wallet-outline",
+        };
       case "failed":
-        return "#F44336";
+        return {
+          label: "Not Achieved",
+          color: COLORS.danger,
+          bg: COLORS.dangerSoft,
+          icon: "close-circle",
+        };
+      case "cancelled":
+        return {
+          label: "Cancelled",
+          color: COLORS.textMuted,
+          bg: "#EEF2F7",
+          icon: "ban-outline",
+        };
       default:
-        return "#999";
+        return {
+          label: status || "Unknown",
+          color: COLORS.textMuted,
+          bg: "#EEF2F7",
+          icon: "help-circle-outline",
+        };
     }
   };
 
-  const getStatusText = (status) => {
-    switch (status) {
-      case "active":
-        return "In Progress";
-      case "achieved":
-        return "Completed!";
-      case "paid":
-        return "Paid";
-      case "failed":
-        return "Not Achieved";
-      default:
-        return status;
-    }
-  };
+  const missionProgress = useMemo(() => {
+    if (!mission?.target_rides) return 0;
+    return Math.min(
+      100,
+      Math.max(
+        0,
+        (Number(mission.actual_rides || 0) / Number(mission.target_rides || 1)) * 100
+      )
+    );
+  }, [mission]);
 
-  const CircularProgress = ({ progress, size = 150, strokeWidth = 12 }) => {
+  const CircularProgress = ({ progress, size = 180, strokeWidth = 14 }) => {
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
-    const strokeDashoffset = circumference - (progress / 100) * circumference;
+    const safeProgress = Math.min(100, Math.max(0, progress));
+    const strokeDashoffset =
+      circumference - (safeProgress / 100) * circumference;
 
     return (
-      <Svg width={size} height={size}>
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke="#E0E0E0"
-          strokeWidth={strokeWidth}
-          fill="none"
-        />
-        <Circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          stroke="#4CAF50"
-          strokeWidth={strokeWidth}
-          fill="none"
-          strokeDasharray={circumference}
-          strokeDashoffset={strokeDashoffset}
-          strokeLinecap="round"
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        />
-      </Svg>
+      <View style={{ width: size, height: size }}>
+        <Svg width={size} height={size}>
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={COLORS.track}
+            strokeWidth={strokeWidth}
+            fill="none"
+          />
+          <Circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            stroke={COLORS.accent}
+            strokeWidth={strokeWidth}
+            fill="none"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          />
+        </Svg>
+      </View>
     );
   };
 
-  const renderCurrentMission = () => {
-    if (!mission) return null;
-
-    const progress =
-      mission.target_rides > 0
-        ? (mission.actual_rides / mission.target_rides) * 100
-        : 0;
-    const daysRemaining = getDaysRemaining();
-    const ridesRemaining = Math.max(0, mission.target_rides - mission.actual_rides);
-
+  const renderHeader = () => {
     return (
-      <View style={styles.missionCard}>
-        <LinearGradient
-          colors={["#183B5C", "#1E4D6F"]}
-          style={styles.missionHeader}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-        >
-          <Text style={styles.missionTitle}>Weekly Challenge</Text>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: getStatusColor(mission.status) + "20" },
-            ]}
+      <View style={styles.headerWrap}>
+        <View style={styles.headerTopRow}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.iconButton}
+            activeOpacity={0.85}
           >
-            <Text
-              style={[
-                styles.statusText,
-                { color: getStatusColor(mission.status) },
-              ]}
-            >
-              {getStatusText(mission.status)}
-            </Text>
+            <Ionicons name="chevron-back" size={22} color={COLORS.primary} />
+          </TouchableOpacity>
+
+          <Text style={styles.headerTitle}>Ride Missions</Text>
+
+          <TouchableOpacity
+            onPress={onRefresh}
+            style={styles.iconButton}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="refresh-outline" size={20} color={COLORS.primary} />
+          </TouchableOpacity>
+        </View>
+
+        <LinearGradient
+          colors={[COLORS.primary, "#224D77"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <View style={styles.heroTop}>
+            <View>
+              <Text style={styles.heroEyebrow}>SakayNa Driver Rewards</Text>
+              <Text style={styles.heroHeadline}>Admin-assigned missions only</Text>
+            </View>
+            <View style={styles.heroBadge}>
+              <Ionicons name="shield-checkmark-outline" size={16} color={COLORS.accent} />
+              <Text style={styles.heroBadgeText}>Admin Controlled</Text>
+            </View>
+          </View>
+
+          <View style={styles.heroBottom}>
+            <View style={styles.heroMetricCard}>
+              <Text style={styles.heroMetricValue}>
+                {mission ? mission.actual_rides : 0}
+              </Text>
+              <Text style={styles.heroMetricLabel}>Completed rides</Text>
+            </View>
+
+            <View style={styles.heroDivider} />
+
+            <View style={styles.heroMetricCard}>
+              <Text style={styles.heroMetricValue}>
+                {mission ? formatCurrency(mission.reward_value) : "₱0.00"}
+              </Text>
+              <Text style={styles.heroMetricLabel}>Mission reward</Text>
+            </View>
           </View>
         </LinearGradient>
-
-        <View style={styles.progressContainer}>
-          <CircularProgress progress={progress} size={160} strokeWidth={14} />
-          <View style={styles.progressTextContainer}>
-            <Text style={styles.progressRides}>
-              {mission.actual_rides}/{mission.target_rides}
-            </Text>
-            <Text style={styles.progressLabel}>Rides Completed</Text>
-          </View>
-        </View>
-
-        <View style={styles.missionDetails}>
-          <View style={styles.detailRow}>
-            <View style={styles.detailItem}>
-              <Ionicons name="calendar-outline" size={20} color="#666" />
-              <Text style={styles.detailLabel}>Period</Text>
-            </View>
-            <Text style={styles.detailValue}>
-              {formatDate(mission.week_start)} - {formatDate(mission.week_end)}
-            </Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <View style={styles.detailItem}>
-              <Ionicons name="time-outline" size={20} color="#666" />
-              <Text style={styles.detailLabel}>Days Remaining</Text>
-            </View>
-            <Text style={styles.detailValue}>{daysRemaining} days</Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <View style={styles.detailItem}>
-              <Ionicons name="car-outline" size={20} color="#666" />
-              <Text style={styles.detailLabel}>Rides Needed</Text>
-            </View>
-            <Text style={styles.detailValue}>{ridesRemaining} rides</Text>
-          </View>
-
-          <View style={[styles.detailRow, styles.rewardRow]}>
-            <View style={styles.detailItem}>
-              <Ionicons name="gift-outline" size={20} color="#4CAF50" />
-              <Text style={[styles.detailLabel, { color: "#4CAF50" }]}>
-                Reward
-              </Text>
-            </View>
-            <Text style={styles.rewardValue}>
-              {formatCurrency(mission.reward_value)} {mission.reward_type}
-            </Text>
-          </View>
-        </View>
-
-        {mission.status === "achieved" && !mission.reward_granted_at && (
-          <View style={styles.achievedMessage}>
-            <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
-            <Text style={styles.achievedText}>
-              Congratulations! Your reward is being processed.
-            </Text>
-          </View>
-        )}
-
-        {mission.status === "achieved" && mission.reward_granted_at && (
-          <View style={styles.rewardGrantedMessage}>
-            <Ionicons name="checkmark-done-circle" size={24} color="#2196F3" />
-            <Text style={styles.rewardGrantedText}>
-              Reward credited on {formatDate(mission.reward_granted_at)}
-            </Text>
-          </View>
-        )}
-
-        {mission.status === "active" && (
-          <TouchableOpacity style={styles.tipButton}>
-            <Ionicons name="bulb-outline" size={20} color="#FF9800" />
-            <Text style={styles.tipText}>
-              Tip: Complete {ridesRemaining} more rides to earn{" "}
-              {formatCurrency(mission.reward_value)}!
-            </Text>
-          </TouchableOpacity>
-        )}
       </View>
     );
   };
 
   const renderCreditsCard = () => {
-    if (!credits) return null;
-
     return (
-      <View style={styles.creditsCard}>
+      <View style={styles.card}>
         <LinearGradient
-          colors={["#2196F3", "#1976D2"]}
-          style={styles.creditsGradient}
+          colors={[COLORS.primary, "#254F79"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
+          style={styles.creditsCard}
         >
-          <Text style={styles.creditsTitle}>Subscription Credits</Text>
-          <Text style={styles.creditsBalance}>
-            {formatCurrency(credits.credit_balance || 0)}
-          </Text>
-          <View style={styles.creditsStats}>
-            <View style={styles.creditStat}>
-              <Text style={styles.creditStatLabel}>Total Earned</Text>
-              <Text style={styles.creditStatValue}>
+          <View style={styles.creditsHeaderRow}>
+            <View>
+              <Text style={styles.creditsTitle}>Subscription Credits</Text>
+              <Text style={styles.creditsBalance}>
+                {formatCurrency(credits.credit_balance || 0)}
+              </Text>
+            </View>
+
+            <View style={styles.creditsIconWrap}>
+              <Ionicons name="wallet-outline" size={26} color={COLORS.white} />
+            </View>
+          </View>
+
+          <View style={styles.creditsStatsRow}>
+            <View style={styles.creditsMiniStat}>
+              <Text style={styles.creditsMiniLabel}>Total Earned</Text>
+              <Text style={styles.creditsMiniValue}>
                 {formatCurrency(credits.total_earned || 0)}
               </Text>
             </View>
-            <View style={styles.creditStatDivider} />
-            <View style={styles.creditStat}>
-              <Text style={styles.creditStatLabel}>Total Used</Text>
-              <Text style={styles.creditStatValue}>
+            <View style={styles.creditsMiniDivider} />
+            <View style={styles.creditsMiniStat}>
+              <Text style={styles.creditsMiniLabel}>Total Used</Text>
+              <Text style={styles.creditsMiniValue}>
                 {formatCurrency(credits.total_used || 0)}
               </Text>
             </View>
@@ -449,57 +465,216 @@ const RideMissionsScreen = ({ navigation }) => {
         </LinearGradient>
 
         {credits.recent_transactions?.length > 0 && (
-          <View style={styles.transactionsSection}>
-            <Text style={styles.transactionsTitle}>Recent Transactions</Text>
-            {credits.recent_transactions.slice(0, 3).map((tx) => (
-              <View key={tx.id} style={styles.transactionItem}>
-                <View style={styles.transactionInfo}>
-                  <View
+          <View style={styles.transactionsWrap}>
+            <Text style={styles.sectionLabel}>Recent Transactions</Text>
+
+            {credits.recent_transactions.slice(0, 3).map((tx) => {
+              const earned = tx.transaction_type === "earned";
+              return (
+                <View key={tx.id} style={styles.transactionRow}>
+                  <View style={styles.transactionLeft}>
+                    <View
+                      style={[
+                        styles.transactionIconWrap,
+                        { backgroundColor: earned ? COLORS.successSoft : COLORS.accentSoft },
+                      ]}
+                    >
+                      <Ionicons
+                        name={earned ? "arrow-down-outline" : "arrow-up-outline"}
+                        size={16}
+                        color={earned ? COLORS.success : COLORS.accent}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.transactionTitle}>
+                        {tx.description || (earned ? "Credit earned" : "Credit used")}
+                      </Text>
+                      <Text style={styles.transactionDate}>
+                        {formatDate(tx.created_at)}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text
                     style={[
-                      styles.transactionIcon,
-                      {
-                        backgroundColor:
-                          tx.transaction_type === "earned"
-                            ? "#4CAF5020"
-                            : "#FF980020",
-                      },
+                      styles.transactionAmount,
+                      { color: earned ? COLORS.success : COLORS.accent },
                     ]}
                   >
-                    <Ionicons
-                      name={
-                        tx.transaction_type === "earned"
-                          ? "arrow-down"
-                          : "arrow-up"
-                      }
-                      size={16}
-                      color={
-                        tx.transaction_type === "earned" ? "#4CAF50" : "#FF9800"
-                      }
-                    />
-                  </View>
-                  <View style={styles.transactionDetails}>
-                    <Text style={styles.transactionDesc}>
-                      {tx.description}
-                    </Text>
-                    <Text style={styles.transactionDate}>
-                      {formatDate(tx.created_at)}
-                    </Text>
-                  </View>
+                    {earned ? "+" : "-"}
+                    {formatCurrency(tx.amount)}
+                  </Text>
                 </View>
-                <Text
-                  style={[
-                    styles.transactionAmount,
-                    {
-                      color:
-                        tx.transaction_type === "earned" ? "#4CAF50" : "#FF9800",
-                    },
-                  ]}
-                >
-                  {tx.transaction_type === "earned" ? "+" : "-"}
-                  {formatCurrency(tx.amount)}
-                </Text>
-              </View>
-            ))}
+              );
+            })}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderTabs = () => {
+    return (
+      <View style={styles.segmentWrap}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          style={[
+            styles.segmentButton,
+            selectedTab === "current" && styles.segmentButtonActive,
+          ]}
+          onPress={() => setSelectedTab("current")}
+        >
+          <Ionicons
+            name="rocket-outline"
+            size={16}
+            color={selectedTab === "current" ? COLORS.white : COLORS.textMuted}
+          />
+          <Text
+            style={[
+              styles.segmentText,
+              selectedTab === "current" && styles.segmentTextActive,
+            ]}
+          >
+            Current
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          activeOpacity={0.9}
+          style={[
+            styles.segmentButton,
+            selectedTab === "history" && styles.segmentButtonActive,
+          ]}
+          onPress={() => setSelectedTab("history")}
+        >
+          <Ionicons
+            name="time-outline"
+            size={16}
+            color={selectedTab === "history" ? COLORS.white : COLORS.textMuted}
+          />
+          <Text
+            style={[
+              styles.segmentText,
+              selectedTab === "history" && styles.segmentTextActive,
+            ]}
+          >
+            History
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  const renderCurrentMission = () => {
+    if (!mission) {
+      return (
+        <View style={styles.emptyCard}>
+          <Ionicons name="flag-outline" size={34} color={COLORS.accent} />
+          <Text style={styles.emptyTitle}>No active mission assigned</Text>
+          <Text style={styles.emptySubtitle}>
+            Your admin has not assigned any active mission yet.
+          </Text>
+        </View>
+      );
+    }
+
+    const status = getStatusMeta(mission.status);
+    const ridesRemaining = Math.max(
+      0,
+      Number(mission.target_rides || 0) - Number(mission.actual_rides || 0)
+    );
+    const timeRemaining = getTimeRemaining();
+
+    return (
+      <View style={styles.card}>
+        <View style={styles.missionHeader}>
+          <View style={{ flex: 1, paddingRight: 12 }}>
+            <Text style={styles.cardTitle}>{mission.title}</Text>
+            <Text style={styles.cardSubtitle}>
+              {formatDateTime(mission.start_at)} - {formatDateTime(mission.end_at)}
+            </Text>
+          </View>
+
+          <View style={[styles.statusPill, { backgroundColor: status.bg }]}>
+            <Ionicons name={status.icon} size={14} color={status.color} />
+            <Text style={[styles.statusPillText, { color: status.color }]}>
+              {status.label}
+            </Text>
+          </View>
+        </View>
+
+        {!!mission.description && (
+          <View style={styles.descriptionWrap}>
+            <Text style={styles.descriptionText}>{mission.description}</Text>
+          </View>
+        )}
+
+        <View style={styles.progressSection}>
+          <View style={styles.progressRingWrap}>
+            <CircularProgress progress={missionProgress} />
+            <View style={styles.progressCenter}>
+              <Text style={styles.progressPercent}>{Math.round(missionProgress)}%</Text>
+              <Text style={styles.progressCenterLabel}>Progress</Text>
+            </View>
+          </View>
+
+          <View style={styles.progressMetaCard}>
+            <View style={styles.progressStatRow}>
+              <Text style={styles.progressStatLabel}>Completed</Text>
+              <Text style={styles.progressStatValue}>
+                {mission.actual_rides}/{mission.target_rides} rides
+              </Text>
+            </View>
+
+            <View style={styles.progressStatRow}>
+              <Text style={styles.progressStatLabel}>Remaining</Text>
+              <Text style={styles.progressStatValue}>{ridesRemaining} rides</Text>
+            </View>
+
+            <View style={styles.progressStatRow}>
+              <Text style={styles.progressStatLabel}>Time left</Text>
+              <Text style={styles.progressStatValue}>{timeRemaining}</Text>
+            </View>
+
+            <View style={[styles.progressStatRow, { marginBottom: 0 }]}>
+              <Text style={[styles.progressStatLabel, { color: COLORS.success }]}>
+                Reward
+              </Text>
+              <Text style={[styles.progressStatValue, { color: COLORS.success }]}>
+                {formatCurrency(mission.reward_value)} {mission.reward_type}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {mission.status === "active" && (
+          <View style={styles.tipBanner}>
+            <View style={styles.tipIconWrap}>
+              <Ionicons name="bulb-outline" size={18} color={COLORS.accent} />
+            </View>
+            <Text style={styles.tipBannerText}>
+              Complete <Text style={styles.tipHighlight}>{ridesRemaining}</Text> more rides to earn{" "}
+              <Text style={styles.tipHighlight}>{formatCurrency(mission.reward_value)}</Text>.
+            </Text>
+          </View>
+        )}
+
+        {mission.status === "achieved" && !mission.reward_granted_at && (
+          <View style={[styles.infoBanner, { backgroundColor: COLORS.successSoft }]}>
+            <Ionicons name="checkmark-circle" size={20} color={COLORS.success} />
+            <Text style={[styles.infoBannerText, { color: COLORS.success }]}>
+              Mission completed. Reward is waiting for admin/system processing.
+            </Text>
+          </View>
+        )}
+
+        {mission.status === "paid" && (
+          <View style={[styles.infoBanner, { backgroundColor: COLORS.infoSoft }]}>
+            <Ionicons name="wallet-outline" size={20} color={COLORS.info} />
+            <Text style={[styles.infoBannerText, { color: COLORS.info }]}>
+              Reward credited on {formatDate(mission.reward_granted_at || mission.paid_at)}.
+            </Text>
           </View>
         )}
       </View>
@@ -508,166 +683,170 @@ const RideMissionsScreen = ({ navigation }) => {
 
   const renderStats = () => {
     return (
-      <View style={styles.statsContainer}>
+      <View style={styles.statsGrid}>
         <View style={styles.statCard}>
+          <View style={[styles.statIconWrap, { backgroundColor: "rgba(24,59,92,0.08)" }]}>
+            <Ionicons name="flag-outline" size={18} color={COLORS.primary} />
+          </View>
           <Text style={styles.statValue}>{stats.totalMissions}</Text>
           <Text style={styles.statLabel}>Total Missions</Text>
         </View>
+
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: "#4CAF50" }]}>
+          <View style={[styles.statIconWrap, { backgroundColor: COLORS.successSoft }]}>
+            <Ionicons name="checkmark-done-outline" size={18} color={COLORS.success} />
+          </View>
+          <Text style={[styles.statValue, { color: COLORS.success }]}>
             {stats.completedMissions}
           </Text>
           <Text style={styles.statLabel}>Completed</Text>
         </View>
+
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: "#2196F3" }]}>
+          <View style={[styles.statIconWrap, { backgroundColor: COLORS.infoSoft }]}>
+            <Ionicons name="cash-outline" size={18} color={COLORS.info} />
+          </View>
+          <Text style={[styles.statValue, { color: COLORS.info }]}>
             {formatCurrency(stats.totalBonusEarned)}
           </Text>
           <Text style={styles.statLabel}>Total Earned</Text>
         </View>
+
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, { color: "#FF9800" }]}>
+          <View style={[styles.statIconWrap, { backgroundColor: COLORS.accentSoft }]}>
+            <Ionicons name="car-outline" size={18} color={COLORS.accent} />
+          </View>
+          <Text style={[styles.statValue, { color: COLORS.accent }]}>
             {stats.averageRides}
           </Text>
-          <Text style={styles.statLabel}>Avg Rides/Week</Text>
+          <Text style={styles.statLabel}>Avg / Mission</Text>
         </View>
       </View>
     );
   };
 
   const renderHistoryItem = (item) => {
-    const isAchieved = item.actual_rides >= item.target_rides;
-    const progress = (item.actual_rides / item.target_rides) * 100;
+    const isAchieved =
+      item.status === "achieved" ||
+      item.status === "paid" ||
+      Number(item.actual_rides || 0) >= Number(item.target_rides || 0);
+
+    const progress =
+      Number(item.target_rides || 0) > 0
+        ? Math.min(
+            100,
+            (Number(item.actual_rides || 0) / Number(item.target_rides || 1)) * 100
+          )
+        : 0;
+
+    const status = getStatusMeta(item.status);
 
     return (
       <TouchableOpacity
         key={item.id}
-        style={styles.historyItem}
+        activeOpacity={0.92}
+        style={styles.historyCard}
         onPress={() => {
           Alert.alert(
             "Mission Details",
-            `Period: ${formatDate(item.week_start)} - ${formatDate(
-              item.week_end
-            )}\n` +
+            `Title: ${item.title}\n` +
+              `Period: ${formatDateTime(item.start_at)} - ${formatDateTime(item.end_at)}\n` +
               `Target: ${item.target_rides} rides\n` +
               `Completed: ${item.actual_rides} rides\n` +
-              `Status: ${getStatusText(item.status)}\n` +
-              `Reward: ${formatCurrency(item.reward_value)} ${
-                item.reward_type
-              }`,
+              `Status: ${status.label}\n` +
+              `Reward: ${formatCurrency(item.reward_value)} ${item.reward_type}`
           );
         }}
       >
-        <View style={styles.historyHeader}>
-          <View>
-            <Text style={styles.historyPeriod}>
-              {formatDate(item.week_start)} - {formatDate(item.week_end)}
-            </Text>
-            <Text style={styles.historyRides}>
+        <View style={styles.historyTop}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.historyPeriod}>{item.title}</Text>
+            <Text style={styles.historySub}>
               {item.actual_rides} / {item.target_rides} rides
             </Text>
           </View>
+
           <View
             style={[
-              styles.historyStatus,
+              styles.historyResultBadge,
               {
-                backgroundColor: isAchieved ? "#4CAF5020" : "#F4433620",
+                backgroundColor: isAchieved ? COLORS.successSoft : COLORS.dangerSoft,
               },
             ]}
           >
-            <Text
-              style={[
-                styles.historyStatusText,
-                { color: isAchieved ? "#4CAF50" : "#F44336" },
-              ]}
-            >
-              {isAchieved ? "✓" : "✗"}
-            </Text>
+            <Ionicons
+              name={isAchieved ? "checkmark" : "close"}
+              size={14}
+              color={isAchieved ? COLORS.success : COLORS.danger}
+            />
           </View>
         </View>
 
-        <View style={styles.progressBar}>
+        <View style={styles.historyBarTrack}>
           <View
             style={[
-              styles.progressFill,
+              styles.historyBarFill,
               {
-                width: `${Math.min(progress, 100)}%`,
-                backgroundColor: isAchieved ? "#4CAF50" : "#2196F3",
+                width: `${progress}%`,
+                backgroundColor: isAchieved ? COLORS.success : COLORS.accent,
               },
             ]}
           />
         </View>
 
-        <View style={styles.historyFooter}>
+        <View style={styles.historyBottom}>
           <Text style={styles.historyReward}>
-            {isAchieved ? formatCurrency(item.reward_value) : "—"}
+            {isAchieved ? formatCurrency(item.reward_value) : "No reward"}
           </Text>
-          <Text style={styles.historyStatusLabel}>
-            {getStatusText(item.status)}
+          <Text style={[styles.historyStatusText, { color: status.color }]}>
+            {status.label}
           </Text>
         </View>
       </TouchableOpacity>
     );
   };
 
+  const renderHistory = () => {
+    if (history.length === 0) {
+      return (
+        <View style={styles.emptyCard}>
+          <Ionicons name="time-outline" size={34} color={COLORS.accent} />
+          <Text style={styles.emptyTitle}>No mission history yet</Text>
+          <Text style={styles.emptySubtitle}>
+            Complete admin-assigned missions to build your history.
+          </Text>
+        </View>
+      );
+    }
+
+    return <View style={{ gap: 12 }}>{history.map(renderHistoryItem)}</View>;
+  };
+
   if (loading) {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#183B5C" />
+      <SafeAreaView style={styles.loadingWrap}>
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={styles.loadingText}>Loading missions...</Text>
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        >
-          <Ionicons name="arrow-back" size={24} color="#333" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Ride Missions</Text>
-        <View style={{ width: 40 }} />
-      </View>
-
+    <SafeAreaView style={styles.container} edges={["top"]}>
       <ScrollView
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={COLORS.primary}
+          />
         }
       >
+        {renderHeader()}
         {renderCreditsCard()}
-
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, selectedTab === "current" && styles.activeTab]}
-            onPress={() => setSelectedTab("current")}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                selectedTab === "current" && styles.activeTabText,
-              ]}
-            >
-              Current Mission
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, selectedTab === "history" && styles.activeTab]}
-            onPress={() => setSelectedTab("history")}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                selectedTab === "history" && styles.activeTabText,
-              ]}
-            >
-              History
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {renderTabs()}
 
         {selectedTab === "current" ? (
           <>
@@ -675,21 +854,7 @@ const RideMissionsScreen = ({ navigation }) => {
             {renderStats()}
           </>
         ) : (
-          <View style={styles.historyContainer}>
-            {history.length > 0 ? (
-              history.map(renderHistoryItem)
-            ) : (
-              <View style={styles.emptyState}>
-                <Ionicons name="calendar-outline" size={48} color="#CCC" />
-                <Text style={styles.emptyStateText}>
-                  No mission history yet
-                </Text>
-                <Text style={styles.emptyStateSubtext}>
-                  Complete rides to see your mission history
-                </Text>
-              </View>
-            )}
-          </View>
+          renderHistory()
         )}
       </ScrollView>
     </SafeAreaView>
@@ -699,406 +864,513 @@ const RideMissionsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F5F7FA",
+    backgroundColor: COLORS.background,
   },
-  loadingContainer: {
+
+  loadingWrap: {
     flex: 1,
+    backgroundColor: COLORS.background,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F5F7FA",
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 16,
-    color: "#666",
+    fontSize: 15,
+    color: COLORS.textMuted,
+    fontWeight: "500",
   },
-  header: {
+
+  scrollContent: {
+    paddingBottom: 28,
+  },
+
+  headerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    marginBottom: 14,
+  },
+  headerTopRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#FFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E0E0E0",
+    marginBottom: 14,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
     alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...shadow,
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: "800",
+    color: COLORS.text,
   },
-  scrollContent: {
-    paddingBottom: 20,
+
+  heroCard: {
+    borderRadius: 24,
+    padding: 18,
+    ...shadow,
   },
-  creditsCard: {
-    margin: 16,
-    borderRadius: 16,
+  heroTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 18,
+  },
+  heroEyebrow: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.78)",
+    marginBottom: 6,
+    fontWeight: "600",
+  },
+  heroHeadline: {
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "800",
+    color: COLORS.white,
+    maxWidth: "78%",
+  },
+  heroBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    right: 50,
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    paddingHorizontal: 5,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  heroBadgeText: {
+    fontSize: 12,
+    color: COLORS.white,
+    fontWeight: "700",
+  },
+  heroBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderRadius: 20,
+    padding: 14,
+  },
+  heroMetricCard: {
+    flex: 1,
+  },
+  heroMetricValue: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: COLORS.white,
+    marginBottom: 4,
+  },
+  heroMetricLabel: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.74)",
+  },
+  heroDivider: {
+    width: 1,
+    height: 34,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    marginHorizontal: 14,
+  },
+
+  card: {
+    backgroundColor: COLORS.card,
+    marginHorizontal: 16,
+    marginBottom: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...shadow,
     overflow: "hidden",
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
   },
-  creditsGradient: {
-    padding: 20,
+
+  creditsCard: {
+    padding: 18,
+  },
+  creditsHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
   creditsTitle: {
-    fontSize: 14,
-    color: "#FFF",
-    opacity: 0.9,
+    fontSize: 13,
+    fontWeight: "600",
+    color: "rgba(255,255,255,0.8)",
     marginBottom: 8,
   },
   creditsBalance: {
-    fontSize: 36,
-    fontWeight: "bold",
-    color: "#FFF",
-    marginBottom: 16,
+    fontSize: 30,
+    fontWeight: "800",
+    color: COLORS.white,
   },
-  creditsStats: {
+  creditsIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  creditsStatsRow: {
     flexDirection: "row",
     alignItems: "center",
+    marginTop: 18,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.2)",
+    borderTopColor: "rgba(255,255,255,0.14)",
   },
-  creditStat: {
+  creditsMiniStat: {
     flex: 1,
   },
-  creditStatDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: "rgba(255,255,255,0.2)",
-    marginHorizontal: 16,
-  },
-  creditStatLabel: {
+  creditsMiniLabel: {
     fontSize: 12,
-    color: "#FFF",
-    opacity: 0.8,
+    color: "rgba(255,255,255,0.72)",
     marginBottom: 4,
   },
-  creditStatValue: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#FFF",
+  creditsMiniValue: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: COLORS.white,
   },
-  transactionsSection: {
-    backgroundColor: "#FFF",
+  creditsMiniDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    marginHorizontal: 14,
+  },
+
+  transactionsWrap: {
     padding: 16,
   },
-  transactionsTitle: {
+  sectionLabel: {
     fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
+    fontWeight: "800",
+    color: COLORS.text,
     marginBottom: 12,
   },
-  transactionItem: {
+  transactionRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
+    borderBottomColor: COLORS.border,
   },
-  transactionInfo: {
+  transactionLeft: {
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
+    marginRight: 10,
   },
-  transactionIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  transactionIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
   },
-  transactionDetails: {
-    flex: 1,
-  },
-  transactionDesc: {
+  transactionTitle: {
     fontSize: 14,
-    color: "#333",
+    fontWeight: "600",
+    color: COLORS.text,
     marginBottom: 2,
   },
   transactionDate: {
     fontSize: 12,
-    color: "#999",
+    color: COLORS.textLight,
   },
   transactionAmount: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  tabContainer: {
-    flexDirection: "row",
-    marginHorizontal: 16,
-    marginBottom: 16,
-    backgroundColor: "#FFF",
-    borderRadius: 12,
-    padding: 4,
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: "center",
-    borderRadius: 8,
-  },
-  activeTab: {
-    backgroundColor: "#183B5C",
-  },
-  tabText: {
     fontSize: 14,
-    fontWeight: "500",
-    color: "#666",
+    fontWeight: "800",
   },
-  activeTabText: {
-    color: "#FFF",
-  },
-  missionCard: {
-    backgroundColor: "#FFF",
+
+  segmentWrap: {
+    flexDirection: "row",
+    backgroundColor: COLORS.white,
     marginHorizontal: 16,
-    marginBottom: 16,
-    borderRadius: 16,
-    overflow: "hidden",
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
+    marginBottom: 14,
+    padding: 5,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...shadow,
   },
+  segmentButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  segmentButtonActive: {
+    backgroundColor: COLORS.primary,
+  },
+  segmentText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: COLORS.textMuted,
+  },
+  segmentTextActive: {
+    color: COLORS.white,
+  },
+
   missionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    padding: 16,
+    alignItems: "flex-start",
+    padding: 18,
+    paddingBottom: 14,
   },
-  missionTitle: {
+  cardTitle: {
     fontSize: 18,
-    fontWeight: "bold",
-    color: "#FFF",
+    fontWeight: "800",
+    color: COLORS.text,
+    marginBottom: 4,
   },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+  cardSubtitle: {
+    fontSize: 13,
+    color: COLORS.textMuted,
   },
-  statusText: {
-    fontSize: 12,
-    fontWeight: "600",
+  descriptionWrap: {
+    paddingHorizontal: 18,
+    paddingBottom: 14,
   },
-  progressContainer: {
+  descriptionText: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    lineHeight: 20,
+  },
+  statusPill: {
+    flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 20,
-    backgroundColor: "#FFF",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
   },
-  progressTextContainer: {
+  statusPillText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  progressSection: {
+    paddingHorizontal: 18,
+    paddingBottom: 18,
+    alignItems: "center",
+  },
+  progressRingWrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
+  progressCenter: {
     position: "absolute",
     alignItems: "center",
+    justifyContent: "center",
   },
-  progressRides: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#333",
+  progressPercent: {
+    fontSize: 30,
+    fontWeight: "800",
+    color: COLORS.text,
   },
-  progressLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginTop: 4,
+  progressCenterLabel: {
+    fontSize: 13,
+    color: COLORS.textMuted,
+    marginTop: 3,
   },
-  missionDetails: {
-    padding: 16,
-    backgroundColor: "#F8F9FA",
+  progressMetaCard: {
+    width: "100%",
+    backgroundColor: "#F8FAFD",
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
   },
-  detailRow: {
+  progressStatRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
   },
-  detailItem: {
+  progressStatLabel: {
+    fontSize: 14,
+    color: COLORS.textMuted,
+    fontWeight: "600",
+  },
+  progressStatValue: {
+    fontSize: 14,
+    color: COLORS.text,
+    fontWeight: "800",
+  },
+
+  tipBanner: {
     flexDirection: "row",
     alignItems: "center",
+    marginHorizontal: 18,
+    marginBottom: 18,
+    backgroundColor: COLORS.accentSoft,
+    borderRadius: 16,
+    padding: 14,
   },
-  detailLabel: {
-    fontSize: 14,
-    color: "#666",
-    marginLeft: 8,
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#333",
-  },
-  rewardRow: {
-    marginTop: 8,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#E0E0E0",
-    marginBottom: 0,
-  },
-  rewardValue: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#4CAF50",
-  },
-  achievedMessage: {
-    flexDirection: "row",
+  tipIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.65)",
+    justifyContent: "center",
     alignItems: "center",
-    padding: 16,
-    backgroundColor: "#4CAF5020",
+    marginRight: 10,
   },
-  achievedText: {
-    fontSize: 14,
-    color: "#4CAF50",
-    marginLeft: 12,
+  tipBannerText: {
     flex: 1,
-  },
-  rewardGrantedMessage: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: "#2196F320",
-  },
-  rewardGrantedText: {
-    fontSize: 14,
-    color: "#2196F3",
-    marginLeft: 12,
-    flex: 1,
-  },
-  tipButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    backgroundColor: "#FF980010",
-  },
-  tipText: {
     fontSize: 13,
-    color: "#FF9800",
-    marginLeft: 12,
-    flex: 1,
+    lineHeight: 19,
+    color: COLORS.text,
+    fontWeight: "600",
   },
-  statsContainer: {
+  tipHighlight: {
+    color: COLORS.accent,
+    fontWeight: "800",
+  },
+
+  infoBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 18,
+    marginBottom: 18,
+    borderRadius: 16,
+    padding: 14,
+  },
+  infoBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "700",
+  },
+
+  statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    marginHorizontal: 16,
-    marginBottom: 16,
-    gap: 8,
+    gap: 12,
+    paddingHorizontal: 16,
   },
   statCard: {
-    flex: 1,
-    minWidth: "45%",
-    backgroundColor: "#FFF",
+    width: "48%",
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
     padding: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...shadow,
+  },
+  statIconWrap: {
+    width: 38,
+    height: 38,
     borderRadius: 12,
     alignItems: "center",
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    justifyContent: "center",
+    marginBottom: 12,
   },
   statValue: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
+    fontSize: 22,
+    fontWeight: "800",
+    color: COLORS.text,
     marginBottom: 4,
   },
   statLabel: {
     fontSize: 12,
-    color: "#666",
+    color: COLORS.textMuted,
+    fontWeight: "600",
   },
-  historyContainer: {
-    paddingHorizontal: 16,
-  },
-  historyItem: {
-    backgroundColor: "#FFF",
+
+  historyCard: {
+    backgroundColor: COLORS.white,
+    marginHorizontal: 16,
+    borderRadius: 20,
     padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...shadow,
   },
-  historyHeader: {
+  historyTop: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
   },
   historyPeriod: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
+    fontSize: 15,
+    fontWeight: "800",
+    color: COLORS.text,
     marginBottom: 4,
   },
-  historyRides: {
+  historySub: {
     fontSize: 13,
-    color: "#666",
+    color: COLORS.textMuted,
   },
-  historyStatus: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  historyResultBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
     justifyContent: "center",
     alignItems: "center",
+    marginLeft: 12,
   },
-  historyStatusText: {
-    fontSize: 18,
-    fontWeight: "bold",
-  },
-  progressBar: {
-    height: 6,
-    backgroundColor: "#E0E0E0",
-    borderRadius: 3,
-    marginBottom: 12,
+  historyBarTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.track,
     overflow: "hidden",
+    marginBottom: 12,
   },
-  progressFill: {
+  historyBarFill: {
     height: "100%",
-    borderRadius: 3,
+    borderRadius: 999,
   },
-  historyFooter: {
+  historyBottom: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   historyReward: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#4CAF50",
-  },
-  historyStatusLabel: {
-    fontSize: 12,
-    color: "#999",
-  },
-  emptyState: {
-    alignItems: "center",
-    padding: 40,
-  },
-  emptyStateText: {
-    fontSize: 16,
-    fontWeight: "500",
-    color: "#666",
-    marginTop: 16,
-  },
-  emptyStateSubtext: {
     fontSize: 14,
-    color: "#999",
-    marginTop: 8,
+    fontWeight: "800",
+    color: COLORS.success,
+  },
+  historyStatusText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+
+  emptyCard: {
+    backgroundColor: COLORS.white,
+    marginHorizontal: 16,
+    borderRadius: 22,
+    padding: 28,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    ...shadow,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: COLORS.text,
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: COLORS.textMuted,
     textAlign: "center",
+    lineHeight: 19,
+    marginTop: 8,
   },
 });
 

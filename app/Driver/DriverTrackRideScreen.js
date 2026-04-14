@@ -557,6 +557,10 @@ export default function DriverTrackRideScreen({ navigation }) {
   const notificationResponseSub   = useRef(null);
   const lastBookingFeedbackRef    = useRef({ requestId: null, ts: 0 });
 
+    const routeFetchLockRef         = useRef(false);
+  const lastRouteFetchAtRef       = useRef(0);
+  const lastRouteSignatureRef     = useRef("");
+
   // FIX: Use refs for payment processing state to avoid stale closures in callbacks
   const isProcessingPaymentRef    = useRef(false);
   const paymentSuccessRef         = useRef(false);
@@ -786,30 +790,47 @@ export default function DriverTrackRideScreen({ navigation }) {
     return points;
   }, []);
 
-const calculateDirections = useCallback(async (origin, destination) => {
-  console.log("googleApiKey:", googleApiKey);
-  console.log("origin:", origin);
-  console.log("destination:", destination);
+const calculateDirections = useCallback(async (origin, destination, options = {}) => {
+  if (!googleApiKey || !origin || !destination) return null;
 
-  if (!googleApiKey || !origin || !destination) {
-    console.log("calculateDirections aborted: missing key/origin/destination");
+  const now = Date.now();
+  const phase = options.phase || "unknown";
+
+  const signature = [
+    phase,
+    origin.latitude?.toFixed(5),
+    origin.longitude?.toFixed(5),
+    destination.latitude?.toFixed(5),
+    destination.longitude?.toFixed(5),
+  ].join("|");
+
+  // iwas duplicate fetch kung halos same lang
+  if (signature === lastRouteSignatureRef.current && now - lastRouteFetchAtRef.current < 2500) {
     return null;
   }
+
+  // iwas sabay-sabay na fetch
+  if (routeFetchLockRef.current) return null;
+
+  routeFetchLockRef.current = true;
+  lastRouteFetchAtRef.current = now;
+  lastRouteSignatureRef.current = signature;
 
   try {
     const url =
       `https://maps.googleapis.com/maps/api/directions/json` +
       `?origin=${origin.latitude},${origin.longitude}` +
       `&destination=${destination.latitude},${destination.longitude}` +
-      `&key=${googleApiKey}&mode=driving`;
+      `&mode=driving` +
+      `&alternatives=false` +
+      `&key=${googleApiKey}`;
 
     const response = await fetch(url);
     const data = await response.json();
 
-    console.log("Directions API status:", data.status);
-    console.log("Directions API data:", data);
-
-    if (data.status !== "OK" || !data.routes?.[0]) return null;
+    if (data.status !== "OK" || !data.routes?.[0]) {
+      return null;
+    }
 
     const route = data.routes[0];
     const leg = route.legs?.[0];
@@ -822,26 +843,30 @@ const calculateDirections = useCallback(async (origin, destination) => {
   } catch (error) {
     console.log("calculateDirections error:", error?.message || error);
     return null;
+  } finally {
+    setTimeout(() => {
+      routeFetchLockRef.current = false;
+    }, 800);
   }
 }, [decodePolyline, googleApiKey]);
 
-  const calculateRouteToPickup = useCallback(async (origin, pickup) => {
-    const result = await calculateDirections(origin, pickup);
-    if (!result) return;
-    setRouteCoordinates(result.points);
-    setEstimatedDistance(result.distanceKm);
-    setEstimatedTime(result.durationMin);
-    fitMap(result.points);
-  }, [calculateDirections, fitMap]);
+const calculateRouteToPickup = useCallback(async (origin, pickup) => {
+  const result = await calculateDirections(origin, pickup, { phase: "pickup" });
+  if (!result) return;
 
-  const calculateRouteToDropoff = useCallback(async (origin, dropoff) => {
-    const result = await calculateDirections(origin, dropoff);
-    if (!result) return;
-    setRouteCoordinates(result.points);
-    setEstimatedDistance(result.distanceKm);
-    setEstimatedTime(result.durationMin);
-    fitMap(result.points);
-  }, [calculateDirections, fitMap]);
+  setRouteCoordinates(result.points);
+  setEstimatedDistance(result.distanceKm);
+  setEstimatedTime(result.durationMin);
+}, [calculateDirections]);
+
+const calculateRouteToDropoff = useCallback(async (origin, dropoff) => {
+  const result = await calculateDirections(origin, dropoff, { phase: "dropoff" });
+  if (!result) return;
+
+  setRouteCoordinates(result.points);
+  setEstimatedDistance(result.distanceKm);
+  setEstimatedTime(result.durationMin);
+}, [calculateDirections]);
 
   const calculateRequestRoute = useCallback(async (request) => {
     if (!request?.pickup_latitude || !request?.dropoff_latitude) return;
@@ -892,7 +917,11 @@ const calculateDirections = useCallback(async (origin, destination) => {
       await updateDriverLocation(next);
 
       const sub = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
+  {
+    accuracy: Location.Accuracy.BestForNavigation,
+    timeInterval: 2000,
+    distanceInterval: 3,
+  },
         async (location) => {
           const latest = { latitude: location.coords.latitude, longitude: location.coords.longitude };
           setDriverLocation(latest);
@@ -1524,11 +1553,48 @@ const processCashPayment = useCallback(async () => {
           try {
             setAlertVisible(false);
             setLoading(true);
-            await supabase.from("bookings").update({ ride_started_at: new Date().toISOString(), status: "ongoing", updated_at: new Date().toISOString() }).eq("id", activeBookingRef.current.id);
-            setRideStarted(true);
-            rideStartedRef.current = true;
-            setWaitingForPayment(true);
-            addNotification({ type: "success", title: "Ride started!", message: "Proceed to the destination." });
+            await supabase
+  .from("bookings")
+  .update({
+    ride_started_at: new Date().toISOString(),
+    status: "ongoing",
+    updated_at: new Date().toISOString(),
+  })
+  .eq("id", activeBookingRef.current.id);
+
+setRideStarted(true);
+rideStartedRef.current = true;
+setWaitingForPayment(true);
+
+// agad i-clear ang lumang pickup route para hindi mukhang stale
+setRouteCoordinates([]);
+setNavigationInitialized(false);
+
+// agad i-calculate ang route to dropoff, hindi na hihintay sa next gps tick
+if (
+  driverLocation &&
+  activeBookingRef.current?.dropoff_latitude &&
+  activeBookingRef.current?.dropoff_longitude
+) {
+  await calculateRouteToDropoff(driverLocation, {
+    latitude: Number(activeBookingRef.current.dropoff_latitude),
+    longitude: Number(activeBookingRef.current.dropoff_longitude),
+  });
+
+  fitMap([
+    driverLocation,
+    {
+      latitude: Number(activeBookingRef.current.dropoff_latitude),
+      longitude: Number(activeBookingRef.current.dropoff_longitude),
+    },
+  ]);
+}
+
+addNotification({
+  type: "success",
+  title: "Ride started!",
+  message: "Proceed to the destination.",
+});
           } catch (error) {
             console.log("handleStartRide error:", error?.message || error);
             addNotification({ type: "error", title: "Could not start ride", message: "Please try again." });
@@ -1712,15 +1778,50 @@ const handleCompleteTrip = useCallback(() => {
   }, [activeBooking, calculateRequestRoute, selectedRequest]);
 
   useEffect(() => {
-    const currentBooking = activeBooking;
-    if (!currentBooking || !driverLocation || navigationInitialized) return;
-    setNavigationInitialized(true);
+  const currentBooking = activeBooking;
+  if (!currentBooking || !driverLocation || navigationInitialized) return;
+
+  setNavigationInitialized(true);
+
+  const run = async () => {
     if (currentBooking.ride_started_at) {
-      calculateRouteToDropoff(driverLocation, { latitude: Number(currentBooking.dropoff_latitude), longitude: Number(currentBooking.dropoff_longitude) });
+      await calculateRouteToDropoff(driverLocation, {
+        latitude: Number(currentBooking.dropoff_latitude),
+        longitude: Number(currentBooking.dropoff_longitude),
+      });
+
+      fitMap([
+        driverLocation,
+        {
+          latitude: Number(currentBooking.dropoff_latitude),
+          longitude: Number(currentBooking.dropoff_longitude),
+        },
+      ]);
     } else {
-      calculateRouteToPickup(driverLocation, { latitude: Number(currentBooking.pickup_latitude), longitude: Number(currentBooking.pickup_longitude) });
+      await calculateRouteToPickup(driverLocation, {
+        latitude: Number(currentBooking.pickup_latitude),
+        longitude: Number(currentBooking.pickup_longitude),
+      });
+
+      fitMap([
+        driverLocation,
+        {
+          latitude: Number(currentBooking.pickup_latitude),
+          longitude: Number(currentBooking.pickup_longitude),
+        },
+      ]);
     }
-  }, [activeBooking, calculateRouteToDropoff, calculateRouteToPickup, driverLocation, navigationInitialized]);
+  };
+
+  run();
+}, [
+  activeBooking,
+  calculateRouteToDropoff,
+  calculateRouteToPickup,
+  driverLocation,
+  fitMap,
+  navigationInitialized,
+]);
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (nextState) => {

@@ -25,6 +25,7 @@ const {
   TouchableOpacity,
   PixelRatio,
   StatusBar,
+  Switch,
 } = RN;
 
 // ─────────────────────────────────────────────
@@ -842,21 +843,21 @@ export default function DriverHomeScreen() {
   );
 
   // Toggle animation
-  const toggleAnim = useRef(new Animated.Value(0)).current;
+const toggleAnim = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    Animated.timing(toggleAnim, {
-      toValue: isOnline ? 1 : 0,
-      duration: 220,
-      easing: Easing.out(Easing.ease),
-      useNativeDriver: false,
-    }).start();
-  }, [isOnline, toggleAnim]);
+useEffect(() => {
+  Animated.timing(toggleAnim, {
+    toValue: isOnline ? 1 : 0,
+    duration: 220,
+    easing: Easing.out(Easing.ease),
+    useNativeDriver: false,
+  }).start();
+}, [isOnline, toggleAnim]);
 
-  const thumbLeft = toggleAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [rs(2), rs(36)], // offline = left, online = right
-  });
+const thumbTranslateX = toggleAnim.interpolate({
+  inputRange: [0, 1],
+  outputRange: [rs(3), rs(37)],  // offline=3px from left, online=37px from left
+});
 
   // ── HELPERS ──────────────────────────────
   const showAlert = useCallback(
@@ -2053,7 +2054,7 @@ export default function DriverHomeScreen() {
             marginBottom: rs(20),
           }}
         >
-          <Pressable onPress={() => navigation.navigate("account")}>
+          <Pressable onPress={() => navigation.navigate("Account")}>
             <RN.Image
               source={
                 driver?.profile_picture
@@ -2349,78 +2350,40 @@ export default function DriverHomeScreen() {
                   marginHorizontal: rs(16),
                 }}
               />
-              <View style={{ alignItems: "center" }}>
-                <Pressable
-                  onPress={toggleAvailability}
-                  disabled={!canToggle || isToggling}
-                  style={{
-                    width: rs(68),
-                    height: rs(36),
-                    borderRadius: rs(18),
-                    backgroundColor: !canToggle
-                      ? COLORS.gray300
-                      : isOnline
-                        ? COLORS.green
-                        : COLORS.gray100,
-                    borderWidth: 1,
-                    borderColor: !canToggle
-                      ? COLORS.gray300
-                      : isOnline
-                        ? COLORS.green
-                        : COLORS.gray300,
-                    position: "relative",
-                    justifyContent: "center",
-                  }}
-                >
-                  {isToggling ? (
-                    <View
-                      style={{
-                        flex: 1,
-                        justifyContent: "center",
-                        alignItems: "center",
-                      }}
-                    >
-                      <ActivityIndicator
-                        size="small"
-                        color={isOnline ? COLORS.white : COLORS.gray500}
-                      />
-                    </View>
-                  ) : (
-                    <Animated.View
-                      style={{
-                        position: "absolute",
-                        top: rs(3),
-                        left: thumbLeft,
-                        width: rs(28),
-                        height: rs(28),
-                        borderRadius: rs(14),
-                        backgroundColor: COLORS.white,
-                        shadowColor: COLORS.navy,
-                        shadowOffset: { width: 0, height: 1 },
-                        shadowOpacity: 0.15,
-                        shadowRadius: 3,
-                        elevation: 2,
-                      }}
-                    />
-                  )}
-                </Pressable>
-
-                <Text
-                  style={{
-                    marginTop: rs(6),
-                    fontSize: normalize(10),
-                    fontWeight: "700",
-                    letterSpacing: 0.5,
-                    color: !canToggle
-                      ? COLORS.gray300
-                      : isOnline
-                        ? COLORS.green
-                        : COLORS.gray500,
-                  }}
-                >
-                  {isOnline ? "ONLINE" : "OFFLINE"}
-                </Text>
-              </View>
+<View style={{ alignItems: "center" }}>
+  <Switch
+    value={isOnline}
+    onValueChange={toggleAvailability}
+    disabled={!canToggle || isToggling}
+    trackColor={{ false: COLORS.gray300, true: COLORS.green }}
+    thumbColor={isToggling ? COLORS.gray400 : COLORS.white}
+    ios_backgroundColor={COLORS.gray300}
+    style={{
+      transform: [{ scale: 1.2 }],
+      opacity: !canToggle ? 0.5 : 1,
+    }}
+  />
+  {isToggling && (
+    <View style={{ position: "absolute", top: rs(15), left: rs(15) }}>
+      <ActivityIndicator size="small" color={COLORS.green} />
+    </View>
+  )}
+  <Text
+    style={{
+      marginTop: rs(12),
+      fontSize: normalize(10),
+      fontWeight: "700",
+      letterSpacing: 0.5,
+      color: !canToggle
+        ? COLORS.gray300
+        : isOnline
+          ? COLORS.green
+          : COLORS.gray500,
+    }}
+  >
+    {isOnline ? "ONLINE" : "OFFLINE"}
+  </Text>
+</View>
             </View>
             <View
               style={{

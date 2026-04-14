@@ -19,10 +19,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Haptics from 'expo-haptics';
+import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export default function DriverInboxScreen() {
   const insets = useSafeAreaInsets();
@@ -35,102 +35,142 @@ export default function DriverInboxScreen() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [selectedNotification, setSelectedNotification] = useState(null);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
-  const [filterType, setFilterType] = useState('all');
-  const [subscription, setSubscription] = useState(null);
-  const [updateSubscription, setUpdateSubscription] = useState(null);
+  const [filterType, setFilterType] = useState("all");
   const [isMarkingRead, setIsMarkingRead] = useState(false);
   const [modalAnimation] = useState(new Animated.Value(SCREEN_HEIGHT));
-  
-  const modalAnimationRef = useRef(null);
-  const selectedNotificationRef = useRef(null);
 
-  // Load driver data on focus
+  const selectedNotificationRef = useRef(null);
+  const insertChannelRef = useRef(null);
+  const updateChannelRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      cleanupRealtimeSubscriptions();
+    };
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       loadDriverData();
     }, [])
   );
 
-  // Set up real-time subscription when driverId is available
   useEffect(() => {
-    if (driverId) {
-      setupRealtimeSubscription();
-    }
+    if (!driverId) return;
+
+    setupRealtimeSubscription(driverId);
 
     return () => {
-      if (subscription) {
-        supabase.removeChannel(subscription);
-      }
-      if (updateSubscription) {
-        supabase.removeChannel(updateSubscription);
-      }
+      cleanupRealtimeSubscriptions();
     };
   }, [driverId]);
 
-  const setupRealtimeSubscription = async () => {
+  const cleanupRealtimeSubscriptions = async () => {
     try {
-      console.log("📡 Setting up real-time subscription for driver:", driverId);
-      
-      if (subscription) {
-        await supabase.removeChannel(subscription);
-      }
-      if (updateSubscription) {
-        await supabase.removeChannel(updateSubscription);
+      if (insertChannelRef.current) {
+        await supabase.removeChannel(insertChannelRef.current);
+        insertChannelRef.current = null;
       }
 
-      // Subscribe to new notifications (INSERT)
-      const newChannel = supabase
-        .channel('driver-notifications-new')
+      if (updateChannelRef.current) {
+        await supabase.removeChannel(updateChannelRef.current);
+        updateChannelRef.current = null;
+      }
+    } catch (err) {
+      console.log("Error cleaning up realtime subscriptions:", err);
+    }
+  };
+
+  const setupRealtimeSubscription = async (id) => {
+    try {
+      console.log("📡 Setting up real-time subscription for driver:", id);
+
+      await cleanupRealtimeSubscriptions();
+
+      const insertChannel = supabase
+        .channel(`driver-notifications-insert-${id}`)
         .on(
-          'postgres_changes',
+          "postgres_changes",
           {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'notifications',
-            filter: `user_id=eq.${driverId}`
+            event: "INSERT",
+            schema: "public",
+            table: "notifications",
+            filter: `user_id=eq.${id}`,
           },
           (payload) => {
             console.log("🔔 New notification received:", payload.new);
-            setNotifications(prev => [payload.new, ...prev]);
-            setUnreadCount(prev => prev + 1);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+            setNotifications((prev) => {
+              const exists = prev.some((n) => n.id === payload.new.id);
+              if (exists) {
+                console.log("⚠️ Duplicate notification skipped:", payload.new.id);
+                return prev;
+              }
+
+              const updated = [payload.new, ...prev];
+              setUnreadCount(updated.filter((n) => !n.is_read).length);
+              return updated;
+            });
+
+            Haptics.notificationAsync(
+              Haptics.NotificationFeedbackType.Success
+            ).catch(() => {});
           }
         )
-        .subscribe();
+        .subscribe((status) => {
+          console.log("📡 Insert subscription status:", status);
+        });
 
-      // Subscribe to updates
       const updateChannel = supabase
-        .channel('driver-notifications-update')
+        .channel(`driver-notifications-update-${id}`)
         .on(
-          'postgres_changes',
+          "postgres_changes",
           {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'notifications',
-            filter: `user_id=eq.${driverId}`
+            event: "UPDATE",
+            schema: "public",
+            table: "notifications",
+            filter: `user_id=eq.${id}`,
           },
           (payload) => {
             console.log("📝 Notification updated:", payload.new);
-            
-            if (selectedNotificationRef.current?.id === payload.new.id && showNotificationModal) {
-              setSelectedNotification(prev => prev ? { ...prev, ...payload.new } : null);
-              return;
+
+            setNotifications((prev) => {
+              const exists = prev.some((n) => n.id === payload.new.id);
+
+              let updated;
+
+              if (exists) {
+                updated = prev.map((n) =>
+                  n.id === payload.new.id ? { ...n, ...payload.new } : n
+                );
+              } else {
+                updated = [payload.new, ...prev];
+              }
+
+              setUnreadCount(updated.filter((n) => !n.is_read).length);
+              return updated;
+            });
+
+            if (
+              selectedNotificationRef.current?.id === payload.new.id &&
+              showNotificationModal
+            ) {
+              setSelectedNotification((prev) =>
+                prev ? { ...prev, ...payload.new } : null
+              );
             }
-            
-            setNotifications(prev => 
-              prev.map(n => n.id === payload.new.id ? { ...n, ...payload.new } : n)
-            );
-            
-            const newUnreadCount = notifications.filter(n => !n.is_read).length;
-            setUnreadCount(newUnreadCount);
           }
         )
-        .subscribe();
+        .subscribe((status) => {
+          console.log("📡 Update subscription status:", status);
+        });
 
-      setSubscription(newChannel);
-      setUpdateSubscription(updateChannel);
-      
-      console.log("✅ Real-time subscription established");
+      insertChannelRef.current = insertChannel;
+      updateChannelRef.current = updateChannel;
+
+      console.log("✅ Real-time subscriptions established");
     } catch (err) {
       console.log("Error setting up real-time subscription:", err);
     }
@@ -138,24 +178,35 @@ export default function DriverInboxScreen() {
 
   const loadDriverData = async () => {
     try {
+      setRefreshing(true);
+
       const id = await AsyncStorage.getItem("user_id");
+      console.log("👤 Loaded driver id:", id);
+
+      if (!isMountedRef.current) return;
+
       setDriverId(id);
-      
+
       if (id) {
         await fetchNotifications(id);
+      } else {
+        setNotifications([]);
+        setUnreadCount(0);
       }
     } catch (err) {
       console.log("Error loading driver data:", err);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   };
 
   const fetchNotifications = async (id) => {
     try {
       console.log("🔍 Fetching notifications for driver:", id);
-      
+
       const { data, error } = await supabase
         .from("notifications")
         .select("*")
@@ -165,11 +216,17 @@ export default function DriverInboxScreen() {
 
       if (error) throw error;
 
-      console.log("📊 Notifications fetched:", data?.length || 0);
-      setNotifications(data || []);
-      
-      const unread = data?.filter(n => !n.is_read).length || 0;
-      setUnreadCount(unread);
+      const uniqueNotifications = Array.isArray(data)
+        ? data.filter(
+            (item, index, arr) =>
+              arr.findIndex((n) => n.id === item.id) === index
+          )
+        : [];
+
+      console.log("📊 Notifications fetched:", uniqueNotifications.length);
+
+      setNotifications(uniqueNotifications);
+      setUnreadCount(uniqueNotifications.filter((n) => !n.is_read).length);
     } catch (err) {
       console.log("Error fetching notifications:", err);
     }
@@ -177,26 +234,48 @@ export default function DriverInboxScreen() {
 
   const markAsRead = async (notificationId) => {
     if (isMarkingRead) return;
-    
+
     try {
       setIsMarkingRead(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+
       const { error } = await supabase
         .from("notifications")
-        .update({ 
+        .update({
           is_read: true,
-          read_at: new Date().toISOString()
+          read_at: new Date().toISOString(),
         })
-        .eq("id", notificationId);
+        .eq("id", notificationId)
+        .eq("is_read", false);
 
       if (error) throw error;
 
-      setNotifications(prev => 
-        prev.map(n => n.id === notificationId ? { ...n, is_read: true } : n)
-      );
-      
-      setUnreadCount(prev => Math.max(0, prev - 1));
+      setNotifications((prev) => {
+        const updated = prev.map((n) =>
+          n.id === notificationId
+            ? {
+                ...n,
+                is_read: true,
+                read_at: new Date().toISOString(),
+              }
+            : n
+        );
+
+        setUnreadCount(updated.filter((n) => !n.is_read).length);
+        return updated;
+      });
+
+      if (selectedNotificationRef.current?.id === notificationId) {
+        setSelectedNotification((prev) =>
+          prev
+            ? {
+                ...prev,
+                is_read: true,
+                read_at: new Date().toISOString(),
+              }
+            : null
+        );
+      }
     } catch (err) {
       console.log("Error marking as read:", err);
     } finally {
@@ -206,29 +285,52 @@ export default function DriverInboxScreen() {
 
   const markAllAsRead = async () => {
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
-      const unreadIds = notifications.filter(n => !n.is_read).map(n => n.id);
-      
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+      const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
+
       if (unreadIds.length === 0) {
         Alert.alert("All Caught Up", "You have no unread notifications.");
         return;
       }
 
+      const now = new Date().toISOString();
+
       const { error } = await supabase
         .from("notifications")
-        .update({ 
+        .update({
           is_read: true,
-          read_at: new Date().toISOString()
+          read_at: now,
         })
         .in("id", unreadIds);
 
       if (error) throw error;
 
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
-      setUnreadCount(0);
-      
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setNotifications((prev) => {
+        const updated = prev.map((n) => ({
+          ...n,
+          is_read: true,
+          read_at: now,
+        }));
+        setUnreadCount(0);
+        return updated;
+      });
+
+      if (selectedNotification) {
+        setSelectedNotification((prev) =>
+          prev
+            ? {
+                ...prev,
+                is_read: true,
+                read_at: now,
+              }
+            : null
+        );
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+        () => {}
+      );
       Alert.alert("Success", "All notifications marked as read.");
     } catch (err) {
       console.log("Error marking all as read:", err);
@@ -239,7 +341,7 @@ export default function DriverInboxScreen() {
     selectedNotificationRef.current = notification;
     setSelectedNotification(notification);
     showModalWithAnimation();
-    
+
     if (!notification.is_read) {
       markAsRead(notification.id);
     }
@@ -247,6 +349,7 @@ export default function DriverInboxScreen() {
 
   const showModalWithAnimation = () => {
     setShowNotificationModal(true);
+
     Animated.spring(modalAnimation, {
       toValue: 0,
       useNativeDriver: true,
@@ -269,30 +372,32 @@ export default function DriverInboxScreen() {
 
   const handleNotificationAction = (notification) => {
     console.log("🎯 Handling notification action:", notification);
-    
+
     closeModal();
-    
+
     setTimeout(() => {
       if (notification.data?.action === "view_trip" && notification.data?.trip_id) {
-        navigation.navigate("TripDetailsScreen", { tripId: notification.data.trip_id });
+        navigation.navigate("TripDetailsScreen", {
+          tripId: notification.data.trip_id,
+        });
         return;
       }
-      
+
       if (notification.data?.action === "view_subscription") {
         navigation.navigate("SubscriptionScreen");
         return;
       }
-      
+
       if (notification.data?.action === "view_payment") {
         navigation.navigate("Wallet");
         return;
       }
-      
+
       if (notification.data?.action === "view_mission") {
         navigation.navigate("MissionsScreen");
         return;
       }
-      
+
       Alert.alert("Info", "No action available for this notification");
     }, 100);
   };
@@ -308,8 +413,10 @@ export default function DriverInboxScreen() {
           style: "destructive",
           onPress: async () => {
             try {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-              
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(
+                () => {}
+              );
+
               const { error } = await supabase
                 .from("notifications")
                 .delete()
@@ -317,24 +424,25 @@ export default function DriverInboxScreen() {
 
               if (error) throw error;
 
-              const deletedNotification = notifications.find(n => n.id === notificationId);
-              setNotifications(prev => prev.filter(n => n.id !== notificationId));
-              
-              if (deletedNotification && !deletedNotification.is_read) {
-                setUnreadCount(prev => Math.max(0, prev - 1));
-              }
-              
+              setNotifications((prev) => {
+                const updated = prev.filter((n) => n.id !== notificationId);
+                setUnreadCount(updated.filter((n) => !n.is_read).length);
+                return updated;
+              });
+
               if (selectedNotification?.id === notificationId) {
                 closeModal();
               }
-              
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+              Haptics.notificationAsync(
+                Haptics.NotificationFeedbackType.Success
+              ).catch(() => {});
             } catch (err) {
               console.log("Error deleting notification:", err);
               Alert.alert("Error", "Failed to delete notification.");
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -368,22 +476,26 @@ export default function DriverInboxScreen() {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
+    if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins} min ago`;
-    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
-    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
+
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
   };
 
-  const filteredNotifications = notifications.filter(notification => {
-    if (filterType === 'all') return true;
-    if (filterType === 'unread') return !notification.is_read;
+  const filteredNotifications = notifications.filter((notification) => {
+    if (filterType === "all") return true;
+    if (filterType === "unread") return !notification.is_read;
     return notification.type === filterType;
   });
 
   const renderNotificationItem = ({ item }) => {
     const icon = getNotificationIcon(item.type);
-    
+
     return (
       <Pressable
         style={[styles.notificationItem, !item.is_read && styles.unreadItem]}
@@ -392,22 +504,22 @@ export default function DriverInboxScreen() {
         <View style={[styles.notificationIcon, { backgroundColor: icon.bg }]}>
           <Ionicons name={icon.name} size={24} color={icon.color} />
         </View>
-        
+
         <View style={styles.notificationContent}>
           <View style={styles.notificationHeader}>
             <Text style={styles.notificationTitle} numberOfLines={1}>
               {item.title}
             </Text>
-            <Text style={styles.notificationTime}>{formatTime(item.created_at)}</Text>
+            <Text style={styles.notificationTime}>
+              {formatTime(item.created_at)}
+            </Text>
           </View>
-          
+
           <Text style={styles.notificationMessage} numberOfLines={2}>
             {item.message}
           </Text>
-          
-          {!item.is_read && (
-            <View style={styles.unreadDot} />
-          )}
+
+          {!item.is_read && <View style={styles.unreadDot} />}
         </View>
       </Pressable>
     );
@@ -416,7 +528,11 @@ export default function DriverInboxScreen() {
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIcon}>
-        <Ionicons name="notifications-off-outline" size={64} color="#D1D5DB" />
+        <Ionicons
+          name="notifications-off-outline"
+          size={64}
+          color="#D1D5DB"
+        />
       </View>
       <Text style={styles.emptyTitle}>No Notifications</Text>
       <Text style={styles.emptyText}>
@@ -435,12 +551,12 @@ export default function DriverInboxScreen() {
     >
       <TouchableWithoutFeedback onPress={closeModal}>
         <View style={styles.modalOverlay}>
-          <Animated.View 
+          <Animated.View
             style={[
               styles.modalContent,
               {
-                transform: [{ translateY: modalAnimation }]
-              }
+                transform: [{ translateY: modalAnimation }],
+              },
             ]}
           >
             <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
@@ -448,79 +564,121 @@ export default function DriverInboxScreen() {
                 {selectedNotification && (
                   <>
                     <View style={styles.modalHeader}>
-                      <Pressable 
+                      <Pressable
                         style={styles.modalCloseButton}
                         onPress={closeModal}
                       >
                         <Ionicons name="close" size={24} color="#666" />
                       </Pressable>
+
                       <Text style={styles.modalTitle}>Notification</Text>
-                      <Pressable 
+
+                      <Pressable
                         style={styles.modalDeleteButton}
                         onPress={() => deleteNotification(selectedNotification.id)}
                       >
-                        <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                        <Ionicons
+                          name="trash-outline"
+                          size={20}
+                          color="#EF4444"
+                        />
                       </Pressable>
                     </View>
 
-                    <ScrollView 
+                    <ScrollView
                       showsVerticalScrollIndicator={false}
                       contentContainerStyle={styles.modalScrollContent}
                     >
                       <View style={styles.notificationDetail}>
-                        <View style={[
-                          styles.detailIcon,
-                          { backgroundColor: getNotificationIcon(selectedNotification.type).bg }
-                        ]}>
-                          <Ionicons 
-                            name={getNotificationIcon(selectedNotification.type).name} 
-                            size={32} 
-                            color={getNotificationIcon(selectedNotification.type).color} 
+                        <View
+                          style={[
+                            styles.detailIcon,
+                            {
+                              backgroundColor: getNotificationIcon(
+                                selectedNotification.type
+                              ).bg,
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name={
+                              getNotificationIcon(selectedNotification.type).name
+                            }
+                            size={32}
+                            color={
+                              getNotificationIcon(selectedNotification.type).color
+                            }
                           />
                         </View>
 
-                        <Text style={styles.detailTitle}>{selectedNotification.title}</Text>
+                        <Text style={styles.detailTitle}>
+                          {selectedNotification.title}
+                        </Text>
+
                         <Text style={styles.detailTime}>
-                          {new Date(selectedNotification.created_at).toLocaleString('en-US', {
-                            weekday: 'long',
-                            year: 'numeric',
-                            month: 'long',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
+                          {new Date(
+                            selectedNotification.created_at
+                          ).toLocaleString("en-US", {
+                            weekday: "long",
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
                           })}
                         </Text>
 
                         <View style={styles.detailMessageContainer}>
-                          <Text style={styles.detailMessage}>{selectedNotification.message}</Text>
+                          <Text style={styles.detailMessage}>
+                            {selectedNotification.message}
+                          </Text>
                         </View>
 
-                        {selectedNotification.data && Object.keys(selectedNotification.data).length > 0 && (
-                          <View style={styles.detailData}>
-                            {Object.entries(selectedNotification.data).map(([key, value]) => {
-                              if (key === "action") return null;
-                              return (
-                                <View key={key} style={styles.detailDataRow}>
-                                  <Text style={styles.detailDataKey}>{key.replace(/_/g, ' ').toUpperCase()}:</Text>
-                                  <Text style={styles.detailDataValue}>{String(value)}</Text>
-                                </View>
-                              );
-                            })}
-                          </View>
-                        )}
+                        {selectedNotification.data &&
+                          Object.keys(selectedNotification.data).length > 0 && (
+                            <View style={styles.detailData}>
+                              {Object.entries(selectedNotification.data).map(
+                                ([key, value]) => {
+                                  if (key === "action") return null;
+
+                                  return (
+                                    <View key={key} style={styles.detailDataRow}>
+                                      <Text style={styles.detailDataKey}>
+                                        {key.replace(/_/g, " ").toUpperCase()}:
+                                      </Text>
+                                      <Text style={styles.detailDataValue}>
+                                        {String(value)}
+                                      </Text>
+                                    </View>
+                                  );
+                                }
+                              )}
+                            </View>
+                          )}
 
                         {selectedNotification.data?.action && (
                           <Pressable
                             style={styles.detailActionButton}
-                            onPress={() => handleNotificationAction(selectedNotification)}
+                            onPress={() =>
+                              handleNotificationAction(selectedNotification)
+                            }
                           >
                             <Text style={styles.detailActionText}>
-                              {selectedNotification.data.action === "view_trip" ? "View Trip Details" :
-                               selectedNotification.data.action === "view_subscription" ? "View Subscription" :
-                               selectedNotification.data.action === "view_payment" ? "View Payment" :
-                               "Take Action"}
+                              {selectedNotification.data.action === "view_trip"
+                                ? "View Trip Details"
+                                : selectedNotification.data.action ===
+                                  "view_subscription"
+                                ? "View Subscription"
+                                : selectedNotification.data.action ===
+                                  "view_payment"
+                                ? "View Payment"
+                                : "Take Action"}
                             </Text>
-                            <Ionicons name="arrow-forward" size={20} color="#FFF" />
+                            <Ionicons
+                              name="arrow-forward"
+                              size={20}
+                              color="#FFF"
+                            />
                           </Pressable>
                         )}
                       </View>
@@ -546,7 +704,6 @@ export default function DriverInboxScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <LinearGradient
         colors={["#183B5C", "#0F2A40"]}
         start={{ x: 0, y: 0 }}
@@ -556,7 +713,7 @@ export default function DriverInboxScreen() {
         <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#FFF" />
         </Pressable>
-        
+
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Inbox</Text>
           {unreadCount > 0 && (
@@ -565,74 +722,135 @@ export default function DriverInboxScreen() {
             </View>
           )}
         </View>
-        
-        {unreadCount > 0 && (
+
+        {unreadCount > 0 ? (
           <Pressable style={styles.markAllButton} onPress={markAllAsRead}>
             <Ionicons name="checkmark-done" size={22} color="#FFB37A" />
           </Pressable>
+        ) : (
+          <View style={styles.headerRightPlaceholder} />
         )}
       </LinearGradient>
 
-      {/* Filter Tabs */}
       <View style={styles.filterTabs}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <Pressable
-            style={[styles.filterTab, filterType === 'all' && styles.filterTabActive]}
-            onPress={() => setFilterType('all')}
+            style={[styles.filterTab, filterType === "all" && styles.filterTabActive]}
+            onPress={() => setFilterType("all")}
           >
-            <Text style={[styles.filterText, filterType === 'all' && styles.filterTextActive]}>
-              All {notifications.length > 0 && `(${notifications.length})`}
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "all" && styles.filterTextActive,
+              ]}
+            >
+              All {notifications.length > 0 ? `(${notifications.length})` : ""}
             </Text>
           </Pressable>
+
           <Pressable
-            style={[styles.filterTab, filterType === 'unread' && styles.filterTabActive]}
-            onPress={() => setFilterType('unread')}
+            style={[
+              styles.filterTab,
+              filterType === "unread" && styles.filterTabActive,
+            ]}
+            onPress={() => setFilterType("unread")}
           >
-            <Text style={[styles.filterText, filterType === 'unread' && styles.filterTextActive]}>
-              Unread {unreadCount > 0 && `(${unreadCount})`}
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "unread" && styles.filterTextActive,
+              ]}
+            >
+              Unread {unreadCount > 0 ? `(${unreadCount})` : ""}
             </Text>
           </Pressable>
+
           <Pressable
-            style={[styles.filterTab, filterType === 'booking' && styles.filterTabActive]}
-            onPress={() => setFilterType('booking')}
+            style={[
+              styles.filterTab,
+              filterType === "booking" && styles.filterTabActive,
+            ]}
+            onPress={() => setFilterType("booking")}
           >
-            <Text style={[styles.filterText, filterType === 'booking' && styles.filterTextActive]}>Bookings</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "booking" && styles.filterTextActive,
+              ]}
+            >
+              Bookings
+            </Text>
           </Pressable>
+
           <Pressable
-            style={[styles.filterTab, filterType === 'payment' && styles.filterTabActive]}
-            onPress={() => setFilterType('payment')}
+            style={[
+              styles.filterTab,
+              filterType === "payment" && styles.filterTabActive,
+            ]}
+            onPress={() => setFilterType("payment")}
           >
-            <Text style={[styles.filterText, filterType === 'payment' && styles.filterTextActive]}>Payments</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "payment" && styles.filterTextActive,
+              ]}
+            >
+              Payments
+            </Text>
           </Pressable>
+
           <Pressable
-            style={[styles.filterTab, filterType === 'mission' && styles.filterTabActive]}
-            onPress={() => setFilterType('mission')}
+            style={[
+              styles.filterTab,
+              filterType === "mission" && styles.filterTabActive,
+            ]}
+            onPress={() => setFilterType("mission")}
           >
-            <Text style={[styles.filterText, filterType === 'mission' && styles.filterTextActive]}>Missions</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "mission" && styles.filterTextActive,
+              ]}
+            >
+              Missions
+            </Text>
           </Pressable>
+
           <Pressable
-            style={[styles.filterTab, filterType === 'system' && styles.filterTabActive]}
-            onPress={() => setFilterType('system')}
+            style={[
+              styles.filterTab,
+              filterType === "system" && styles.filterTabActive,
+            ]}
+            onPress={() => setFilterType("system")}
           >
-            <Text style={[styles.filterText, filterType === 'system' && styles.filterTextActive]}>System</Text>
+            <Text
+              style={[
+                styles.filterText,
+                filterType === "system" && styles.filterTextActive,
+              ]}
+            >
+              System
+            </Text>
           </Pressable>
         </ScrollView>
       </View>
 
-      {/* Notifications List */}
       <FlatList
         data={filteredNotifications}
         renderItem={renderNotificationItem}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={loadDriverData} tintColor="#183B5C" />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={loadDriverData}
+            tintColor="#183B5C"
+          />
         }
         ListEmptyComponent={renderEmptyState}
       />
 
-      {/* Notification Modal */}
       <NotificationModal />
     </View>
   );
@@ -686,6 +904,9 @@ const styles = StyleSheet.create({
   },
   markAllButton: {
     padding: 8,
+  },
+  headerRightPlaceholder: {
+    width: 38,
   },
   filterTabs: {
     backgroundColor: "#FFF",
@@ -742,7 +963,7 @@ const styles = StyleSheet.create({
   },
   notificationContent: {
     flex: 1,
-    position: 'relative',
+    position: "relative",
   },
   notificationHeader: {
     flexDirection: "row",
@@ -767,7 +988,7 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   unreadDot: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     right: 0,
     width: 8,
@@ -871,6 +1092,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#666",
     marginBottom: 20,
+    textAlign: "center",
   },
   detailMessageContainer: {
     backgroundColor: "#F9FAFB",
@@ -896,15 +1118,19 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     marginBottom: 6,
+    gap: 10,
   },
   detailDataKey: {
     fontSize: 13,
     color: "#666",
     fontWeight: "500",
+    flex: 1,
   },
   detailDataValue: {
     fontSize: 13,
     color: "#333",
+    flex: 1,
+    textAlign: "right",
   },
   detailActionButton: {
     flexDirection: "row",
