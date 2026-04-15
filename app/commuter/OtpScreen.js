@@ -10,6 +10,7 @@ import {
   Image,
   Alert,
   ActivityIndicator,
+  Clipboard,
 } from "react-native";
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
@@ -23,13 +24,13 @@ export default function OtpScreen({ route, navigation }) {
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [resending, setResending] = useState(false);
-  const [countdown, setCountdown] = useState(60); // start immediately
+  const [countdown, setCountdown] = useState(60);
 
   const inputs = useRef([]);
 
+  // FIX 1: Countdown no longer depends on `countdown` in deps array.
+  // Using a ref-based interval so it doesn't restart every second.
   useEffect(() => {
-    if (countdown <= 0) return;
-
     const interval = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
@@ -41,21 +42,54 @@ export default function OtpScreen({ route, navigation }) {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [countdown]);
+  }, []); // runs only once on mount
 
+  // FIX 2: Paste support — checks clipboard on focus of the first input
+  const handlePaste = async () => {
+    try {
+      const text = await Clipboard.getString();
+      const digits = text.replace(/\D/g, "").slice(0, 6);
+
+      if (digits.length === 6) {
+        const newCode = digits.split("");
+        setCode(newCode);
+        // Focus last input after paste
+        inputs.current[5]?.focus();
+      }
+    } catch (_) {
+      // Clipboard access failed silently
+    }
+  };
+
+  // FIX 3: Improved handleChange — correctly handles backspace and auto-advance
   const handleChange = (text, index) => {
-    if (!/^\d*$/.test(text)) return;
+    // Strip non-digits
+    const digit = text.replace(/\D/g, "");
+
+    // Handle paste: if more than 1 character comes in (some Android keyboards do this)
+    if (digit.length > 1) {
+      const digits = digit.slice(0, 6);
+      const newCode = [...code];
+      for (let i = 0; i < digits.length && index + i < 6; i++) {
+        newCode[index + i] = digits[i];
+      }
+      setCode(newCode);
+      const nextIndex = Math.min(index + digits.length, 5);
+      inputs.current[nextIndex]?.focus();
+      return;
+    }
 
     const newCode = [...code];
 
-    if (text === "") {
+    if (digit === "") {
+      // Backspace: clear current field and move back
       newCode[index] = "";
       setCode(newCode);
       if (index > 0) inputs.current[index - 1]?.focus();
       return;
     }
 
-    newCode[index] = text;
+    newCode[index] = digit;
     setCode(newCode);
 
     if (index < 5) inputs.current[index + 1]?.focus();
@@ -145,12 +179,31 @@ export default function OtpScreen({ route, navigation }) {
                 ref={(ref) => (inputs.current[index] = ref)}
                 style={styles.otpInput}
                 keyboardType="number-pad"
-                maxLength={1}
+                maxLength={6} // Allow 6 so paste works on Android; handleChange trims it
                 value={digit}
                 onChangeText={(text) => handleChange(text, index)}
+                // FIX 2: Trigger paste check when first input is focused
+                onFocus={index === 0 ? handlePaste : undefined}
+                selectTextOnFocus
               />
             ))}
           </View>
+
+          {/* Paste button for manual paste */}
+          <Pressable
+            onPress={handlePaste}
+            style={{
+              marginBottom: 16,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Ionicons name="clipboard-outline" size={16} color="#183B5C" />
+            <Text style={{ color: "#183B5C", fontSize: 13, fontWeight: "600" }}>
+              Paste from clipboard
+            </Text>
+          </Pressable>
 
           <Pressable
             onPress={handleVerify}

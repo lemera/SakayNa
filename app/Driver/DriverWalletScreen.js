@@ -510,17 +510,7 @@ const fetchStatistics = async (uid) => {
           borderBottomRightRadius: 30,
         }}
       >
-        <Pressable
-          onPress={() => navigation.goBack()}
-          style={{ 
-            position: "absolute", 
-            top: insets.top + 10, 
-            left: 20,
-            zIndex: 1,
-          }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#FFF" />
-        </Pressable>
+       
 
         <Text
           style={{

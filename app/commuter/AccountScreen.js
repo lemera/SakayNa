@@ -8,12 +8,8 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
-  Modal,
-  TextInput,
   Image,
   Linking,
-  KeyboardAvoidingView,
-  Platform,
   StyleSheet,
   Dimensions,
 } from "react-native";
@@ -24,20 +20,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
-import packageJson from '../../package.json';
-import { getUserSession } from '../utils/authStorage'; // ✅ Import test account session
+import packageJson from "../../package.json";
+import { getUserSession } from "../utils/authStorage";
+import Constants from "expo-constants";
 
-const base64ToArrayBuffer = (base64) => {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
-  return bytes.buffer;
-};
 const { width } = Dimensions.get("window");
-
-// scaling function (same sa ginawa natin kanina)
 const scale = (size) => (width / 375) * size;
 const appVersion = packageJson.version;
 
@@ -46,346 +33,147 @@ export default function AccountScreen({ navigation }) {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
   const [userId, setUserId] = useState(null);
-  const [userType, setUserType] = useState('commuter');
-  const [isTestAccount, setIsTestAccount] = useState(false); // ✅ Track if test account
+  const [userType, setUserType] = useState("commuter");
+  const [isTestAccount, setIsTestAccount] = useState(false);
+
   const [profile, setProfile] = useState(null);
-  
-  // URLs from database
-  const [helpCenterUrl, setHelpCenterUrl] = useState(null);
-  const [termsUrl, setTermsUrl] = useState(null);
-  const [privacyUrl, setPrivacyUrl] = useState(null);
-  const [urlsLoading, setUrlsLoading] = useState(true);
-  
+
   const [stats, setStats] = useState({
     totalTrips: 0,
     totalPoints: 0,
     totalSpent: 0,
-    memberSince: null,
-    referrals: 0,
   });
 
-  // Withdrawal Settings State
-  const [withdrawalSettings, setWithdrawalSettings] = useState({
-    default_payment_method_id: null,
-    auto_withdraw: false,
-    auto_withdraw_threshold: null,
-    withdrawal_pin: null,
-    daily_withdrawal_limit: null,
-    weekly_withdrawal_limit: null,
-    monthly_withdrawal_limit: null,
-    notifications_enabled: true,
-  });
-  
-  // Payout methods for settings
-  const [payoutMethods, setPayoutMethods] = useState([]);
-  
-  // Modal states - REMOVED editName since name is not editable
-  const [editProfileModal, setEditProfileModal] = useState(false);
-  const [editPhone, setEditPhone] = useState("");
-  const [editEmail, setEditEmail] = useState("");
-  
-  // Withdrawal Settings Modal
-  const [showWithdrawalSettingsModal, setShowWithdrawalSettingsModal] = useState(false);
-  const [tempSettings, setTempSettings] = useState(null);
-  
-  // PIN Change Modal
-  const [showPinChangeModal, setShowPinChangeModal] = useState(false);
-  const [currentPin, setCurrentPin] = useState("");
-  const [newPin, setNewPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-  const [pinError, setPinError] = useState("");
-  const [changingPin, setChangingPin] = useState(false);
+  const [helpCenterUrl, setHelpCenterUrl] = useState(
+    "https://sakayna-v1.netlify.app/help"
+  );
+  const [termsUrl, setTermsUrl] = useState(
+    "https://sakayna-v1.netlify.app/terms"
+  );
+  const [privacyUrl, setPrivacyUrl] = useState(
+    "https://sakayna-v1.netlify.app/privacy"
+  );
+  const [urlsLoading, setUrlsLoading] = useState(false);
 
-  // Fetch URLs from system_settings
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+
+      const init = async () => {
+        try {
+          const session = await getUserSession();
+
+          if (!isMounted) return;
+
+          if (session && session.isTestAccount) {
+            setIsTestAccount(true);
+            setUserId(session.phone);
+            setUserType(session.userType || "commuter");
+
+            const mockProfile = {
+              first_name: "Test",
+              last_name:
+                session.userType === "driver" ? "Driver" : "Passenger",
+              phone: session.phone || "N/A",
+              email: `${session.userType || "user"}@test.com`,
+              profile_picture: null,
+              created_at: new Date().toISOString(),
+            };
+
+            setProfile(mockProfile);
+            setStats({
+              totalTrips: 0,
+              totalPoints: 0,
+              totalSpent: 0,
+            });
+            setLoading(false);
+            return;
+          }
+
+          const id = await AsyncStorage.getItem("user_id");
+          const type = (await AsyncStorage.getItem("user_type")) || "commuter";
+
+          if (!isMounted) return;
+
+          setUserId(id);
+          setUserType(type);
+          setIsTestAccount(false);
+        } catch (err) {
+          console.log("Init error:", err?.message || err);
+        }
+      };
+
+      init();
+      fetchSystemUrls();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
+
+  useEffect(() => {
+    if (userId && !isTestAccount) {
+      loadUserData();
+    }
+  }, [userId, isTestAccount]);
+
   const fetchSystemUrls = async () => {
     try {
       setUrlsLoading(true);
+
       const { data, error } = await supabase
         .from("system_settings")
         .select("key, value")
-        .in("key", ["help_center_url", "terms_and_conditions_url", "privacy_policy_url"])
+        .in("key", [
+          "help_center_url",
+          "terms_and_conditions_url",
+          "privacy_policy_url",
+        ])
         .eq("is_public", true);
 
       if (error) throw error;
 
-      if (data) {
-        data.forEach(setting => {
-          switch (setting.key) {
-            case "help_center_url":
-              setHelpCenterUrl(setting.value);
-              break;
-            case "terms_and_conditions_url":
-              setTermsUrl(setting.value);
-              break;
-            case "privacy_policy_url":
-              setPrivacyUrl(setting.value);
-              break;
+      if (Array.isArray(data)) {
+        data.forEach((setting) => {
+          if (setting.key === "help_center_url" && setting.value) {
+            setHelpCenterUrl(setting.value);
+          }
+          if (
+            setting.key === "terms_and_conditions_url" &&
+            setting.value
+          ) {
+            setTermsUrl(setting.value);
+          }
+          if (setting.key === "privacy_policy_url" && setting.value) {
+            setPrivacyUrl(setting.value);
           }
         });
       }
     } catch (err) {
-      console.log("Error fetching system URLs:", err.message);
-      // Set fallback URLs if database fetch fails
-      setHelpCenterUrl("https://sakayna-v1.netlify.app/help");
-      setTermsUrl("https://sakayna-v1.netlify.app/terms");
-      setPrivacyUrl("https://sakayna-v1.netlify.app/privacy");
+      console.log("Error fetching URLs:", err?.message || err);
     } finally {
       setUrlsLoading(false);
     }
   };
 
-  // Helper function to open URLs with validation
-  const openUrl = async (url, name) => {
-    if (!url) {
-      Alert.alert("Error", `${name} URL is not configured. Please contact support.`);
-      return;
-    }
-
-    try {
-      const canOpen = await Linking.canOpenURL(url);
-      if (canOpen) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert("Error", `Cannot open ${name.toLowerCase()} URL.`);
-      }
-    } catch (err) {
-      console.log(`Error opening ${name}:`, err);
-      Alert.alert("Error", `Failed to open ${name.toLowerCase()}.`);
-    }
-  };
-
-  // Fetch user ID and check if test account
-  useFocusEffect(
-    useCallback(() => {
-      const getUserId = async () => {
-        // ✅ Check test account session first
-        const session = await getUserSession();
-        
-        if (session && session.isTestAccount) {
-          console.log("✅ Test account detected in AccountScreen");
-          setIsTestAccount(true);
-          setUserId(session.phone); // Use phone as identifier for test accounts
-          setUserType(session.userType);
-          
-          // Create mock profile for test account
-          const mockProfile = {
-            first_name: session.userType === 'commuter' ? 'Test' : 'Test',
-            last_name: session.userType === 'commuter' ? 'Commuter' : 'Driver',
-            phone: session.phone,
-            email: `${session.userType}@test.com`,
-            profile_picture: null,
-            created_at: new Date().toISOString(),
-          };
-          setProfile(mockProfile);
-          setEditPhone(mockProfile.phone);
-          setEditEmail(mockProfile.email);
-          setLoading(false);
-        } else {
-          // Normal user flow
-          const id = await AsyncStorage.getItem("user_id");
-          const type = await AsyncStorage.getItem("user_type") || 'commuter';
-          setUserId(id);
-          setUserType(type);
-          setIsTestAccount(false);
-        }
-      };
-      getUserId();
-      fetchSystemUrls(); // Fetch URLs from database
-    }, [])
-  );
-
-  // Fetch all user data (only for normal users)
-  useEffect(() => {
-    if (userId && !isTestAccount) {
-      loadUserData();
-      loadWithdrawalSettings();
-      loadPayoutMethods();
-    }
-  }, [userId, isTestAccount]);
-
   const loadUserData = async () => {
     try {
       setLoading(true);
-      await Promise.all([
-        fetchProfile(),
-        fetchStats(),
-      ]);
+      await Promise.all([fetchProfile(), fetchStats()]);
     } catch (err) {
-      console.log("Error loading user data:", err);
+      console.log("Error loading user data:", err?.message || err);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadWithdrawalSettings = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
-    try {
-      const { data, error } = await supabase
-        .from("withdrawal_settings")
-        .select("*")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (error) throw error;
-      
-      if (data) {
-        setWithdrawalSettings(data);
-        setTempSettings(data);
-      } else {
-        // Create default settings
-        const defaultSettings = {
-          user_id: userId,
-          user_type: "commuter",
-          auto_withdraw: false,
-          notifications_enabled: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-        
-        const { data: newSettings, error: insertError } = await supabase
-          .from("withdrawal_settings")
-          .insert(defaultSettings)
-          .select()
-          .single();
-          
-        if (!insertError && newSettings) {
-          setWithdrawalSettings(newSettings);
-          setTempSettings(newSettings);
-        }
-      }
-    } catch (err) {
-      console.log("Error loading withdrawal settings:", err.message);
-    }
-  };
-
-  const loadPayoutMethods = async () => {
-    if (isTestAccount) return; // Skip for test accounts
-    
-    try {
-      const { data, error } = await supabase
-        .from("user_payment_methods")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("user_type", "commuter")
-        .eq("is_active", true);
-
-      if (error) throw error;
-      setPayoutMethods(data || []);
-    } catch (err) {
-      console.log("Error loading payout methods:", err.message);
-    }
-  };
-
-  const updateWithdrawalSettings = async () => {
-    if (isTestAccount) {
-      Alert.alert("Test Account", "This feature is disabled for test accounts.");
-      return;
-    }
-    
-    try {
-      const { error } = await supabase
-        .from("withdrawal_settings")
-        .update({
-          default_payment_method_id: tempSettings.default_payment_method_id,
-          auto_withdraw: tempSettings.auto_withdraw,
-          auto_withdraw_threshold: tempSettings.auto_withdraw_threshold,
-          daily_withdrawal_limit: tempSettings.daily_withdrawal_limit,
-          weekly_withdrawal_limit: tempSettings.weekly_withdrawal_limit,
-          monthly_withdrawal_limit: tempSettings.monthly_withdrawal_limit,
-          notifications_enabled: tempSettings.notifications_enabled,
-          updated_at: new Date().toISOString()
-        })
-        .eq("user_id", userId);
-
-      if (error) throw error;
-      
-      setWithdrawalSettings(tempSettings);
-      setShowWithdrawalSettingsModal(false);
-      Alert.alert("Success", "Withdrawal settings updated successfully!");
-    } catch (err) {
-      console.log("Error updating withdrawal settings:", err.message);
-      Alert.alert("Error", "Failed to update withdrawal settings");
-    }
-  };
-
-  const changePin = async () => {
-    if (isTestAccount) {
-      Alert.alert("Test Account", "This feature is disabled for test accounts.");
-      return;
-    }
-    
-    if (newPin.length !== 4) {
-      setPinError("PIN must be exactly 4 digits");
-      return;
-    }
-    
-    if (!/^\d{4}$/.test(newPin)) {
-      setPinError("PIN must contain only numbers");
-      return;
-    }
-    
-    if (newPin !== confirmPin) {
-      setPinError("PINs do not match");
-      return;
-    }
-    
-    // Verify current PIN
-    if (withdrawalSettings.withdrawal_pin && withdrawalSettings.withdrawal_pin !== currentPin) {
-      setPinError("Current PIN is incorrect");
-      return;
-    }
-    
-    setChangingPin(true);
-    
-    try {
-      const { error } = await supabase
-        .from("withdrawal_settings")
-        .update({
-          withdrawal_pin: newPin,
-          updated_at: new Date().toISOString()
-        })
-        .eq("user_id", userId);
-
-      if (error) throw error;
-      
-      setWithdrawalSettings({ ...withdrawalSettings, withdrawal_pin: newPin });
-      setShowPinChangeModal(false);
-      setCurrentPin("");
-      setNewPin("");
-      setConfirmPin("");
-      setPinError("");
-      
-      Alert.alert("Success", "Withdrawal PIN changed successfully!");
-    } catch (err) {
-      console.log("Error changing PIN:", err.message);
-      setPinError("Failed to change PIN. Please try again.");
-    } finally {
-      setChangingPin(false);
-    }
-  };
-
-  const onRefresh = async () => {
-    if (isTestAccount) {
-      setRefreshing(false);
-      return;
-    }
-    
-    setRefreshing(true);
-    await Promise.all([
-      loadUserData(),
-      loadWithdrawalSettings(),
-      loadPayoutMethods(),
-      fetchSystemUrls() // Refresh URLs on pull-to-refresh
-    ]);
-    setRefreshing(false);
-  };
-
   const fetchProfile = async () => {
     try {
-      const table = userType === 'commuter' ? 'commuters' : 'drivers';
-      
+      const table = userType === "driver" ? "drivers" : "commuters";
+
       const { data, error } = await supabase
         .from(table)
         .select("*")
@@ -394,42 +182,44 @@ export default function AccountScreen({ navigation }) {
 
       if (error) throw error;
 
-      if (data.profile_picture) {
-        data.profile_picture = data.profile_picture + "?t=" + Date.now();
-      }
+      const updatedProfile = {
+        ...data,
+        profile_picture: data?.profile_picture
+          ? `${data.profile_picture}?t=${Date.now()}`
+          : null,
+      };
 
-      setProfile(data);
-      setEditPhone(data.phone || "");
-      setEditEmail(data.email || "");
+      setProfile(updatedProfile);
     } catch (err) {
-      console.log("Error fetching profile:", err.message);
+      console.log("Error fetching profile:", err?.message || err);
     }
   };
 
   const fetchStats = async () => {
-    if (isTestAccount) {
-      // Set mock stats for test account
-      setStats({
-        totalTrips: 0,
-        totalPoints: 0,
-        totalSpent: 0,
-        memberSince: new Date().toISOString(),
-        referrals: 0,
-      });
-      return;
-    }
-    
     try {
+      if (userType === "driver") {
+        setStats({
+          totalTrips: 0,
+          totalPoints: 0,
+          totalSpent: 0,
+        });
+        return;
+      }
+
       const { data: bookings, error: bookingsError } = await supabase
         .from("bookings")
-        .select("fare, actual_fare, status, created_at")
+        .select("fare, actual_fare")
         .eq("commuter_id", userId)
         .eq("status", "completed");
 
       if (bookingsError) throw bookingsError;
 
       const totalTrips = bookings?.length || 0;
-      const totalSpent = bookings?.reduce((sum, b) => sum + (b.actual_fare || b.fare || 0), 0) || 0;
+      const totalSpent =
+        bookings?.reduce(
+          (sum, item) => sum + Number(item.actual_fare || item.fare || 0),
+          0
+        ) || 0;
 
       let points = 0;
       try {
@@ -438,65 +228,132 @@ export default function AccountScreen({ navigation }) {
           .select("points")
           .eq("commuter_id", userId)
           .single();
+
         points = walletData?.points || 0;
       } catch (walletErr) {
-        console.log("No wallet found:", walletErr.message);
+        console.log("Wallet fetch info:", walletErr?.message || walletErr);
       }
-
-      let referrals = 0;
-      try {
-        const { count: referralsCount } = await supabase
-          .from("referrals")
-          .select("*", { count: "exact", head: true })
-          .eq("referrer_id", userId)
-          .eq("referrer_type", userType);
-        referrals = referralsCount || 0;
-      } catch (refErr) {
-        console.log("Error fetching referrals:", refErr.message);
-      }
-
-      const memberSince = bookings && bookings.length > 0 
-        ? bookings[bookings.length - 1]?.created_at 
-        : profile?.created_at;
 
       setStats({
         totalTrips,
         totalPoints: points,
         totalSpent,
-        memberSince,
-        referrals,
       });
     } catch (err) {
-      console.log("Error fetching stats:", err.message);
+      console.log("Error fetching stats:", err?.message || err);
     }
   };
 
-  const handleUpdateProfile = async () => {
+  const onRefresh = async () => {
     if (isTestAccount) {
-      Alert.alert("Test Account", "Profile updates are disabled for test accounts.");
+      setRefreshing(false);
       return;
     }
-    
+
     try {
-      const table = userType === 'commuter' ? 'commuters' : 'drivers';
-      
-      const { error } = await supabase
+      setRefreshing(true);
+      await Promise.all([loadUserData(), fetchSystemUrls()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const openUrl = async (url, label) => {
+    try {
+      if (!url) {
+        Alert.alert("Error", `${label} is not available.`);
+        return;
+      }
+
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        Alert.alert("Error", `Cannot open ${label}.`);
+        return;
+      }
+
+      await Linking.openURL(url);
+    } catch (err) {
+      console.log(`Open URL error (${label}):`, err?.message || err);
+      Alert.alert("Error", `Failed to open ${label}.`);
+    }
+  };
+
+  const pickImage = async () => {
+    if (isTestAccount) {
+      Alert.alert(
+        "Test Account",
+        "Profile picture update is disabled for test accounts."
+      );
+      return;
+    }
+
+    try {
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission Required",
+          "Please allow photo library access first."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const image = result.assets[0];
+      const response = await fetch(image.uri);
+      const arrayBuffer = await response.arrayBuffer();
+
+      const fileName = `${Date.now()}.jpg`;
+      const filePath = `${userId}/${fileName}`;
+
+      const bucket =
+        userType === "driver" ? "driver-profiles" : "commuter-profiles";
+
+      Alert.alert("Uploading", "Please wait...");
+
+      const { error: uploadError } = await supabase.storage
+        .from(bucket)
+        .upload(filePath, arrayBuffer, {
+          contentType: "image/jpeg",
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from(bucket)
+        .getPublicUrl(filePath);
+
+      const table = userType === "driver" ? "drivers" : "commuters";
+
+      const { error: updateError } = await supabase
         .from(table)
         .update({
-          phone: editPhone,
-          email: editEmail,
-          updated_at: new Date(),
+          profile_picture: publicUrlData.publicUrl,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", userId);
 
-      if (error) throw error;
+      if (updateError) throw updateError;
 
-      Alert.alert("Success", "Profile updated successfully");
-      setEditProfileModal(false);
-      fetchProfile();
+      setProfile((prev) => ({
+        ...prev,
+        profile_picture: `${publicUrlData.publicUrl}?t=${Date.now()}`,
+      }));
+
+      Alert.alert("Success", "Profile picture updated successfully.");
     } catch (err) {
-      console.log("Error updating profile:", err.message);
-      Alert.alert("Error", "Failed to update profile");
+      console.log("Image upload error:", err?.message || err);
+      Alert.alert("Upload Failed", err?.message || "Something went wrong.");
     }
   };
 
@@ -508,110 +365,30 @@ export default function AccountScreen({ navigation }) {
         style: "destructive",
         onPress: async () => {
           try {
-            // Clear test account session if exists
             const session = await getUserSession();
+
             if (session && session.isTestAccount) {
-              await AsyncStorage.removeItem('@sakayna_user_session');
-              await AsyncStorage.removeItem('@sakayna_test_account');
+              await AsyncStorage.removeItem("@sakayna_user_session");
+              await AsyncStorage.removeItem("@sakayna_test_account");
             } else {
               await AsyncStorage.multiRemove(["user_id", "user_type", "session"]);
               await supabase.auth.signOut();
             }
+
             navigation.replace("UserType");
           } catch (err) {
-            console.log("Error signing out:", err.message);
+            console.log("Sign out error:", err?.message || err);
           }
         },
       },
     ]);
   };
 
-  const pickImage = async () => {
-    if (isTestAccount) {
-      Alert.alert("Test Account", "Profile picture updates are disabled for test accounts.");
-      return;
-    }
-    
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== "granted") {
-        Alert.alert("Permission Required", "Please enable photo access");
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ["images"],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets && result.assets[0]) {
-        const image = result.assets[0];
-
-        Alert.alert("Uploading", "Please wait...");
-
-        const fileName = `${Date.now()}.jpg`;
-        const filePath = `${userId}/${fileName}`;
-
-        const response = await fetch(image.uri);
-        const arrayBuffer = await response.arrayBuffer();
-
-        const { data, error } = await supabase.storage
-          .from("commuter-profiles")
-          .upload(filePath, arrayBuffer, {
-            contentType: "image/jpeg",
-            upsert: true,
-          });
-
-        if (error) throw error;
-
-        const { data: urlData } = supabase.storage
-          .from("commuter-profiles")
-          .getPublicUrl(filePath);
-
-        const table = userType === 'commuter' ? 'commuters' : 'drivers';
-        const { error: updateError } = await supabase
-          .from(table)
-          .update({
-            profile_picture: urlData.publicUrl,
-            updated_at: new Date(),
-          })
-          .eq("id", userId);
-
-        if (updateError) throw updateError;
-
-        setProfile(prev => ({
-          ...prev,
-          profile_picture: urlData.publicUrl + "?t=" + Date.now(),
-        }));
-
-        Alert.alert("Success", "Profile picture updated!");
-      }
-    } catch (err) {
-      console.log("Error:", err);
-      Alert.alert("Upload Failed", err.message);
-    }
+  const formatCurrency = (value) => {
+    return `₱${Number(value || 0).toFixed(0)}`;
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return "N/A";
-    return new Date(dateString).toLocaleDateString("en-PH", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-  };
-
-  const getDefaultPaymentMethod = () => {
-    if (isTestAccount) return null;
-    if (!withdrawalSettings.default_payment_method_id) return null;
-    return payoutMethods.find(m => m.id === withdrawalSettings.default_payment_method_id);
-  };
-
-  // Show loading only for normal users who are still loading
-  if (loading && !isTestAccount && !refreshing) {
+  if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#183B5C" />
@@ -621,574 +398,217 @@ export default function AccountScreen({ navigation }) {
 
   return (
     <ScrollView
-  style={styles.container}
-  contentContainerStyle={{
-    paddingBottom: insets.bottom + 120,
-  }}
-  showsVerticalScrollIndicator={false}
-  refreshControl={
-    !isTestAccount ? (
-      <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-    ) : undefined
-  }
->
-      {/* Test Account Banner */}
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: insets.bottom + scale(120) }}
+      showsVerticalScrollIndicator={false}
+      refreshControl={
+        !isTestAccount ? (
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        ) : undefined
+      }
+    >
       {isTestAccount && (
         <View style={styles.testBanner}>
-          <Ionicons name="flask" size={20} color="#E97A3E" />
-          <Text style={styles.testBannerText}>Test Account Mode </Text>
+          <Ionicons name="flask-outline" size={16} color="#E97A3E" />
+          <Text style={styles.testBannerText}>Test Account Mode</Text>
         </View>
       )}
 
-      {/* Header with Cover */}
-      <View style={[styles.headerCover]}> 
+      <View style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.headerButton}>
-            <Ionicons name="arrow-back" size={24} color="#FFF" />
-          </Pressable>
-          <View style={{ width: 40 }} />
+       
+
+          
+
+          
         </View>
       </View>
 
-      {/* Profile Section - Overlapping Card */}
       <View style={styles.profileCard}>
-        <View style={{ alignItems: "center" }}>
-          {/* Profile Picture */}
-          <Pressable onPress={pickImage} style={styles.avatarContainer} disabled={isTestAccount}>
-            <View style={styles.avatarWrapper}>
-              {profile?.profile_picture ? (
-                <Image
-                  source={{ uri: profile.profile_picture }}
-                  style={styles.avatar}
-                />
-              ) : (
-                <LinearGradient
-                  colors={["#183B5C", "#2C5A7A"]}
-                  style={styles.avatarGradient}
-                >
-                  <Text style={styles.avatarText}>
-                    {profile?.first_name?.[0]}{profile?.last_name?.[0]}
-                  </Text>
-                </LinearGradient>
-              )}
-            </View>
-            {!isTestAccount && (
-              <View style={styles.cameraBadge}>
-                <Ionicons name="camera" size={16} color="#FFF" />
-              </View>
+        <Pressable
+          onPress={pickImage}
+          style={styles.avatarContainer}
+          disabled={isTestAccount}
+        >
+          <View style={styles.avatarWrapper}>
+            {profile?.profile_picture ? (
+              <Image
+                source={{ uri: profile.profile_picture }}
+                style={styles.avatar}
+              />
+            ) : (
+              <LinearGradient
+                colors={["#183B5C", "#2D5D7B"]}
+                style={styles.avatarFallback}
+              >
+                <Text style={styles.avatarText}>
+                  {profile?.first_name?.[0] || "U"}
+                  {profile?.last_name?.[0] || ""}
+                </Text>
+              </LinearGradient>
             )}
-          </Pressable>
-
-          <Text style={styles.profileName}>
-            {profile ? `${profile.first_name} ${profile.last_name}` : "Loading..."}
-          </Text>
-
-          <View style={styles.userTypeBadge}>
-            <Ionicons name="person" size={14} color="#666" />
-            <Text style={styles.userTypeText}>
-              {userType === 'commuter' ? 'Passenger' : 'Driver'}
-            </Text>
           </View>
 
           {!isTestAccount && (
-            <Pressable style={styles.editProfileButton} onPress={() => setEditProfileModal(true)}>
-              <Ionicons name="create-outline" size={16} color="#183B5C" />
-              <Text style={styles.editProfileText}>Edit Contact Info</Text>
-            </Pressable>
-          )}
-        </View>
-
-        {/* Stats Grid */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>{stats.totalTrips}</Text>
-            <Text style={styles.statLabel}>Total Trips</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Text style={styles.statValue}>₱{stats.totalSpent.toFixed(0)}</Text>
-            <Text style={styles.statLabel}>Total Spent</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <View style={styles.statRow}>
-              <Text style={styles.statValue}>{stats.totalPoints}</Text>
-              <Ionicons name="star" size={16} color="#F59E0B" />
-            </View>
-            <Text style={styles.statLabel}>Points</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Contact Information */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>📞 Contact Information</Text>
-
-        <View style={styles.contactItem}>
-          <Text style={styles.contactLabel}>Phone Number</Text>
-          <View style={styles.contactRow}>
-            <Ionicons name="call-outline" size={16} color="#183B5C" />
-            <Text style={styles.contactValue}>{profile?.phone || "Not provided"}</Text>
-          </View>
-        </View>
-
-        <View style={styles.contactItem}>
-          <Text style={styles.contactLabel}>Email Address</Text>
-          <View style={styles.contactRow}>
-            <Ionicons name="mail-outline" size={16} color="#183B5C" />
-            <Text style={styles.contactValue}>{profile?.email || "Not provided"}</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Referrals Info */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>🤝 Referrals</Text>
-
-        <View style={styles.referralRow}>
-          <View>
-            <Text style={styles.referralLabel}>Total Referrals</Text>
-            <Text style={styles.referralValue}>{stats.referrals}</Text>
-          </View>
-          {!isTestAccount && (
-            <Pressable
-              style={styles.inviteButton}
-              onPress={() => navigation.navigate("ReferralScreen")}
-            >
-              <Text style={styles.inviteButtonText}>Invite</Text>
-            </Pressable>
-          )}
-        </View>
-      </View>
-
-      {/* Withdrawal Settings Section - Hide for test accounts
-      {!isTestAccount && (
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>💰 Withdrawal Settings</Text>
-
-          <Pressable style={styles.menuItem} onPress={() => setShowWithdrawalSettingsModal(true)}>
-            <Ionicons name="settings-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-            <Text style={styles.menuText}>Withdrawal Preferences</Text>
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-          </Pressable>
-
-          <Pressable style={styles.menuItem} onPress={() => setShowPinChangeModal(true)}>
-            <Ionicons name="key-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-            <Text style={styles.menuText}>Change Withdrawal PIN</Text>
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-          </Pressable>
-
-          {getDefaultPaymentMethod() && (
-            <View style={styles.defaultMethodInfo}>
-              <Ionicons name="card-outline" size={16} color="#10B981" />
-              <Text style={styles.defaultMethodText}>
-                Default: {getDefaultPaymentMethod().payment_type.toUpperCase()} - {getDefaultPaymentMethod().account_number}
-              </Text>
+            <View style={styles.cameraBadge}>
+              <Ionicons name="camera" size={14} color="#FFF" />
             </View>
           )}
-        </View>
-      )} */}
-
-      {/* Account Settings */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>⚙️ Account Settings</Text>
-
-        <Pressable style={styles.menuItem} onPress={() => navigation.navigate("PointsRewards")}>
-          <Ionicons name="star-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Points & Rewards</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
         </Pressable>
 
-        {/* <Pressable style={styles.menuItem} onPress={() => navigation.navigate("PaymentMethods")}>
-          <Ionicons name="wallet-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Payment Methods</Text>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </Pressable> */}
+        <Text style={styles.profileName}>
+          {profile
+            ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
+            : "User"}
+        </Text>
 
-        {/* Help Center - Using URL from database */}
-        <Pressable 
-          style={styles.menuItem} 
+        <View style={styles.userTypeBadge}>
+          <Ionicons name="person-outline" size={14} color="#183B5C" />
+          <Text style={styles.userTypeText}>
+            {userType === "driver" ? "Driver" : "Passenger"}
+          </Text>
+        </View>
+
+        {!isTestAccount && (
+          <Text style={styles.profileHint}>Tap photo to change profile picture</Text>
+        )}
+      </View>
+
+      <View style={styles.statsRow}>
+        <View style={styles.statCard}>
+          <Ionicons name="car-outline" size={18} color="#183B5C" />
+          <Text style={styles.statValue}>{stats.totalTrips}</Text>
+          <Text style={styles.statLabel}>Total Trips</Text>
+        </View>
+
+        {userType !== "driver" && (
+          <>
+            <View style={styles.statCard}>
+              <Ionicons name="star-outline" size={18} color="#F59E0B" />
+              <Text style={styles.statValue}>{stats.totalPoints}</Text>
+              <Text style={styles.statLabel}>Points</Text>
+            </View>
+
+            <View style={styles.statCard}>
+              <Ionicons name="wallet-outline" size={18} color="#10B981" />
+              <Text style={styles.statValue}>
+                {formatCurrency(stats.totalSpent)}
+              </Text>
+              <Text style={styles.statLabel}>Spent</Text>
+            </View>
+          </>
+        )}
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Contact Information</Text>
+
+        <View style={styles.infoItem}>
+          <View style={styles.infoLeft}>
+            <Ionicons name="call-outline" size={18} color="#183B5C" />
+            <Text style={styles.infoLabel}>Phone Number</Text>
+          </View>
+          <Text style={styles.infoValue}>{profile?.phone || "Not provided"}</Text>
+        </View>
+
+        <View style={[styles.infoItem, styles.infoItemLast]}>
+          <View style={styles.infoLeft}>
+            <Ionicons name="mail-outline" size={18} color="#183B5C" />
+            <Text style={styles.infoLabel}>Email Address</Text>
+          </View>
+          <Text style={styles.infoValue}>{profile?.email || "Not provided"}</Text>
+        </View>
+
+        <View style={styles.readOnlyNote}>
+          <Ionicons name="lock-closed-outline" size={14} color="#6B7280" />
+          <Text style={styles.readOnlyNoteText}>
+            Your account information cannot be edited here.
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>Account Settings</Text>
+
+        {userType !== "driver" && (
+          <Pressable
+            style={styles.menuItem}
+            onPress={() => navigation.navigate("PointsRewards")}
+          >
+            <View style={styles.menuLeft}>
+              <Ionicons name="star-outline" size={20} color="#183B5C" />
+              <Text style={styles.menuText}>Points & Rewards</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          </Pressable>
+        )}
+
+        <Pressable
+          style={[styles.menuItem, userType === "driver" && styles.menuItemFirst]}
           onPress={() => navigation.navigate("Support")}
         >
-          <Ionicons name="help-circle-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Help Center</Text>
+          <View style={styles.menuLeft}>
+            <Ionicons name="help-circle-outline" size={20} color="#183B5C" />
+            <Text style={styles.menuText}>Help Center</Text>
+          </View>
           {urlsLoading ? (
             <ActivityIndicator size="small" color="#9CA3AF" />
           ) : (
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
           )}
         </Pressable>
       </View>
 
-      {/* Legal Links - Using URLs from database */}
       <View style={styles.sectionCard}>
-        <Pressable 
-          style={styles.menuItem} 
+        <Text style={styles.sectionTitle}>Legal</Text>
+
+        <Pressable
+          style={styles.menuItem}
           onPress={() => openUrl(termsUrl, "Terms of Service")}
         >
-          <Ionicons name="document-text-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Terms of Service</Text>
+          <View style={styles.menuLeft}>
+            <Ionicons name="document-text-outline" size={20} color="#183B5C" />
+            <Text style={styles.menuText}>Terms of Service</Text>
+          </View>
           {urlsLoading ? (
             <ActivityIndicator size="small" color="#9CA3AF" />
           ) : (
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
           )}
         </Pressable>
 
-        <Pressable 
-          style={[styles.menuItem, styles.lastMenuItem]} 
+        <Pressable
+          style={[styles.menuItem, styles.menuItemLast]}
           onPress={() => openUrl(privacyUrl, "Privacy Policy")}
         >
-          <Ionicons name="lock-closed-outline" size={22} color="#183B5C" style={styles.menuIcon} />
-          <Text style={styles.menuText}>Privacy Policy</Text>
+          <View style={styles.menuLeft}>
+            <Ionicons name="shield-checkmark-outline" size={20} color="#183B5C" />
+            <Text style={styles.menuText}>Privacy Policy</Text>
+          </View>
           {urlsLoading ? (
             <ActivityIndicator size="small" color="#9CA3AF" />
           ) : (
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+            <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
           )}
         </Pressable>
       </View>
 
-      {/* Sign Out Button */}
       <Pressable style={styles.signOutButton} onPress={handleSignOut}>
         <Ionicons name="log-out-outline" size={20} color="#EF4444" />
         <Text style={styles.signOutText}>Sign Out</Text>
       </Pressable>
 
-      {/* App Info */}
-      <View style={styles.appInfo}>
-        <Text style={styles.appVersion}>
-          SakayNa Passenger v{appVersion}
-        </Text>
-        <Text style={styles.memberSince}>
-          © 2026 SakayNa. Developed by Ian Dave Lemera. All rights reserved.
-        </Text>
-      </View>
-
-      {/* Edit Profile Modal - Only show for normal users */}
-      {!isTestAccount && (
-        <Modal
-          visible={editProfileModal}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setEditProfileModal(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={styles.modalContainer}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Edit Contact Information</Text>
-                  <Pressable onPress={() => setEditProfileModal(false)}>
-                    <Ionicons name="close" size={24} color="#666" />
-                  </Pressable>
-                </View>
-
-                <ScrollView keyboardShouldPersistTaps="handled">
-                  {/* Name Display (Read-only) */}
-                  <Text style={styles.inputLabel}>Full Name</Text>
-                  <View style={styles.readOnlyField}>
-                    <Text style={styles.readOnlyText}>
-                      {profile ? `${profile.first_name} ${profile.last_name}` : "Loading..."}
-                    </Text>
-                  </View>
-
-                  {/* Phone Number */}
-                  <Text style={styles.inputLabel}>Phone Number</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter phone number"
-                    keyboardType="phone-pad"
-                    value={editPhone}
-                    onChangeText={setEditPhone}
-                  />
-
-                  {/* Email Address */}
-                  <Text style={styles.inputLabel}>Email Address</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Enter email address"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    value={editEmail}
-                    onChangeText={setEditEmail}
-                  />
-
-                  <View style={styles.modalButtons}>
-                    <Pressable
-                      style={styles.cancelButton}
-                      onPress={() => setEditProfileModal(false)}
-                    >
-                      <Text style={styles.cancelButtonText}>Cancel</Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={styles.saveButton}
-                      onPress={handleUpdateProfile}
-                    >
-                      <Text style={styles.saveButtonText}>Save</Text>
-                    </Pressable>
-                  </View>
-                </ScrollView>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-      )}
-
-      {/* Withdrawal Settings Modal - Only show for normal users */}
-      {!isTestAccount && (
-        <Modal
-          visible={showWithdrawalSettingsModal}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowWithdrawalSettingsModal(false)}
-        >
-          {/* ... existing withdrawal settings modal code ... */}
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={styles.modalContainer}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <View style={styles.modalHeader}>
-                  <Text style={styles.modalTitle}>Withdrawal Preferences</Text>
-                  <Pressable onPress={() => setShowWithdrawalSettingsModal(false)}>
-                    <Ionicons name="close" size={24} color="#666" />
-                  </Pressable>
-                </View>
-
-                <ScrollView keyboardShouldPersistTaps="handled">
-                  {/* Default Payout Method */}
-                  <Text style={styles.inputLabel}>Default Payout Method</Text>
-                  <View style={styles.pickerContainer}>
-                    <Pressable style={styles.pickerButton}>
-                      <Text style={styles.pickerButtonText}>
-                        {getDefaultPaymentMethod() 
-                          ? `${getDefaultPaymentMethod().payment_type.toUpperCase()} - ${getDefaultPaymentMethod().account_number}`
-                          : "Select payout method"}
+       <View style={{ alignItems: "center", marginTop: 20, marginBottom: 10 }}>
+          <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
+            SakayNa v
+            {Constants.expoConfig?.version ||
+              Constants.manifest?.version ||
+              "1.0.0"}
+          </Text>
+          <Text style={{ fontSize: 11, color: "#D1D5DB", marginTop: 2 }}>
+                        Developed by: Ian Lemera
                       </Text>
-                      <Ionicons name="chevron-forward" size={20} color="#666" />
-                    </Pressable>
-                  </View>
-
-                  {/* Auto Withdraw Toggle */}
-                  <View style={styles.toggleContainer}>
-                    <View>
-                      <Text style={styles.inputLabel}>Auto Withdraw</Text>
-                      <Text style={styles.toggleDescription}>
-                        Automatically withdraw when balance reaches threshold
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => setTempSettings({
-                        ...tempSettings,
-                        auto_withdraw: !tempSettings.auto_withdraw
-                      })}
-                    >
-                      <View style={[styles.toggle, tempSettings.auto_withdraw && styles.toggleActive]}>
-                        <View style={[styles.toggleHandle, tempSettings.auto_withdraw && styles.toggleHandleActive]} />
-                      </View>
-                    </Pressable>
-                  </View>
-
-                  {/* Auto Withdraw Threshold */}
-                  {tempSettings.auto_withdraw && (
-                    <>
-                      <Text style={styles.inputLabel}>Auto Withdraw Threshold (₱)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="e.g., 500"
-                        keyboardType="numeric"
-                        value={tempSettings.auto_withdraw_threshold?.toString() || ""}
-                        onChangeText={(text) => setTempSettings({
-                          ...tempSettings,
-                          auto_withdraw_threshold: text ? parseFloat(text) : null
-                        })}
-                      />
-                    </>
-                  )}
-
-                  {/* Withdrawal Limits */}
-                  <Text style={styles.sectionSubtitle}>Withdrawal Limits</Text>
-                  
-                  <Text style={styles.inputLabel}>Daily Limit (₱)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g., 5000"
-                    keyboardType="numeric"
-                    value={tempSettings.daily_withdrawal_limit?.toString() || ""}
-                    onChangeText={(text) => setTempSettings({
-                      ...tempSettings,
-                      daily_withdrawal_limit: text ? parseFloat(text) : null
-                    })}
-                  />
-
-                  <Text style={styles.inputLabel}>Weekly Limit (₱)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g., 20000"
-                    keyboardType="numeric"
-                    value={tempSettings.weekly_withdrawal_limit?.toString() || ""}
-                    onChangeText={(text) => setTempSettings({
-                      ...tempSettings,
-                      weekly_withdrawal_limit: text ? parseFloat(text) : null
-                    })}
-                  />
-
-                  <Text style={styles.inputLabel}>Monthly Limit (₱)</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g., 50000"
-                    keyboardType="numeric"
-                    value={tempSettings.monthly_withdrawal_limit?.toString() || ""}
-                    onChangeText={(text) => setTempSettings({
-                      ...tempSettings,
-                      monthly_withdrawal_limit: text ? parseFloat(text) : null
-                    })}
-                  />
-
-                  {/* Notification Toggle */}
-                  <View style={styles.toggleContainer}>
-                    <View>
-                      <Text style={styles.inputLabel}>Withdrawal Notifications</Text>
-                      <Text style={styles.toggleDescription}>
-                        Receive notifications about your withdrawals
-                      </Text>
-                    </View>
-                    <Pressable
-                      onPress={() => setTempSettings({
-                        ...tempSettings,
-                        notifications_enabled: !tempSettings.notifications_enabled
-                      })}
-                    >
-                      <View style={[styles.toggle, tempSettings.notifications_enabled && styles.toggleActive]}>
-                        <View style={[styles.toggleHandle, tempSettings.notifications_enabled && styles.toggleHandleActive]} />
-                      </View>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.modalButtons}>
-                    <Pressable
-                      style={styles.cancelButton}
-                      onPress={() => setShowWithdrawalSettingsModal(false)}
-                    >
-                      <Text style={styles.cancelButtonText}>Cancel</Text>
-                    </Pressable>
-
-                    <Pressable
-                      style={styles.saveButton}
-                      onPress={updateWithdrawalSettings}
-                    >
-                      <Text style={styles.saveButtonText}>Save Settings</Text>
-                    </Pressable>
-                  </View>
-                </ScrollView>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </Modal>
-      )}
-
-      {/* Change PIN Modal - Only show for normal users */}
-      {!isTestAccount && (
-        <Modal
-          visible={showPinChangeModal}
-          transparent={true}
-          animationType="fade"
-          onRequestClose={() => setShowPinChangeModal(false)}
-        >
-          <View style={styles.modalOverlayCenter}>
-            <View style={styles.modalCenterContent}>
-              <View style={styles.modalCenterHeader}>
-                <Ionicons name="key" size={48} color="#183B5C" />
-                <Text style={styles.modalCenterTitle}>Change Withdrawal PIN</Text>
-                <Text style={styles.modalCenterSubtitle}>
-                  Enter your current PIN and create a new one
-                </Text>
-              </View>
-
-              {withdrawalSettings.withdrawal_pin && (
-                <>
-                  <Text style={styles.inputLabel}>Current PIN</Text>
-                  <TextInput
-                    style={[styles.pinInput, pinError && styles.pinInputError]}
-                    placeholder="****"
-                    keyboardType="number-pad"
-                    maxLength={4}
-                    secureTextEntry
-                    value={currentPin}
-                    onChangeText={(text) => {
-                      setCurrentPin(text);
-                      setPinError("");
-                    }}
-                  />
-                </>
-              )}
-
-              <Text style={styles.inputLabel}>New PIN</Text>
-              <TextInput
-                style={[styles.pinInput, pinError && styles.pinInputError]}
-                placeholder="****"
-                keyboardType="number-pad"
-                maxLength={4}
-                secureTextEntry
-                value={newPin}
-                onChangeText={(text) => {
-                  setNewPin(text);
-                  setPinError("");
-                }}
-              />
-
-              <Text style={styles.inputLabel}>Confirm New PIN</Text>
-              <TextInput
-                style={[styles.pinInput, pinError && styles.pinInputError]}
-                placeholder="****"
-                keyboardType="number-pad"
-                maxLength={4}
-                secureTextEntry
-                value={confirmPin}
-                onChangeText={(text) => {
-                  setConfirmPin(text);
-                  setPinError("");
-                }}
-              />
-
-              {pinError ? (
-                <Text style={styles.pinErrorText}>{pinError}</Text>
-              ) : null}
-
-              <View style={styles.modalCenterActions}>
-                <Pressable
-                  style={styles.modalCenterCancel}
-                  onPress={() => {
-                    setShowPinChangeModal(false);
-                    setCurrentPin("");
-                    setNewPin("");
-                    setConfirmPin("");
-                    setPinError("");
-                  }}
-                >
-                  <Text style={styles.modalCenterCancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.modalCenterConfirm}
-                  onPress={changePin}
-                  disabled={changingPin}
-                >
-                  {changingPin ? (
-                    <ActivityIndicator size="small" color="#FFF" />
-                  ) : (
-                    <Text style={styles.modalCenterConfirmText}>Change PIN</Text>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
+        </View>
     </ScrollView>
   );
 }
@@ -1206,12 +626,29 @@ const styles = StyleSheet.create({
     backgroundColor: "#F5F7FA",
   },
 
-  headerCover: {
+  testBanner: {
+    backgroundColor: "#FFF3E0",
+    paddingVertical: scale(8),
+    paddingHorizontal: scale(12),
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: scale(6),
+  },
+
+  testBannerText: {
+    fontSize: scale(11),
+    color: "#E97A3E",
+    fontWeight: "600",
+  },
+
+  header: {
     backgroundColor: "#183B5C",
-    paddingBottom: scale(60),
+    paddingTop: scale(16),
+    paddingBottom: scale(70),
     paddingHorizontal: scale(20),
-    borderBottomLeftRadius: scale(30),
-    borderBottomRightRadius: scale(30),
+    borderBottomLeftRadius: scale(28),
+    borderBottomRightRadius: scale(28),
   },
 
   headerRow: {
@@ -1220,33 +657,51 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
 
-  headerButton: {
+  backButton: {
     width: scale(40),
     height: scale(40),
+    borderRadius: scale(20),
     justifyContent: "center",
+    alignItems: "center",
+  },
+
+  headerTitle: {
+    fontSize: scale(18),
+    fontWeight: "700",
+    color: "#FFF",
+  },
+
+  headerSpacer: {
+    width: scale(40),
+    height: scale(40),
   },
 
   profileCard: {
     marginHorizontal: scale(20),
-    marginTop: -scale(40),
+    marginTop: -scale(42),
     backgroundColor: "#FFF",
     borderRadius: scale(24),
-    padding: scale(20),
+    paddingVertical: scale(22),
+    paddingHorizontal: scale(18),
+    alignItems: "center",
     elevation: 5,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
 
   avatarContainer: {
     position: "relative",
-    marginBottom: scale(10),
+    marginBottom: scale(12),
   },
 
   avatarWrapper: {
-    width: scale(90),
-    height: scale(90),
-    borderRadius: scale(45),
+    width: scale(92),
+    height: scale(92),
+    borderRadius: scale(46),
+    overflow: "hidden",
     backgroundColor: "#E5E7EB",
-    justifyContent: "center",
-    alignItems: "center",
     borderWidth: 3,
     borderColor: "#FFF",
   },
@@ -1254,31 +709,29 @@ const styles = StyleSheet.create({
   avatar: {
     width: "100%",
     height: "100%",
-    borderRadius: scale(45),
   },
 
-  avatarGradient: {
+  avatarFallback: {
     width: "100%",
     height: "100%",
-    borderRadius: scale(45),
     justifyContent: "center",
     alignItems: "center",
   },
 
   avatarText: {
     fontSize: scale(28),
-    fontWeight: "bold",
+    fontWeight: "700",
     color: "#FFF",
   },
 
   cameraBadge: {
     position: "absolute",
-    bottom: 0,
     right: 0,
+    bottom: 0,
+    width: scale(28),
+    height: scale(28),
+    borderRadius: scale(14),
     backgroundColor: "#183B5C",
-    width: scale(26),
-    height: scale(26),
-    borderRadius: scale(13),
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
@@ -1287,65 +740,66 @@ const styles = StyleSheet.create({
 
   profileName: {
     fontSize: scale(18),
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: "700",
+    color: "#111827",
+    textAlign: "center",
   },
 
   userTypeBadge: {
+    marginTop: scale(8),
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: scale(10),
-    paddingVertical: scale(4),
+    backgroundColor: "#EEF4F8",
+    paddingHorizontal: scale(12),
+    paddingVertical: scale(6),
     borderRadius: scale(20),
-    marginTop: scale(5),
   },
 
   userTypeText: {
+    marginLeft: scale(6),
     fontSize: scale(12),
-    color: "#666",
-    marginLeft: 4,
-  },
-
-  editProfileButton: {
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: scale(14),
-    paddingVertical: scale(6),
-    borderRadius: scale(20),
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: scale(8),
-  },
-
-  editProfileText: {
-    fontSize: scale(12),
+    fontWeight: "600",
     color: "#183B5C",
-    marginLeft: 5,
   },
 
-  statsGrid: {
-    flexDirection: "row",
+  profileHint: {
+    marginTop: scale(8),
+    fontSize: scale(11),
+    color: "#6B7280",
+  },
+
+  statsRow: {
     marginTop: scale(16),
-    gap: scale(8),
+    marginHorizontal: scale(20),
+    flexDirection: "row",
+    gap: scale(10),
   },
 
   statCard: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
-    borderRadius: scale(14),
-    padding: scale(10),
+    backgroundColor: "#FFF",
+    borderRadius: scale(18),
+    paddingVertical: scale(16),
+    paddingHorizontal: scale(10),
     alignItems: "center",
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
   },
 
   statValue: {
+    marginTop: scale(8),
     fontSize: scale(16),
-    fontWeight: "bold",
-    color: "#183B5C",
+    fontWeight: "700",
+    color: "#111827",
   },
 
   statLabel: {
-    fontSize: scale(10),
-    color: "#666",
+    marginTop: scale(4),
+    fontSize: scale(11),
+    color: "#6B7280",
   },
 
   sectionCard: {
@@ -1355,121 +809,131 @@ const styles = StyleSheet.create({
     borderRadius: scale(20),
     padding: scale(16),
     elevation: 2,
+    shadowColor: "#000",
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
   },
 
   sectionTitle: {
     fontSize: scale(14),
-    fontWeight: "bold",
-    color: "#333",
+    fontWeight: "700",
+    color: "#111827",
     marginBottom: scale(12),
   },
 
-  contactValue: {
+  infoItem: {
+    paddingVertical: scale(12),
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+  },
+
+  infoItemLast: {
+    borderBottomWidth: 0,
+    paddingBottom: scale(6),
+  },
+
+  infoLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: scale(6),
+    gap: scale(8),
+  },
+
+  infoLabel: {
+    fontSize: scale(12),
+    color: "#6B7280",
+    fontWeight: "600",
+  },
+
+  infoValue: {
     fontSize: scale(14),
-    marginLeft: scale(6),
+    color: "#111827",
+    marginLeft: scale(26),
+  },
+
+  readOnlyNote: {
+    marginTop: scale(10),
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+    borderRadius: scale(12),
+    paddingVertical: scale(10),
+    paddingHorizontal: scale(12),
+  },
+
+  readOnlyNoteText: {
+    marginLeft: scale(8),
+    fontSize: scale(11),
+    color: "#6B7280",
+    flex: 1,
   },
 
   menuItem: {
+    minHeight: scale(52),
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: scale(12),
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
+    paddingVertical: scale(4),
+  },
+
+  menuItemFirst: {
+    borderTopWidth: 0,
+  },
+
+  menuItemLast: {
+    borderBottomWidth: 0,
+  },
+
+  menuLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: scale(10),
+    flex: 1,
   },
 
   menuText: {
-    flex: 1,
     fontSize: scale(14),
+    color: "#111827",
+    fontWeight: "500",
   },
 
   signOutButton: {
-    flexDirection: "row",
-    justifyContent: "center",
-    backgroundColor: "#FEE2E2",
     marginHorizontal: scale(20),
-    marginTop: scale(16),
-    padding: scale(14),
-    borderRadius: scale(12),
+    marginTop: scale(18),
+    backgroundColor: "#FEF2F2",
+    borderRadius: scale(16),
+    paddingVertical: scale(14),
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: scale(8),
   },
 
   signOutText: {
     fontSize: scale(14),
     color: "#EF4444",
+    fontWeight: "700",
+  },
+
+  footer: {
+    marginTop: scale(14),
+    alignItems: "center",
+    paddingHorizontal: scale(20),
+  },
+
+  versionText: {
+    fontSize: scale(11),
+    color: "#6B7280",
     fontWeight: "600",
   },
 
-  appInfo: {
-  alignItems: "center",
-  marginTop: scale(10),
-  marginBottom: scale(20),
-},
-
-  appVersion: {
+  footerText: {
+    marginTop: scale(4),
     fontSize: scale(10),
     color: "#9CA3AF",
-  },
-
-  memberSince: {
-    fontSize: scale(10),
-    color: "#D1D5DB",
     textAlign: "center",
-  },
-
-  modalContent: {
-    backgroundColor: "#FFF",
-    borderTopLeftRadius: scale(24),
-    borderTopRightRadius: scale(24),
-    padding: scale(16),
-    maxHeight: "85%",
-  },
-
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: scale(10),
-    padding: scale(10),
-    fontSize: scale(14),
-  },
-
-  pinInput: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: scale(10),
-    padding: scale(12),
-    fontSize: scale(20),
-    textAlign: "center",
-    letterSpacing: 6,
-  },
-
-  modalButtons: {
-    flexDirection: "row",
-    gap: scale(8),
-    marginTop: scale(10),
-  },
-
-  saveButton: {
-    flex: 1,
-    backgroundColor: "#183B5C",
-    padding: scale(12),
-    borderRadius: scale(10),
-    alignItems: "center",
-  },
-
-  cancelButton: {
-    flex: 1,
-    backgroundColor: "#F3F4F6",
-    padding: scale(12),
-    borderRadius: scale(10),
-    alignItems: "center",
-  },
-
-  testBanner: {
-    backgroundColor: "#FFF3E0",
-    padding: scale(8),
-    flexDirection: "row",
-    justifyContent: "center",
-  },
-
-  testBannerText: {
-    fontSize: scale(11),
-    color: "#E97A3E",
   },
 });

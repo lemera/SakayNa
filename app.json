@@ -2,7 +2,7 @@
   "expo": {
     "name": "SakayNa",
     "slug": "SakayNa",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon_app.png",
     "userInterfaceStyle": "light",
@@ -25,7 +25,7 @@
     },
     "android": {
       "package": "com.lemera.sakayna",
-      "versionCode": 22,
+      "versionCode": 28,
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon_app.png",
@@ -33,7 +33,9 @@
       },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ],
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE",
@@ -51,7 +53,7 @@
     "extra": {
       "GOOGLE_API_KEY": "AIzaSyCPuMCVa_9EB832dXm1P0t2Nv1UqBYQgws",
       "eas": {
-        "projectId": "d93903f7-9c78-477d-b505-0582532d4fdf"
+        "projectId": "21210c8a-16d5-43a8-82ee-680b63279e4f"
       }
     },
     "plugins": [
@@ -76,6 +78,7 @@
       ],
       "expo-font",
       "expo-asset"
-    ]
+    ],
+    "owner": "hide1422"
   }
 }

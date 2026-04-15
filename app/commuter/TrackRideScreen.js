@@ -963,13 +963,7 @@ const fetchBookingDetails = async (id) => {
     return (
       <View style={styles.root}>
         <StatusBar barStyle="light-content" />
-        <View style={[styles.scanHeader, { paddingTop: insets.top }]}>
-          <Pressable style={styles.navBack} onPress={() => navigation.navigate("HomePage", { screen: "Home" })}>
-            <Ionicons name="chevron-back" size={IC(22)} color={C.white} />
-          </Pressable>
-          <Text style={styles.navTitle}>{isCompleted ? "Trip Complete" : "Trip Cancelled"}</Text>
-          <View style={{ width: 44 }} />
-        </View>
+        {/* Header removed */}
         <ScrollView style={{ flex: 1, backgroundColor: C.offWhite }} showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: S.xl, paddingBottom: 60 }}>
           {/* Hero icon */}
           <View style={styles.completedHero}>
@@ -1054,10 +1048,7 @@ const fetchBookingDetails = async (id) => {
             </Pressable>
           )}
 
-          <Pressable style={styles.homeBtn} onPress={() => navigation.navigate("HomePage", { screen: "Home" })}>
-            <Ionicons name="home-outline" size={IC(18)} color={C.navy} />
-            <Text style={styles.homeBtnText}>Back to Home</Text>
-          </Pressable>
+          
         </ScrollView>
       </View>
     );

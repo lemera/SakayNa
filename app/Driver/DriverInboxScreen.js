@@ -710,9 +710,7 @@ export default function DriverInboxScreen() {
         end={{ x: 1, y: 0 }}
         style={[styles.header, { paddingTop: insets.top + 15 }]}
       >
-        <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#FFF" />
-        </Pressable>
+       
 
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Inbox</Text>

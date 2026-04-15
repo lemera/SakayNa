@@ -15,11 +15,9 @@ import {
 import { styles } from "../styles/OtpStyles";
 import { Ionicons } from "@expo/vector-icons";
 import { verifyOtp, sendOtp } from "../../lib/otp";
-import { supabase } from '../../lib/supabase';
+import { supabase } from "../../lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-
-// Import the push notification function
-import { registerForPushNotifications } from "../../lib/notifications";   // ← ADD THIS
+import { registerForPushNotifications } from "../../lib/notifications";
 
 export default function OtpScreen({ route, navigation }) {
   const { phone, userType } = route.params;
@@ -27,35 +25,94 @@ export default function OtpScreen({ route, navigation }) {
   const [code, setCode] = useState(["", "", "", "", "", ""]);
   const [otpPressed, setOtpPressed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resending, setResending] = useState(false);
   const [countdown, setCountdown] = useState(60);
 
   const inputs = useRef([]);
+  const hasAutoVerified = useRef(false);
 
-  // Countdown effect
   useEffect(() => {
-    let timer;
-    if (countdown > 0) {
-      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+    const timer = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 0) return 0;
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const joined = code.join("");
+    if (joined.length === 6 && !code.includes("") && !loading && !hasAutoVerified.current) {
+      hasAutoVerified.current = true;
+      handleVerify(joined);
     }
-    return () => clearTimeout(timer);
-  }, [countdown]);
 
-  const handleChange = (text, index) => {
-    if (!/^\d*$/.test(text)) return;
+    if (joined.length < 6) {
+      hasAutoVerified.current = false;
+    }
+  }, [code, loading]);
 
-    const newCode = [...code];
-    newCode[index] = text;
+  const fillOtpFromString = (value) => {
+    const digitsOnly = (value || "").replace(/\D/g, "").slice(0, 6);
+
+    if (!digitsOnly) return;
+
+    const newCode = ["", "", "", "", "", ""];
+    for (let i = 0; i < digitsOnly.length; i++) {
+      newCode[i] = digitsOnly[i];
+    }
+
     setCode(newCode);
 
-    if (text !== "" && index < 5) {
-      inputs.current[index + 1]?.focus();
-    } else if (text === "" && index > 0) {
-      inputs.current[index - 1]?.focus();
+    if (digitsOnly.length < 6) {
+      inputs.current[digitsOnly.length]?.focus();
+    } else {
+      inputs.current[5]?.blur();
     }
   };
 
-  const handleVerify = async () => {
-    const pin = code.join("");
+  const handleChange = (text, index) => {
+    const digitsOnly = text.replace(/\D/g, "");
+
+    // Support full OTP paste into any box
+    if (digitsOnly.length > 1) {
+      fillOtpFromString(digitsOnly);
+      return;
+    }
+
+    const newCode = [...code];
+    newCode[index] = digitsOnly;
+    setCode(newCode);
+
+    if (digitsOnly && index < 5) {
+      inputs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleKeyPress = ({ nativeEvent }, index) => {
+    if (nativeEvent.key === "Backspace") {
+      if (code[index]) {
+        const newCode = [...code];
+        newCode[index] = "";
+        setCode(newCode);
+        return;
+      }
+
+      if (index > 0) {
+        const newCode = [...code];
+        newCode[index - 1] = "";
+        setCode(newCode);
+        inputs.current[index - 1]?.focus();
+      }
+    }
+  };
+
+  const handleVerify = async (overridePin = null) => {
+    if (loading) return;
+
+    const pin = overridePin || code.join("");
 
     if (pin.length !== 6) {
       Alert.alert("Invalid code", "Please enter the 6-digit code.");
@@ -67,41 +124,45 @@ export default function OtpScreen({ route, navigation }) {
     try {
       const data = await verifyOtp(phone, pin, userType);
 
-      if (!data.success) {
-        throw new Error(data.error || "OTP verification failed");
+      if (!data?.success) {
+        throw new Error(data?.error || "OTP verification failed");
       }
 
       const user = data.user;
 
-      // Save session
-      await AsyncStorage.setItem("user_id", user.id);
-      await AsyncStorage.setItem("user_phone", user.phone);
-      await AsyncStorage.setItem("user_type", user.user_type);
+      if (!user?.id || !user?.phone || !user?.user_type) {
+        throw new Error("Invalid user data returned after OTP verification.");
+      }
+
+      await AsyncStorage.setItem("user_id", String(user.id));
+      await AsyncStorage.setItem("user_phone", String(user.phone));
+      await AsyncStorage.setItem("user_type", String(user.user_type));
 
       console.log(`✅ OTP Verified - User: ${user.id} (${user.user_type})`);
 
-      // ================== REGISTER PUSH NOTIFICATION ==================
       if (user.user_type === "driver") {
-        console.log("🚀 Registering Expo Push Token for Driver...");
+        try {
+          console.log("🚀 Registering Expo Push Token for Driver...");
+          const token = await registerForPushNotifications(user.id);
 
-        // Register push token
-        const token = await registerForPushNotifications(user.id);
-
-        if (token) {
-          console.log("✅ Push token successfully registered for driver");
-        } else {
-          console.warn("⚠️ Push token registration returned null");
+          if (token) {
+            console.log("✅ Push token successfully registered for driver");
+          } else {
+            console.warn("⚠️ Push token registration returned null");
+          }
+        } catch (pushErr) {
+          console.warn("⚠️ Push registration failed:", pushErr?.message || pushErr);
         }
       }
-      // =================================================================
 
-      // Navigate based on user type
       if (user.user_type === "driver") {
-        const { data: driver } = await supabase
+        const { data: driver, error: driverError } = await supabase
           .from("drivers")
           .select("id")
           .eq("id", user.id)
           .maybeSingle();
+
+        if (driverError) throw driverError;
 
         if (driver) {
           navigation.replace("DriverHomePage");
@@ -109,11 +170,13 @@ export default function OtpScreen({ route, navigation }) {
           navigation.replace("DriverDetails");
         }
       } else {
-        const { data: commuter } = await supabase
+        const { data: commuter, error: commuterError } = await supabase
           .from("commuters")
           .select("id")
           .eq("id", user.id)
           .maybeSingle();
+
+        if (commuterError) throw commuterError;
 
         if (commuter) {
           navigation.replace("HomePage");
@@ -121,25 +184,29 @@ export default function OtpScreen({ route, navigation }) {
           navigation.replace("CommuterDetails");
         }
       }
-
     } catch (err) {
-      Alert.alert("Verification Failed", err.message || "Something went wrong");
+      hasAutoVerified.current = false;
+      Alert.alert("Verification Failed", err?.message || "Something went wrong");
     } finally {
       setLoading(false);
     }
   };
 
   const handleResend = async () => {
-    if (countdown > 0) return;
+    if (countdown > 0 || resending || loading) return;
 
     try {
+      setResending(true);
       await sendOtp(phone, userType);
       setCode(["", "", "", "", "", ""]);
+      hasAutoVerified.current = false;
       inputs.current[0]?.focus();
       setCountdown(60);
       Alert.alert("Resent", "A new OTP has been sent to your phone.");
     } catch (err) {
-      Alert.alert("Error", err.message);
+      Alert.alert("Error", err?.message || "Failed to resend OTP.");
+    } finally {
+      setResending(false);
     }
   };
 
@@ -148,11 +215,16 @@ export default function OtpScreen({ route, navigation }) {
       style={{ flex: 1 }}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.container}>
           <Pressable
-            style={{ position: "absolute", top: 50, left: 20 }}
-            onPress={() => navigation.goBack()}
+            style={{ position: "absolute", top: 50, left: 20, zIndex: 10 }}
+            onPress={() => {
+              if (!loading && !resending) navigation.goBack();
+            }}
           >
             <Ionicons name="arrow-back" size={28} color="#183B5C" />
           </Pressable>
@@ -165,29 +237,47 @@ export default function OtpScreen({ route, navigation }) {
           <Text style={styles.title}>We sent a code to your phone</Text>
           <Text style={styles.subtitle}>{phone}</Text>
 
-          {/* OTP Inputs */}
           <View style={styles.otpContainer}>
             {code.map((digit, index) => (
               <TextInput
                 key={index}
                 ref={(ref) => (inputs.current[index] = ref)}
                 style={styles.otpInput}
-                keyboardType="number-pad"
-                maxLength={1}
+                keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
+                textContentType="oneTimeCode"
+                autoComplete={Platform.OS === "android" ? "sms-otp" : "one-time-code"}
+                importantForAutofill="yes"
+                returnKeyType="done"
+                maxLength={6}
                 value={digit}
                 onChangeText={(text) => handleChange(text, index)}
+                onKeyPress={(e) => handleKeyPress(e, index)}
+                editable={!loading && !resending}
+                selectTextOnFocus
               />
             ))}
           </View>
 
+          <Text
+            style={{
+              fontSize: 13,
+              color: "#666",
+              textAlign: "center",
+              marginTop: 10,
+              marginBottom: 18,
+            }}
+          >
+            You can paste the full 6-digit OTP into any box.
+          </Text>
+
           <Pressable
-            onPress={handleVerify}
-            disabled={loading}
+            onPress={() => handleVerify()}
+            disabled={loading || resending}
             style={[
               styles.button,
               {
                 backgroundColor: otpPressed ? "#E97A3E" : "#183B5C",
-                opacity: loading ? 0.7 : 1,
+                opacity: loading || resending ? 0.7 : 1,
               },
             ]}
             onPressIn={() => setOtpPressed(true)}
@@ -207,8 +297,14 @@ export default function OtpScreen({ route, navigation }) {
                 Resend available in {countdown}s
               </Text>
             ) : (
-              <Text style={styles.resendLink} onPress={handleResend}>
-                Resend
+              <Text
+                style={[
+                  styles.resendLink,
+                  { opacity: resending || loading ? 0.5 : 1 },
+                ]}
+                onPress={handleResend}
+              >
+                {resending ? "Sending..." : "Resend"}
               </Text>
             )}
           </Text>

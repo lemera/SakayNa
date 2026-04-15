@@ -22,11 +22,19 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import QRCode from "react-native-qrcode-svg";
-import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import { getUserSession } from "../utils/authStorage";
-
+import Constants from "expo-constants";
 // Custom Alert Component
-const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText = "OK", cancelText = "Cancel", type = "info" }) => {
+const CustomAlert = ({
+  visible,
+  title,
+  message,
+  onConfirm,
+  onCancel,
+  confirmText = "OK",
+  cancelText = "Cancel",
+  type = "info",
+}) => {
   const getIcon = () => {
     switch (type) {
       case "success":
@@ -40,12 +48,14 @@ const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText
     }
   };
 
+  const safeClose = onCancel || onConfirm || (() => setAlertVisible(false));
+
   return (
     <Modal
       visible={visible}
       transparent={true}
       animationType="fade"
-      onRequestClose={onCancel}
+      onRequestClose={safeClose}
     >
       <View
         style={{
@@ -129,7 +139,6 @@ const CustomAlert = ({ visible, title, message, onConfirm, onCancel, confirmText
 
 export default function DriverAccountScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const tabBarHeight = useBottomTabBarHeight();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -137,8 +146,6 @@ export default function DriverAccountScreen({ navigation }) {
   const [isTestAccount, setIsTestAccount] = useState(false);
   const [driver, setDriver] = useState(null);
 
-  // URLs from database
-  const [helpCenterUrl, setHelpCenterUrl] = useState(null);
   const [termsUrl, setTermsUrl] = useState(null);
   const [privacyUrl, setPrivacyUrl] = useState(null);
   const [urlsLoading, setUrlsLoading] = useState(true);
@@ -169,17 +176,11 @@ export default function DriverAccountScreen({ navigation }) {
 
   const [qrModalVisible, setQrModalVisible] = useState(false);
   const [qrValue, setQrValue] = useState(null);
-  const [qrSize, setQrSize] = useState(250);
-  const [qrLogo, setQrLogo] = useState(null);
+  const [qrSize] = useState(250);
 
   const [editProfileModal, setEditProfileModal] = useState(false);
   const [editPhone, setEditPhone] = useState("");
   const [editEmail, setEditEmail] = useState("");
-
-  const [vehicleModal, setVehicleModal] = useState(false);
-  const [editPlate, setEditPlate] = useState("");
-  const [editVehicleType, setEditVehicleType] = useState("motorcycle");
-  const [editVehicleColor, setEditVehicleColor] = useState("");
 
   const [settingsModal, setSettingsModal] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -193,17 +194,14 @@ export default function DriverAccountScreen({ navigation }) {
       const { data, error } = await supabase
         .from("system_settings")
         .select("key, value")
-        .in("key", ["help_center_url", "terms_and_conditions_url", "privacy_policy_url"])
+        .in("key", ["terms_and_conditions_url", "privacy_policy_url"])
         .eq("is_public", true);
 
       if (error) throw error;
 
       if (data) {
-        data.forEach(setting => {
+        data.forEach((setting) => {
           switch (setting.key) {
-            case "help_center_url":
-              setHelpCenterUrl(setting.value);
-              break;
             case "terms_and_conditions_url":
               setTermsUrl(setting.value);
               break;
@@ -215,8 +213,6 @@ export default function DriverAccountScreen({ navigation }) {
       }
     } catch (err) {
       console.log("Error fetching system URLs:", err.message);
-      // Set fallback URLs if database fetch fails
-      setHelpCenterUrl("https://sakayna-v1.netlify.app/help");
       setTermsUrl("https://sakayna-v1.netlify.app/terms");
       setPrivacyUrl("https://sakayna-v1.netlify.app/privacy");
     } finally {
@@ -225,7 +221,15 @@ export default function DriverAccountScreen({ navigation }) {
   };
 
   // Custom alert helper functions
-  const showAlert = (title, message, type = "info", onConfirm = null, onCancel = null, confirmText = "OK", cancelText = "Cancel") => {
+  const showAlert = (
+    title,
+    message,
+    type = "info",
+    onConfirm = null,
+    onCancel = null,
+    confirmText = "OK",
+    cancelText = "Cancel",
+  ) => {
     setAlertConfig({
       title,
       message,
@@ -234,10 +238,12 @@ export default function DriverAccountScreen({ navigation }) {
         setAlertVisible(false);
         if (onConfirm) onConfirm();
       },
-      onCancel: onCancel ? () => {
-        setAlertVisible(false);
-        onCancel();
-      } : null,
+      onCancel: onCancel
+        ? () => {
+            setAlertVisible(false);
+            onCancel();
+          }
+        : null,
       confirmText,
       cancelText,
     });
@@ -248,10 +254,13 @@ export default function DriverAccountScreen({ navigation }) {
     setAlertVisible(false);
   };
 
-  // Helper function to open URLs with validation
   const openUrl = async (url, name) => {
     if (!url) {
-      showAlert("Error", `${name} URL is not configured. Please contact support.`, "error");
+      showAlert(
+        "Error",
+        `${name} URL is not configured. Please contact support.`,
+        "error",
+      );
       return;
     }
 
@@ -266,6 +275,33 @@ export default function DriverAccountScreen({ navigation }) {
       console.log(`Error opening ${name}:`, err);
       showAlert("Error", `Failed to open ${name.toLowerCase()}.`, "error");
     }
+  };
+
+  const generateQRCode = (id, driverData) => {
+    if (!id) return;
+
+    const qrData = {
+      type: "driver_qr",
+      driver_id: id,
+      name: driverData
+        ? `${driverData.first_name} ${driverData.last_name}`
+        : "SakayNa Driver",
+      timestamp: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+
+    setQrValue(JSON.stringify(qrData));
+  };
+
+  const generateQRCodeForTest = () => {
+    const qrData = {
+      type: "driver_qr",
+      driver_id: "test_driver_001",
+      name: "Test Driver",
+      timestamp: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    setQrValue(JSON.stringify(qrData));
   };
 
   useFocusEffect(
@@ -311,47 +347,25 @@ export default function DriverAccountScreen({ navigation }) {
       };
 
       getDriverId();
-      fetchSystemUrls(); // Fetch URLs from database
-    }, [])
+      fetchSystemUrls();
+    }, []),
   );
-
-  const generateQRCodeForTest = () => {
-    const qrData = {
-      type: "driver_qr",
-      driver_id: "test_driver_001",
-      name: "Test Driver",
-      timestamp: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    };
-    setQrValue(JSON.stringify(qrData));
-  };
 
   useEffect(() => {
     if (driverId && !isTestAccount) {
       loadDriverData();
-      generateQRCode();
     } else if (isTestAccount) {
       generateQRCodeForTest();
     }
   }, [driverId, isTestAccount]);
 
-  const generateQRCode = () => {
-    if (!driverId) return;
-
-    const qrData = {
-      type: "driver_qr",
-      driver_id: driverId,
-      name: driver ? `${driver.first_name} ${driver.last_name}` : "SakayNa Driver",
-      timestamp: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    };
-
-    setQrValue(JSON.stringify(qrData));
-  };
-
   const refreshQRCode = () => {
     if (isTestAccount) {
-      showAlert("Test Account", "QR code refresh is disabled for test accounts.", "warning");
+      showAlert(
+        "Test Account",
+        "QR code refresh is disabled for test accounts.",
+        "warning",
+      );
       return;
     }
 
@@ -360,12 +374,12 @@ export default function DriverAccountScreen({ navigation }) {
       "Generating a new QR code will make the old one invalid. Continue?",
       "warning",
       () => {
-        generateQRCode();
+        generateQRCode(driverId, driver);
         showAlert("Success", "New QR code has been generated!", "success");
       },
       null,
       "Generate New",
-      "Cancel"
+      "Cancel",
     );
   };
 
@@ -453,47 +467,14 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
-  const loadDriverData = async () => {
-    try {
-      setLoading(true);
-      await Promise.all([
-        fetchDriverProfile(),
-        fetchDriverStats(),
-        fetchVehicleInfo(),
-        fetchDocuments(),
-        fetchActiveSubscription(),
-        fetchReferrals(),
-        fetchSettings(),
-      ]);
-    } catch (err) {
-      console.log("Error loading driver data:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const onRefresh = async () => {
-    if (isTestAccount) {
-      setRefreshing(false);
-      return;
-    }
-
-    setRefreshing(true);
-    await Promise.all([
-      loadDriverData(),
-      fetchSystemUrls() // Refresh URLs on pull-to-refresh
-    ]);
-    generateQRCode();
-    setRefreshing(false);
-  };
-
   const fetchDriverProfile = async () => {
-    if (isTestAccount) return;
+    if (isTestAccount) return null;
 
     try {
       const { data, error } = await supabase
         .from("drivers")
-        .select(`
+        .select(
+          `
           id,
           first_name,
           middle_name,
@@ -504,7 +485,8 @@ export default function DriverAccountScreen({ navigation }) {
           status,
           is_active,
           created_at
-        `)
+        `,
+        )
         .eq("id", driverId)
         .single();
 
@@ -525,12 +507,15 @@ export default function DriverAccountScreen({ navigation }) {
       setDriver(data);
       setEditPhone(data.phone || "");
       setEditEmail(data.email || "");
+
+      return data;
     } catch (err) {
       console.log("Error fetching profile:", err.message);
+      return null;
     }
   };
 
-  const fetchDriverStats = async () => {
+  const fetchDriverStats = async (freshDriverData) => {
     if (isTestAccount) return;
 
     try {
@@ -547,7 +532,9 @@ export default function DriverAccountScreen({ navigation }) {
         bookings?.reduce((sum, b) => sum + (b.actual_fare || 0), 0) || 0;
 
       const ratings =
-        bookings?.filter((b) => b.commuter_rating).map((b) => b.commuter_rating) || [];
+        bookings
+          ?.filter((b) => b.commuter_rating)
+          .map((b) => b.commuter_rating) || [];
       const avgRating =
         ratings.length > 0
           ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
@@ -558,7 +545,7 @@ export default function DriverAccountScreen({ navigation }) {
         totalTrips,
         totalEarnings,
         avgRating,
-        memberSince: driver?.created_at,
+        memberSince: freshDriverData?.created_at ?? prev.memberSince,
       }));
     } catch (err) {
       console.log("Error fetching stats:", err.message);
@@ -579,9 +566,6 @@ export default function DriverAccountScreen({ navigation }) {
 
       if (data) {
         setVehicle(data);
-        setEditPlate(data.plate_number || "");
-        setEditVehicleType(data.vehicle_type || "motorcycle");
-        setEditVehicleColor(data.vehicle_color || "");
       }
     } catch (err) {
       console.log("Error fetching vehicle:", err.message);
@@ -611,14 +595,16 @@ export default function DriverAccountScreen({ navigation }) {
     try {
       const { data, error } = await supabase
         .from("driver_subscriptions")
-        .select(`
+        .select(
+          `
           *,
           subscription_plans (
             plan_name,
             plan_type,
             price
           )
-        `)
+        `,
+        )
         .eq("driver_id", driverId)
         .eq("status", "active")
         .gte("end_date", new Date().toISOString())
@@ -633,9 +619,47 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
+  const loadDriverData = async () => {
+    try {
+      setLoading(true);
+
+      const freshDriverData = await fetchDriverProfile();
+
+      await Promise.all([
+        fetchDriverStats(freshDriverData),
+        fetchVehicleInfo(),
+        fetchDocuments(),
+        fetchActiveSubscription(),
+        fetchReferrals(),
+        fetchSettings(),
+      ]);
+
+      generateQRCode(driverId, freshDriverData);
+    } catch (err) {
+      console.log("Error loading driver data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    if (isTestAccount) {
+      setRefreshing(false);
+      return;
+    }
+
+    setRefreshing(true);
+    await Promise.all([loadDriverData(), fetchSystemUrls()]);
+    setRefreshing(false);
+  };
+
   const handleUpdateProfile = async () => {
     if (isTestAccount) {
-      showAlert("Test Account", "Profile updates are disabled for test accounts.", "warning");
+      showAlert(
+        "Test Account",
+        "Profile updates are disabled for test accounts.",
+        "warning",
+      );
       return;
     }
 
@@ -660,46 +684,8 @@ export default function DriverAccountScreen({ navigation }) {
     }
   };
 
-  const handleUpdateVehicle = async () => {
-    if (isTestAccount) {
-      showAlert("Test Account", "Vehicle updates are disabled for test accounts.", "warning");
-      return;
-    }
-
-    try {
-      if (vehicle) {
-        const { error } = await supabase
-          .from("driver_vehicles")
-          .update({
-            plate_number: editPlate,
-            vehicle_type: editVehicleType,
-            vehicle_color: editVehicleColor,
-            updated_at: new Date(),
-          })
-          .eq("driver_id", driverId);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("driver_vehicles").insert([
-          {
-            driver_id: driverId,
-            plate_number: editPlate,
-            vehicle_type: editVehicleType,
-            vehicle_color: editVehicleColor,
-          },
-        ]);
-
-        if (error) throw error;
-      }
-
-      showAlert("Success", "Vehicle information updated", "success");
-      setVehicleModal(false);
-      fetchVehicleInfo();
-    } catch (err) {
-      console.log("Error updating vehicle:", err.message);
-      showAlert("Error", "Failed to update vehicle information", "error");
-    }
-  };
+  // REMOVED: handleUpdateVehicle function - vehicle updates are now disabled
+  // Users cannot update vehicle information
 
   const handleSignOut = () => {
     showAlert(
@@ -724,20 +710,29 @@ export default function DriverAccountScreen({ navigation }) {
       },
       null,
       "Sign Out",
-      "Cancel"
+      "Cancel",
     );
   };
 
   const pickImage = async () => {
     if (isTestAccount) {
-      showAlert("Test Account", "Profile picture updates are disabled for test accounts.", "warning");
+      showAlert(
+        "Test Account",
+        "Profile picture updates are disabled for test accounts.",
+        "warning",
+      );
       return;
     }
 
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        showAlert("Permission Required", "Please enable photo access", "warning");
+        showAlert(
+          "Permission Required",
+          "Please enable photo access",
+          "warning",
+        );
         return;
       }
 
@@ -897,9 +892,7 @@ export default function DriverAccountScreen({ navigation }) {
               justifyContent: "space-between",
             }}
           >
-            <Pressable onPress={() => navigation.goBack()} style={{ width: 40 }}>
-              <Ionicons name="arrow-back" size={24} color="#FFF" />
-            </Pressable>
+            <Pressable></Pressable>
 
             <Text style={{ fontSize: 20, fontWeight: "bold", color: "#FFF" }}>
               My Account
@@ -986,7 +979,9 @@ export default function DriverAccountScreen({ navigation }) {
                 marginBottom: 5,
               }}
             >
-              {driver ? `${driver.first_name} ${driver.last_name}` : "Loading..."}
+              {driver
+                ? `${driver.first_name} ${driver.last_name}`
+                : "Loading..."}
             </Text>
 
             <View
@@ -1035,30 +1030,15 @@ export default function DriverAccountScreen({ navigation }) {
                 alignItems: "center",
               }}
             >
-              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+              <Text
+                style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}
+              >
                 {driverStats.totalTrips}
               </Text>
               <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
                 Total Trips
               </Text>
             </View>
-
-            {/* <View
-              style={{
-                flex: 1,
-                backgroundColor: "#F9FAFB",
-                borderRadius: 16,
-                padding: 12,
-                alignItems: "center",
-              }}
-            >
-              <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
-                ₱{driverStats.totalEarnings.toFixed(0)}
-              </Text>
-              <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
-                Lifetime Earnings
-              </Text>
-            </View> */}
 
             <View
               style={{
@@ -1070,7 +1050,9 @@ export default function DriverAccountScreen({ navigation }) {
               }}
             >
               <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <Text style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}>
+                <Text
+                  style={{ fontSize: 20, fontWeight: "bold", color: "#183B5C" }}
+                >
                   {driverStats.avgRating.toFixed(1)}
                 </Text>
                 <Ionicons
@@ -1155,9 +1137,6 @@ export default function DriverAccountScreen({ navigation }) {
                   size={qrSize}
                   color="#183B5C"
                   backgroundColor="#FFF"
-                  logo={qrLogo}
-                  logoSize={50}
-                  logoBorderRadius={25}
                 />
               </View>
             ) : (
@@ -1209,7 +1188,9 @@ export default function DriverAccountScreen({ navigation }) {
                 onPress={refreshQRCode}
               >
                 <Ionicons name="refresh-outline" size={18} color="#183B5C" />
-                <Text style={{ color: "#183B5C", fontWeight: "600" }}>Refresh</Text>
+                <Text style={{ color: "#183B5C", fontWeight: "600" }}>
+                  Refresh
+                </Text>
               </Pressable>
             )}
           </View>
@@ -1224,9 +1205,16 @@ export default function DriverAccountScreen({ navigation }) {
               borderTopColor: "#F3F4F6",
             }}
           >
-            <Ionicons name="information-circle-outline" size={18} color="#F59E0B" />
-            <Text style={{ fontSize: 12, color: "#666", marginLeft: 6, flex: 1 }}>
-              Show this QR code to passengers so they can book directly with you!
+            <Ionicons
+              name="information-circle-outline"
+              size={18}
+              color="#F59E0B"
+            />
+            <Text
+              style={{ fontSize: 12, color: "#666", marginLeft: 6, flex: 1 }}
+            >
+              Show this QR code to passengers so they can book directly with
+              you!
             </Text>
           </View>
         </View>
@@ -1368,8 +1356,8 @@ export default function DriverAccountScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Vehicle Information Section */}
-        <Pressable
+        {/* Vehicle Information Section - READ ONLY, NO EDIT */}
+        <View
           style={{
             marginHorizontal: 20,
             marginTop: 20,
@@ -1382,8 +1370,6 @@ export default function DriverAccountScreen({ navigation }) {
             shadowRadius: 8,
             elevation: 2,
           }}
-          onPress={() => !isTestAccount && setVehicleModal(true)}
-          disabled={isTestAccount}
         >
           <View
             style={{
@@ -1396,7 +1382,7 @@ export default function DriverAccountScreen({ navigation }) {
             <Text style={{ fontSize: 16, fontWeight: "bold", color: "#333" }}>
               🚲 Vehicle Information
             </Text>
-            {!isTestAccount && <Ionicons name="pencil" size={18} color="#183B5C" />}
+            {/* Removed edit icon - no editing allowed */}
           </View>
 
           {vehicle ? (
@@ -1446,13 +1432,13 @@ export default function DriverAccountScreen({ navigation }) {
                   : "No vehicle information added"}
               </Text>
               {!isTestAccount && (
-                <Text style={{ color: "#183B5C", marginTop: 5 }}>
-                  Tap to add vehicle details
+                <Text style={{ color: "#F59E0B", marginTop: 5, fontSize: 12 }}>
+                  Contact support to update vehicle information
                 </Text>
               )}
             </View>
           )}
-        </Pressable>
+        </View>
 
         {/* Documents Section */}
         {!isTestAccount && (
@@ -1492,12 +1478,16 @@ export default function DriverAccountScreen({ navigation }) {
               {documents?.license_number ? (
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                   <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-                  <Text style={{ color: "#10B981", marginLeft: 4 }}>Verified</Text>
+                  <Text style={{ color: "#10B981", marginLeft: 4 }}>
+                    Verified
+                  </Text>
                 </View>
               ) : (
                 <View style={{ flexDirection: "row", alignItems: "center" }}>
                   <Ionicons name="alert-circle" size={16} color="#F59E0B" />
-                  <Text style={{ color: "#F59E0B", marginLeft: 4 }}>Pending</Text>
+                  <Text style={{ color: "#F59E0B", marginLeft: 4 }}>
+                    Pending
+                  </Text>
                 </View>
               )}
             </View>
@@ -1578,7 +1568,11 @@ export default function DriverAccountScreen({ navigation }) {
               <View style={{ alignItems: "center", padding: 15 }}>
                 <Ionicons name="card-outline" size={40} color="#D1D5DB" />
                 <Text
-                  style={{ color: "#9CA3AF", marginTop: 10, textAlign: "center" }}
+                  style={{
+                    color: "#9CA3AF",
+                    marginTop: 10,
+                    textAlign: "center",
+                  }}
                 >
                   No active subscription
                 </Text>
@@ -1645,12 +1639,13 @@ export default function DriverAccountScreen({ navigation }) {
                 color="#183B5C"
                 style={{ width: 30 }}
               />
-              <Text style={{ flex: 1, color: "#333" }}>Verification Status</Text>
+              <Text style={{ flex: 1, color: "#333" }}>
+                Verification Status
+              </Text>
               <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
             </Pressable>
           )}
 
-          {/* Help Center - Using URL from database */}
           <Pressable
             style={{
               flexDirection: "row",
@@ -1668,14 +1663,10 @@ export default function DriverAccountScreen({ navigation }) {
               style={{ width: 30 }}
             />
             <Text style={{ flex: 1, color: "#333" }}>Help Center</Text>
-            {urlsLoading ? (
-              <ActivityIndicator size="small" color="#9CA3AF" />
-            ) : (
-              <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-            )}
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </Pressable>
 
-          {/* Terms & Conditions - Using URL from database */}
+          {/* Terms & Conditions */}
           <Pressable
             style={{
               flexDirection: "row",
@@ -1700,7 +1691,7 @@ export default function DriverAccountScreen({ navigation }) {
             )}
           </Pressable>
 
-          {/* Privacy Policy - Using URL from database */}
+          {/* Privacy Policy */}
           <Pressable
             style={{
               flexDirection: "row",
@@ -1747,13 +1738,16 @@ export default function DriverAccountScreen({ navigation }) {
 
         <View style={{ alignItems: "center", marginTop: 20, marginBottom: 10 }}>
           <Text style={{ fontSize: 12, color: "#9CA3AF" }}>
-            SakayNa Driver v1.0.0
+            SakayNa  v
+            {Constants.expoConfig?.version ||
+              Constants.manifest?.version ||
+              "1.0.0"}
           </Text>
-          {!isTestAccount && (
+          
             <Text style={{ fontSize: 11, color: "#D1D5DB", marginTop: 2 }}>
-              Member since: {formatDate(driver?.created_at)}
+              Developed by: Ian Lemera
             </Text>
-          )}
+          
         </View>
       </ScrollView>
 
@@ -1793,7 +1787,9 @@ export default function DriverAccountScreen({ navigation }) {
                     marginBottom: 20,
                   }}
                 >
-                  <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
+                  <Text
+                    style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}
+                  >
                     Settings
                   </Text>
                   <Pressable onPress={() => setSettingsModal(false)}>
@@ -1814,20 +1810,32 @@ export default function DriverAccountScreen({ navigation }) {
                     }}
                   >
                     <View>
-                      <Text style={{ fontSize: 16, fontWeight: "500", color: "#333" }}>
+                      <Text
+                        style={{
+                          fontSize: 16,
+                          fontWeight: "500",
+                          color: "#333",
+                        }}
+                      >
                         Notifications
                       </Text>
-                      <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                      <Text
+                        style={{ fontSize: 12, color: "#666", marginTop: 2 }}
+                      >
                         Receive trip alerts and updates
                       </Text>
                     </View>
                     <Pressable
-                      onPress={() => setNotificationsEnabled(!notificationsEnabled)}
+                      onPress={() =>
+                        setNotificationsEnabled(!notificationsEnabled)
+                      }
                       style={{
                         width: 50,
                         height: 28,
                         borderRadius: 14,
-                        backgroundColor: notificationsEnabled ? "#183B5C" : "#D1D5DB",
+                        backgroundColor: notificationsEnabled
+                          ? "#183B5C"
+                          : "#D1D5DB",
                         padding: 2,
                       }}
                     >
@@ -1837,7 +1845,9 @@ export default function DriverAccountScreen({ navigation }) {
                           height: 24,
                           borderRadius: 12,
                           backgroundColor: "#FFF",
-                          transform: [{ translateX: notificationsEnabled ? 24 : 0 }],
+                          transform: [
+                            { translateX: notificationsEnabled ? 24 : 0 },
+                          ],
                         }}
                       />
                     </Pressable>
@@ -1855,10 +1865,18 @@ export default function DriverAccountScreen({ navigation }) {
                     }}
                   >
                     <View>
-                      <Text style={{ fontSize: 16, fontWeight: "500", color: "#333" }}>
+                      <Text
+                        style={{
+                          fontSize: 16,
+                          fontWeight: "500",
+                          color: "#333",
+                        }}
+                      >
                         Dark Mode
                       </Text>
-                      <Text style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
+                      <Text
+                        style={{ fontSize: 12, color: "#666", marginTop: 2 }}
+                      >
                         Use dark theme
                       </Text>
                     </View>
@@ -1868,7 +1886,9 @@ export default function DriverAccountScreen({ navigation }) {
                         width: 50,
                         height: 28,
                         borderRadius: 14,
-                        backgroundColor: darkModeEnabled ? "#183B5C" : "#D1D5DB",
+                        backgroundColor: darkModeEnabled
+                          ? "#183B5C"
+                          : "#D1D5DB",
                         padding: 2,
                       }}
                     >
@@ -1892,7 +1912,14 @@ export default function DriverAccountScreen({ navigation }) {
                       borderBottomColor: "#F3F4F6",
                     }}
                   >
-                    <Text style={{ fontSize: 16, fontWeight: "500", color: "#333", marginBottom: 10 }}>
+                    <Text
+                      style={{
+                        fontSize: 16,
+                        fontWeight: "500",
+                        color: "#333",
+                        marginBottom: 10,
+                      }}
+                    >
                       Language
                     </Text>
                     <View style={{ flexDirection: "row", gap: 10 }}>
@@ -1908,7 +1935,10 @@ export default function DriverAccountScreen({ navigation }) {
                               alignItems: "center",
                             },
                             language === lang
-                              ? { borderColor: "#183B5C", backgroundColor: "#E6E9F0" }
+                              ? {
+                                  borderColor: "#183B5C",
+                                  backgroundColor: "#E6E9F0",
+                                }
                               : { borderColor: "#E5E7EB" },
                           ]}
                           onPress={() => setLanguage(lang)}
@@ -1927,7 +1957,9 @@ export default function DriverAccountScreen({ navigation }) {
                     </View>
                   </View>
 
-                  <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
+                  <View
+                    style={{ flexDirection: "row", gap: 10, marginTop: 20 }}
+                  >
                     <Pressable
                       style={{
                         flex: 1,
@@ -1938,7 +1970,9 @@ export default function DriverAccountScreen({ navigation }) {
                       }}
                       onPress={() => setSettingsModal(false)}
                     >
-                      <Text style={{ color: "#333", fontWeight: "600" }}>Cancel</Text>
+                      <Text style={{ color: "#333", fontWeight: "600" }}>
+                        Cancel
+                      </Text>
                     </Pressable>
 
                     <Pressable
@@ -1951,7 +1985,9 @@ export default function DriverAccountScreen({ navigation }) {
                       }}
                       onPress={updateSettings}
                     >
-                      <Text style={{ color: "#FFF", fontWeight: "600" }}>Save Changes</Text>
+                      <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                        Save Changes
+                      </Text>
                     </Pressable>
                   </View>
                 </ScrollView>
@@ -2076,7 +2112,13 @@ export default function DriverAccountScreen({ navigation }) {
                       marginBottom: 20,
                     }}
                   >
-                    <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
+                    <Text
+                      style={{
+                        fontSize: 20,
+                        fontWeight: "bold",
+                        color: "#333",
+                      }}
+                    >
                       Edit Contact Information
                     </Text>
                     <Pressable onPress={() => setEditProfileModal(false)}>
@@ -2106,7 +2148,9 @@ export default function DriverAccountScreen({ navigation }) {
                       }}
                     >
                       <Text style={{ fontSize: 16, color: "#666" }}>
-                        {driver ? `${driver.first_name} ${driver.last_name}` : "Loading..."}
+                        {driver
+                          ? `${driver.first_name} ${driver.last_name}`
+                          : "Loading..."}
                       </Text>
                     </View>
 
@@ -2161,7 +2205,13 @@ export default function DriverAccountScreen({ navigation }) {
                       onChangeText={setEditEmail}
                     />
 
-                    <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        gap: 10,
+                        marginBottom: 10,
+                      }}
+                    >
                       <Pressable
                         style={{
                           flex: 1,
@@ -2187,7 +2237,9 @@ export default function DriverAccountScreen({ navigation }) {
                         }}
                         onPress={handleUpdateProfile}
                       >
-                        <Text style={{ color: "#FFF", fontWeight: "600" }}>Save</Text>
+                        <Text style={{ color: "#FFF", fontWeight: "600" }}>
+                          Save
+                        </Text>
                       </Pressable>
                     </View>
                   </ScrollView>
@@ -2198,224 +2250,7 @@ export default function DriverAccountScreen({ navigation }) {
         </Modal>
       )}
 
-      {/* Vehicle Modal */}
-      {!isTestAccount && (
-        <Modal
-          visible={vehicleModal}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setVehicleModal(false)}
-        >
-          <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            style={{ flex: 1 }}
-          >
-            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-              <View
-                style={{
-                  flex: 1,
-                  backgroundColor: "rgba(0,0,0,0.5)",
-                  justifyContent: "flex-end",
-                }}
-              >
-                <View
-                  style={{
-                    backgroundColor: "#FFF",
-                    borderTopLeftRadius: 24,
-                    borderTopRightRadius: 24,
-                    padding: 20,
-                    maxHeight: "90%",
-                  }}
-                >
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: 20,
-                    }}
-                  >
-                    <Text style={{ fontSize: 20, fontWeight: "bold", color: "#333" }}>
-                      Vehicle Information
-                    </Text>
-                    <Pressable onPress={() => setVehicleModal(false)}>
-                      <Ionicons name="close" size={24} color="#666" />
-                    </Pressable>
-                  </View>
-
-                  <ScrollView
-                    showsVerticalScrollIndicator={true}
-                    keyboardShouldPersistTaps="handled"
-                  >
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Plate Number
-                    </Text>
-                    <TextInput
-                      style={{
-                        borderWidth: 1,
-                        borderColor: "#E5E7EB",
-                        borderRadius: 12,
-                        padding: 12,
-                        fontSize: 16,
-                        marginBottom: 15,
-                        textTransform: "uppercase",
-                      }}
-                      placeholder="ABC-1234"
-                      value={editPlate}
-                      onChangeText={setEditPlate}
-                      returnKeyType="done"
-                    />
-
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Vehicle Type
-                    </Text>
-                    <View style={{ flexDirection: "row", marginBottom: 15, gap: 10 }}>
-                      {["motorcycle", "tricycle"].map((type) => (
-                        <Pressable
-                          key={type}
-                          style={[
-                            {
-                              flex: 1,
-                              padding: 12,
-                              borderRadius: 12,
-                              borderWidth: 2,
-                              alignItems: "center",
-                            },
-                            editVehicleType === type
-                              ? { borderColor: "#183B5C", backgroundColor: "#E6E9F0" }
-                              : { borderColor: "#E5E7EB" },
-                          ]}
-                          onPress={() => setEditVehicleType(type)}
-                        >
-                          <Ionicons
-                            name={type === "motorcycle" ? "bicycle" : "car-sport"}
-                            size={20}
-                            color={editVehicleType === type ? "#183B5C" : "#9CA3AF"}
-                          />
-                          <Text
-                            style={{
-                              fontSize: 10,
-                              marginTop: 4,
-                              color: editVehicleType === type ? "#183B5C" : "#666",
-                              textTransform: "capitalize",
-                            }}
-                          >
-                            {type}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
-
-                    <Text
-                      style={{
-                        fontSize: 14,
-                        fontWeight: "600",
-                        color: "#333",
-                        marginBottom: 8,
-                      }}
-                    >
-                      Vehicle Color
-                    </Text>
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        marginBottom: 20,
-                        gap: 10,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {["Red", "Blue", "Black", "White", "Silver", "Gray", "Green", "Yellow"].map(
-                        (color) => (
-                          <Pressable
-                            key={color}
-                            style={[
-                              {
-                                paddingHorizontal: 16,
-                                paddingVertical: 8,
-                                borderRadius: 20,
-                                borderWidth: 1,
-                              },
-                              editVehicleColor.toLowerCase() === color.toLowerCase()
-                                ? { borderColor: "#183B5C", backgroundColor: "#E6E9F0" }
-                                : { borderColor: "#E5E7EB" },
-                            ]}
-                            onPress={() => setEditVehicleColor(color)}
-                          >
-                            <View style={{ flexDirection: "row", alignItems: "center" }}>
-                              <View
-                                style={{
-                                  width: 12,
-                                  height: 12,
-                                  borderRadius: 6,
-                                  backgroundColor: color.toLowerCase(),
-                                  marginRight: 4,
-                                }}
-                              />
-                              <Text
-                                style={{
-                                  fontSize: 12,
-                                  color:
-                                    editVehicleColor.toLowerCase() === color.toLowerCase()
-                                      ? "#183B5C"
-                                      : "#666",
-                                }}
-                              >
-                                {color}
-                              </Text>
-                            </View>
-                          </Pressable>
-                        )
-                      )}
-                    </View>
-
-                    <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
-                      <Pressable
-                        style={{
-                          flex: 1,
-                          backgroundColor: "#F3F4F6",
-                          padding: 14,
-                          borderRadius: 12,
-                          alignItems: "center",
-                        }}
-                        onPress={() => setVehicleModal(false)}
-                      >
-                        <Text style={{ color: "#333", fontWeight: "600" }}>Cancel</Text>
-                      </Pressable>
-
-                      <Pressable
-                        style={{
-                          flex: 1,
-                          backgroundColor: "#183B5C",
-                          padding: 14,
-                          borderRadius: 12,
-                          alignItems: "center",
-                        }}
-                        onPress={handleUpdateVehicle}
-                      >
-                        <Text style={{ color: "#FFF", fontWeight: "600" }}>Save</Text>
-                      </Pressable>
-                    </View>
-                  </ScrollView>
-                </View>
-              </View>
-            </TouchableWithoutFeedback>
-          </KeyboardAvoidingView>
-        </Modal>
-      )}
+      {/* Vehicle Modal - REMOVED - Users cannot edit vehicle information */}
 
       {/* Custom Alert */}
       <CustomAlert
