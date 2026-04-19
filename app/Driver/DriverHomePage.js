@@ -22,7 +22,7 @@ import HomeScreen from "./DriverHomeScreen";
 import WalletScreen from "./DriverWalletScreen";
 import InboxScreen from "./DriverInboxScreen";
 import AccountScreen from "./DriverAccountScreen";
-import DriverTrackRideScreen from "./DriverTrackRideScreen";
+import DriverHomeRequestsScreen from "./DriverHomeRequestsScreen";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { navStyles } from "../styles/Driver/NavStyles";
 
@@ -533,8 +533,8 @@ useEffect(() => {
 
       {/* TRACK RIDE BUTTON WITH ENHANCED GLOW EFFECT */}
       <Tab.Screen
-        name="Track Rides"
-        component={DriverTrackRideScreen}
+        name="TrackRides"
+        component={DriverHomeRequestsScreen}
         options={{
           tabBarLabel: "",
           tabBarIcon: () => (

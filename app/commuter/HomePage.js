@@ -18,7 +18,7 @@ import { supabase } from "../../lib/supabase";
 import HomeScreen from "./HomeScreen";
 import WalletScreen from "./WalletScreen";
 import AccountScreen from "./AccountScreen";
-import TrackRideScreen from "./TrackRideScreen";
+import CommuterTrackRidesScreen from "./CommuterTrackRidesScreen";
 import InboxScreen from "./InboxScreen";
 
 import FloatingMenu from "../components/FloatingMenu";
@@ -283,7 +283,7 @@ export default function HomePage() {
       >
         <Tab.Screen
           name="TrackRide"
-          component={TrackRideScreen}
+          component={CommuterTrackRidesScreen}
           options={{
             title: "Track Ride",
             tabBarLabel: "Track",
@@ -294,8 +294,8 @@ export default function HomePage() {
           name="Earnings"
           component={WalletScreen}
           options={{
-            title: "Wallet",
-            tabBarLabel: "Wallet",
+            title: "Earnings",
+            tabBarLabel: "Earnings",
           }}
         />
 

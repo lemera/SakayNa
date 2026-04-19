@@ -5,7 +5,6 @@ import {
   Text,
   StyleSheet,
   TextInput,
-  Pressable,
   ScrollView,
   ActivityIndicator,
   RefreshControl,
@@ -13,13 +12,11 @@ import {
   TouchableOpacity,
   Animated,
   Dimensions,
-  KeyboardAvoidingView,
   Platform,
   PixelRatio,
   StatusBar,
   PanResponder,
   Keyboard,
-  Image,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, {
@@ -58,8 +55,6 @@ const rf = (size) => {
 
 const isSmallDevice = SCREEN_HEIGHT < 668;
 const isMediumDevice = SCREEN_HEIGHT >= 668 && SCREEN_HEIGHT < 812;
-const isLargeDevice = SCREEN_HEIGHT >= 812 && SCREEN_HEIGHT < 900;
-const isXLDevice = SCREEN_HEIGHT >= 900;
 
 // Draggable sheet snap points
 const SHEET_TOP_EXPANDED = SCREEN_HEIGHT * 0.14;
@@ -153,8 +148,10 @@ const ModernAlert = ({
               />
             )}
           </View>
+
           {!!title && <Text style={styles.alertTitle}>{title}</Text>}
           {!!message && <Text style={styles.alertMessage}>{message}</Text>}
+
           <View style={styles.alertButtons}>
             {showCancel && onCancel && (
               <TouchableOpacity
@@ -164,6 +161,7 @@ const ModernAlert = ({
                 <Text style={styles.alertCancelText}>{cancelText}</Text>
               </TouchableOpacity>
             )}
+
             <TouchableOpacity
               style={[
                 styles.alertButton,
@@ -178,96 +176,6 @@ const ModernAlert = ({
         </Animated.View>
       </Animated.View>
     </Modal>
-  );
-};
-
-// ==================== TOAST NOTIFICATION ====================
-const ModernToast = ({ visible, message, type, onHide, bottomOffset = 96 }) => {
-  const translateY = useRef(new Animated.Value(100)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!visible) return;
-
-    Animated.parallel([
-      Animated.spring(translateY, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 20,
-        stiffness: 300,
-      }),
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    const timer = setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(translateY, {
-          toValue: 100,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start(() => onHide?.());
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, [visible, translateY, opacity, onHide]);
-
-  const getIcon = () => {
-    switch (type) {
-      case "success":
-        return "checkmark-circle";
-      case "error":
-        return "alert-circle";
-      case "warning":
-        return "warning";
-      default:
-        return "information-circle";
-    }
-  };
-
-  const getColors = () => {
-    switch (type) {
-      case "success":
-        return { bg: "#10B981", icon: "#FFFFFF" };
-      case "error":
-        return { bg: "#EF4444", icon: "#FFFFFF" };
-      case "warning":
-        return { bg: "#F59E0B", icon: "#FFFFFF" };
-      default:
-        return { bg: "#183B5C", icon: "#FFFFFF" };
-    }
-  };
-
-  const colors = getColors();
-
-  return (
-    <Animated.View
-      style={[
-        styles.toastContainer,
-        {
-          transform: [{ translateY }],
-          opacity,
-          backgroundColor: colors.bg,
-          bottom: bottomOffset,
-        },
-      ]}
-    >
-      <Ionicons
-        name={getIcon()}
-        size={moderateScale(18)}
-        color={colors.icon}
-      />
-      <Text style={styles.toastMessage}>{message}</Text>
-    </Animated.View>
   );
 };
 
@@ -302,7 +210,8 @@ const LocationCard = ({
 
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-      <Pressable
+      <TouchableOpacity
+        activeOpacity={0.9}
         style={[
           styles.locationCard,
           !value && { borderColor: iconColor, borderWidth: 1.5 },
@@ -349,12 +258,12 @@ const LocationCard = ({
           size={moderateScale(16)}
           color="#9CA3AF"
         />
-      </Pressable>
+      </TouchableOpacity>
     </Animated.View>
   );
 };
 
-// ==================== COMPACT PASSENGER SELECTOR ====================
+// ==================== PASSENGER SELECTOR ====================
 const PassengerSelector = ({ count, onChange, max = 6, trackUserAction }) => (
   <View style={styles.passengerCard}>
     <Text style={styles.passengerTitle}>Passengers</Text>
@@ -369,7 +278,6 @@ const PassengerSelector = ({ count, onChange, max = 6, trackUserAction }) => (
           if (count > 1) onChange(count - 1);
         }}
         disabled={count <= 1}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
         <Ionicons
           name="remove-outline"
@@ -390,7 +298,6 @@ const PassengerSelector = ({ count, onChange, max = 6, trackUserAction }) => (
           if (count < max) onChange(count + 1);
         }}
         disabled={count >= max}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
         <Ionicons
           name="add-outline"
@@ -416,7 +323,9 @@ const TripMetricsRow = ({ distance, time, passengers }) => (
       <Text style={styles.tripMetricValue}>{distance || "0"} km</Text>
       <Text style={styles.tripMetricLabel}>Distance</Text>
     </View>
+
     <View style={styles.tripMetricDivider} />
+
     <View style={styles.tripMetricItem}>
       <View style={[styles.tripMetricIcon, { backgroundColor: "#3B82F615" }]}>
         <Ionicons
@@ -428,7 +337,9 @@ const TripMetricsRow = ({ distance, time, passengers }) => (
       <Text style={styles.tripMetricValue}>{time || "0"} min</Text>
       <Text style={styles.tripMetricLabel}>Est. time</Text>
     </View>
+
     <View style={styles.tripMetricDivider} />
+
     <View style={styles.tripMetricItem}>
       <View style={[styles.tripMetricIcon, { backgroundColor: "#8B5CF615" }]}>
         <Ionicons
@@ -464,10 +375,10 @@ const FareBar = ({ fare, passengers, distance, onBreakdownPress }) => {
     ]).start();
   }, [slideAnim, opacityAnim]);
 
-  const isMinFare = parseFloat(distance) <= 1;
+  const isMinFare = parseFloat(distance || 0) <= 1;
   const perPax =
     passengers > 1
-      ? `₱${(fare / passengers).toFixed(2)} × ${passengers} passengers`
+      ? `₱${((fare || 0) / passengers).toFixed(2)} × ${passengers} passengers`
       : "Total fare";
 
   return (
@@ -479,7 +390,7 @@ const FareBar = ({ fare, passengers, distance, onBreakdownPress }) => {
     >
       <View style={styles.fareBarLeft}>
         <Text style={styles.fareBarAmount}>
-          ₱{fare ? fare.toFixed(2) : "0.00"}
+          ₱{fare ? Number(fare).toFixed(2) : "0.00"}
         </Text>
         <View style={styles.fareBarMeta}>
           <Text style={styles.fareBarLabel}>{perPax}</Text>
@@ -490,6 +401,7 @@ const FareBar = ({ fare, passengers, distance, onBreakdownPress }) => {
           )}
         </View>
       </View>
+
       <TouchableOpacity
         style={styles.fareBreakdownBtn}
         onPress={onBreakdownPress}
@@ -578,6 +490,7 @@ const FareBreakdownModal = ({
               </View>
               <Text style={styles.breakdownTitle}>Fare breakdown</Text>
             </View>
+
             <TouchableOpacity onPress={onClose} style={styles.breakdownClose}>
               <Ionicons
                 name="close"
@@ -596,7 +509,9 @@ const FareBreakdownModal = ({
               />
               <Text style={styles.breakdownTripText}>{distance} km</Text>
             </View>
+
             <View style={styles.breakdownTripDot} />
+
             <View style={styles.breakdownTripItem}>
               <Ionicons
                 name="time-outline"
@@ -605,7 +520,9 @@ const FareBreakdownModal = ({
               />
               <Text style={styles.breakdownTripText}>{time} min</Text>
             </View>
+
             <View style={styles.breakdownTripDot} />
+
             <View style={styles.breakdownTripItem}>
               <Ionicons
                 name="people-outline"
@@ -621,6 +538,7 @@ const FareBreakdownModal = ({
               <Text style={styles.breakdownRowLabel}>Base fare (first km)</Text>
               <Text style={styles.breakdownRowValue}>{fmt(baseFareNum)}</Text>
             </View>
+
             {!isMinFare && (
               <View style={styles.breakdownRow}>
                 <Text style={styles.breakdownRowLabel}>
@@ -629,6 +547,7 @@ const FareBreakdownModal = ({
                 <Text style={styles.breakdownRowValue}>{fmt(distanceFee)}</Text>
               </View>
             )}
+
             {isMinFare && (
               <View style={styles.breakdownInfoRow}>
                 <Ionicons
@@ -641,12 +560,14 @@ const FareBreakdownModal = ({
                 </Text>
               </View>
             )}
+
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownRowLabel}>
                 Subtotal (per passenger)
               </Text>
               <Text style={styles.breakdownRowValue}>{fmt(subtotal)}</Text>
             </View>
+
             {appFeeNum > 0 && (
               <View style={styles.breakdownRow}>
                 <Text style={styles.breakdownRowLabel}>App service fee</Text>
@@ -657,10 +578,12 @@ const FareBreakdownModal = ({
                 </Text>
               </View>
             )}
+
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownRowLabel}>Per passenger total</Text>
               <Text style={styles.breakdownRowValue}>{fmt(perPaxTotal)}</Text>
             </View>
+
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownRowLabel}>Passengers</Text>
               <Text style={styles.breakdownRowValue}>× {passengers}</Text>
@@ -670,33 +593,6 @@ const FareBreakdownModal = ({
           <View style={styles.breakdownTotal}>
             <Text style={styles.breakdownTotalLabel}>Total fare</Text>
             <Text style={styles.breakdownTotalAmount}>{fmt(grandTotal)}</Text>
-          </View>
-
-          {passengers > 1 && (
-            <Text style={styles.breakdownPerPax}>
-              {fmt(perPaxTotal)} × {passengers} passengers
-            </Text>
-          )}
-
-          <View style={styles.breakdownFooter}>
-            <View style={styles.breakdownBadge}>
-              <Ionicons
-                name="cash-outline"
-                size={moderateScale(12)}
-                color="#10B981"
-              />
-              <Text style={styles.breakdownBadgeText}>
-                {isMinFare ? "Minimum fare applied" : "Distance-based fare"}
-              </Text>
-            </View>
-            <View style={styles.breakdownBadge}>
-              <Ionicons
-                name="shield-checkmark-outline"
-                size={moderateScale(12)}
-                color="#3B82F6"
-              />
-              <Text style={styles.breakdownBadgeText}>Safe & insured</Text>
-            </View>
           </View>
         </Animated.View>
       </View>
@@ -716,50 +612,13 @@ const FloatingActionButtons = ({
   const translateY = useRef(new Animated.Value(120)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const insets = useSafeAreaInsets();
+  const tabBarHeight = useBottomTabBarHeight();
 
   const [mounted, setMounted] = useState(false);
   const [canPress, setCanPress] = useState(false);
 
   const hideTimerRef = useRef(null);
   const animRef = useRef(null);
-  const tabBarHeight = useBottomTabBarHeight();
-
-  const getBottomPosition = useCallback(
-    () => tabBarHeight + insets.bottom + 10,
-    [tabBarHeight, insets.bottom]
-  );
-
-  const getButtonDimensions = useCallback(() => {
-    if (isSmallDevice)
-      return {
-        paddingVertical: moderateVerticalScale(9),
-        paddingHorizontal: scale(10),
-        iconSize: moderateScale(22),
-        iconWrapperSize: moderateScale(30),
-        gap: scale(7),
-      };
-    if (isMediumDevice)
-      return {
-        paddingVertical: moderateVerticalScale(10),
-        paddingHorizontal: scale(12),
-        iconSize: moderateScale(24),
-        iconWrapperSize: moderateScale(33),
-        gap: scale(8),
-      };
-    return {
-      paddingVertical: moderateVerticalScale(11),
-      paddingHorizontal: scale(13),
-      iconSize: moderateScale(24),
-      iconWrapperSize: moderateScale(36),
-      gap: scale(10),
-    };
-  }, []);
-
-  const getTextSizes = useCallback(() => {
-    if (isSmallDevice) return { titleSize: rf(11), subtitleSize: rf(8) };
-    if (isMediumDevice) return { titleSize: rf(12), subtitleSize: rf(8.5) };
-    return { titleSize: rf(13), subtitleSize: rf(9) };
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -780,6 +639,7 @@ const FloatingActionButtons = ({
       setCanPress(true);
       translateY.setValue(120);
       opacity.setValue(0);
+
       animRef.current = Animated.parallel([
         Animated.spring(translateY, {
           toValue: 0,
@@ -797,6 +657,7 @@ const FloatingActionButtons = ({
       animRef.current.start();
     } else {
       setCanPress(false);
+
       animRef.current = Animated.parallel([
         Animated.timing(translateY, {
           toValue: 120,
@@ -810,17 +671,18 @@ const FloatingActionButtons = ({
         }),
       ]);
       animRef.current.start();
+
       hideTimerRef.current = setTimeout(() => setMounted(false), 190);
     }
   }, [visible, translateY, opacity]);
 
   if (!mounted) return null;
 
-  const buttonDims = getButtonDimensions();
-  const textSizes = getTextSizes();
-
+  const bottom = tabBarHeight + insets.bottom + 10;
   const driverSubtitle =
-    driversWithinRadius > 0 ? `${driversWithinRadius} nearby` : "Search nearby";
+  driversWithinRadius > 0
+    ? `${driversWithinRadius} driver${driversWithinRadius > 1 ? "s" : ""} nearby`
+    : "No nearby drivers";
 
   return (
     <Animated.View
@@ -828,32 +690,17 @@ const FloatingActionButtons = ({
       style={[
         styles.floatingActionContainer,
         {
-          bottom: getBottomPosition(),
+          bottom,
           transform: [{ translateY }],
           opacity,
           paddingHorizontal: scale(16),
         },
       ]}
     >
-      <View
-        style={[
-          styles.floatingActionButtons,
-          {
-            borderRadius: moderateScale(isSmallDevice ? 14 : 18),
-            padding: scale(isSmallDevice ? 8 : 10),
-            gap: scale(isSmallDevice ? 8 : 10),
-          },
-        ]}
-      >
+      <View style={styles.floatingActionButtons}>
         <TouchableOpacity
           style={[
             styles.floatingActionButton,
-            {
-              paddingVertical: buttonDims.paddingVertical,
-              paddingHorizontal: buttonDims.paddingHorizontal,
-              gap: buttonDims.gap,
-              borderRadius: moderateScale(isSmallDevice ? 11 : 13),
-            },
             (disabled || !canPress) && styles.floatingActionButtonDisabled,
           ]}
           onPress={() => {
@@ -864,37 +711,16 @@ const FloatingActionButtons = ({
           disabled={disabled || !canPress}
           activeOpacity={0.85}
         >
-          <View
-            style={[
-              styles.floatingActionIconWrapper,
-              {
-                width: buttonDims.iconWrapperSize,
-                height: buttonDims.iconWrapperSize,
-                borderRadius: buttonDims.iconWrapperSize / 2,
-              },
-            ]}
-          >
+          <View style={styles.floatingActionIconWrapper}>
             <Ionicons
               name="qr-code-outline"
-              size={buttonDims.iconSize}
+              size={moderateScale(22)}
               color="#10B981"
             />
           </View>
           <View style={styles.floatingActionTextContainer}>
-            <Text
-              style={[
-                styles.floatingActionTitle,
-                { fontSize: textSizes.titleSize },
-              ]}
-            >
-              Scan QR
-            </Text>
-            <Text
-              style={[
-                styles.floatingActionSubtitle,
-                { fontSize: textSizes.subtitleSize },
-              ]}
-            >
+            <Text style={styles.floatingActionTitle}>Scan QR</Text>
+            <Text style={styles.floatingActionSubtitle}>
               Scan driver's code
             </Text>
           </View>
@@ -904,12 +730,6 @@ const FloatingActionButtons = ({
           style={[
             styles.floatingActionButton,
             styles.floatingActionButtonPrimary,
-            {
-              paddingVertical: buttonDims.paddingVertical,
-              paddingHorizontal: buttonDims.paddingHorizontal,
-              gap: buttonDims.gap,
-              borderRadius: moderateScale(isSmallDevice ? 11 : 13),
-            },
             (disabled || !canPress) && styles.floatingActionButtonDisabled,
           ]}
           onPress={() => {
@@ -924,26 +744,13 @@ const FloatingActionButtons = ({
             style={[
               styles.floatingActionIconWrapper,
               styles.floatingActionIconWrapperPrimary,
-              {
-                width: buttonDims.iconWrapperSize,
-                height: buttonDims.iconWrapperSize,
-                borderRadius: buttonDims.iconWrapperSize / 2,
-              },
             ]}
           >
-            <Ionicons
-              name="location"
-              size={buttonDims.iconSize}
-              color="#FFF"
-            />
+            <Ionicons name="location" size={moderateScale(22)} color="#FFF" />
           </View>
           <View style={styles.floatingActionTextContainer}>
             <Text
-              style={[
-                styles.floatingActionTitle,
-                styles.floatingActionTitleLight,
-                { fontSize: textSizes.titleSize },
-              ]}
+              style={[styles.floatingActionTitle, styles.floatingActionTitleLight]}
             >
               Find Driver
             </Text>
@@ -951,7 +758,6 @@ const FloatingActionButtons = ({
               style={[
                 styles.floatingActionSubtitle,
                 styles.floatingActionSubtitleLight,
-                { fontSize: textSizes.subtitleSize },
               ]}
             >
               {driverSubtitle}
@@ -1003,19 +809,28 @@ const ProximityModal = ({
           onPress={onClose}
         />
         <Animated.View
-          style={[styles.modalContent, { transform: [{ translateY: slideAnim }] }]}
+          style={[
+            styles.modalContent,
+            { transform: [{ translateY: slideAnim }] },
+          ]}
         >
           <View style={styles.modalHandle} />
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Search radius</Text>
             <TouchableOpacity onPress={onClose} style={styles.modalClose}>
-              <Ionicons name="close" size={moderateScale(22)} color="#9CA3AF" />
+              <Ionicons
+                name="close"
+                size={moderateScale(22)}
+                color="#9CA3AF"
+              />
             </TouchableOpacity>
           </View>
+
           <View style={styles.radiusDisplay}>
             <Text style={styles.radiusValue}>{radius.toFixed(1)}</Text>
             <Text style={styles.radiusUnit}>km</Text>
           </View>
+
           <View style={styles.radiusOptionsGrid}>
             {radiusOptions.map((value) => (
               <TouchableOpacity
@@ -1037,6 +852,7 @@ const ProximityModal = ({
               </TouchableOpacity>
             ))}
           </View>
+
           <View style={styles.driverStats}>
             <Ionicons
               name="car-outline"
@@ -1044,10 +860,11 @@ const ProximityModal = ({
               color="#6B7280"
             />
             <Text style={styles.driverStatsText}>
-              {driversCount} driver{driversCount !== 1 ? "s" : ""} available within{" "}
-              {radius.toFixed(1)} km
+              {driversCount} driver{driversCount !== 1 ? "s" : ""} available
+              within {radius.toFixed(1)} km
             </Text>
           </View>
+
           <TouchableOpacity style={styles.applyButton} onPress={onApply}>
             <Text style={styles.applyButtonText}>Apply filter</Text>
           </TouchableOpacity>
@@ -1065,7 +882,13 @@ export default function CommuterHomeScreen() {
   const scanTimeoutRef = useRef(null);
   const shakeAnimPickup = useRef(new Animated.Value(0)).current;
   const shakeAnimDropoff = useRef(new Animated.Value(0)).current;
+  const sheetTopAnim = useRef(new Animated.Value(SHEET_TOP_MID)).current;
+  const lastSheetTop = useRef(SHEET_TOP_MID);
   const tabBarHeight = useBottomTabBarHeight();
+
+  const driverRealtimeChannelRef = useRef(null);
+const latestPickupRef = useRef(null);
+const mountedRef = useRef(true);
 
   const [userLocation, setUserLocation] = useState(null);
   const [pickup, setPickup] = useState(null);
@@ -1103,7 +926,6 @@ export default function CommuterHomeScreen() {
   const [filteredDrivers, setFilteredDrivers] = useState([]);
   const [driversWithinRadius, setDriversWithinRadius] = useState(0);
   const [commuterId, setCommuterId] = useState(null);
-  const [activeBooking, setActiveBooking] = useState(null);
   const [recentLocations, setRecentLocations] = useState([]);
   const [forceUpdate, setForceUpdate] = useState(false);
   const [alert, setAlert] = useState({
@@ -1118,18 +940,28 @@ export default function CommuterHomeScreen() {
     onCancel: null,
   });
   const [lastUserAction, setLastUserAction] = useState(Date.now());
-  const [toast, setToast] = useState({
-    visible: false,
-    message: "",
-    type: "info",
-  });
   const [permission, requestPermission] = useCameraPermissions();
   const [showScanner, setShowScanner] = useState(false);
   const [scanned, setScanned] = useState(false);
   const [scanningForDriver, setScanningForDriver] = useState(false);
-  const [scannedDriverData, setScannedDriverData] = useState(null);
   const [showFareBreakdown, setShowFareBreakdown] = useState(false);
 
+  useEffect(() => {
+  latestPickupRef.current = pickup;
+}, [pickup]);
+
+useEffect(() => {
+  mountedRef.current = true;
+
+  return () => {
+    mountedRef.current = false;
+
+    if (driverRealtimeChannelRef.current) {
+      supabase.removeChannel(driverRealtimeChannelRef.current);
+      driverRealtimeChannelRef.current = null;
+    }
+  };
+}, []);
   const googleApiKey = Constants.expoConfig?.extra?.GOOGLE_API_KEY;
 
   useEffect(() => {
@@ -1148,10 +980,145 @@ export default function CommuterHomeScreen() {
     return () => sub.remove();
   }, [pickup, dropoff]);
 
-  // ==================== DRAGGABLE SHEET ====================
-  const sheetTopAnim = useRef(new Animated.Value(SHEET_TOP_MID)).current;
-  const lastSheetTop = useRef(SHEET_TOP_MID);
+  // ==================== HELPERS ====================
+  const showAlert = ({
+    type = "info",
+    title,
+    message,
+    confirmText = "OK",
+    cancelText = "Cancel",
+    showCancel = false,
+    onConfirm,
+    onCancel,
+  }) => {
+    setAlert({
+      visible: true,
+      type,
+      title,
+      message,
+      confirmText,
+      cancelText,
+      showCancel,
+      onConfirm: () => {
+        setAlert((p) => ({ ...p, visible: false }));
+        onConfirm?.();
+      },
+      onCancel: () => {
+        setAlert((p) => ({ ...p, visible: false }));
+        onCancel?.();
+      },
+    });
+  };
 
+  const hideAlert = () => setAlert((p) => ({ ...p, visible: false }));
+  const trackUserAction = useCallback(() => setLastUserAction(Date.now()), []);
+
+  const isActiveBookingError = (err) => {
+    if (!err) return false;
+
+    return (
+      (err.code === "23505" &&
+        err.message?.includes("one_active_booking_per_commuter")) ||
+      (err.code === "P0001" &&
+        (err.message?.includes("ACTIVE_BOOKING_EXISTS") ||
+          err.details?.includes("active booking")))
+    );
+  };
+
+  const showActiveBookingAlert = (err) => {
+    const existingBookingId = err?.hint;
+
+    showAlert({
+      type: "warning",
+      title: "Active Booking Found",
+      message: existingBookingId
+        ? `You already have an active booking in progress.\n\nReference: ${existingBookingId}\n\nPlease complete or cancel your current booking before creating a new one.`
+        : "You already have an active booking in progress.\n\nPlease complete or cancel your current booking before creating a new one.",
+      confirmText: "Got it",
+    });
+  };
+
+  const shakeLocationCard = (type) => {
+    const anim = type === "pickup" ? shakeAnimPickup : shakeAnimDropoff;
+
+    Animated.sequence([
+      Animated.timing(anim, {
+        toValue: 10,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(anim, {
+        toValue: -10,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(anim, {
+        toValue: 5,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(anim, {
+        toValue: -5,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+      Animated.timing(anim, {
+        toValue: 0,
+        duration: 50,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  useEffect(() => {
+    return () => {
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+    };
+  }, []);
+
+  // ==================== DATA LOADING ====================
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      const load = async () => {
+        if (!isActive) return;
+        setLoading(true);
+
+        await Promise.all([
+          getCommuterId(),
+          loadRecentLocations(),
+          fetchFareSettings(),
+          fetchProximityConfig(),
+          loadProximityRadius(),
+        ]);
+
+        setLoading(false);
+        setInitialLoad(false);
+      };
+
+      load();
+
+      return () => {
+        isActive = false;
+      };
+    }, [])
+  );
+
+  useEffect(() => {
+    getUserLocation();
+  }, []);
+
+  useEffect(() => {
+    if (pickup && allDrivers.length > 0) {
+      filterDriversByProximity(pickup, allDrivers, proximityRadius);
+    } else {
+      setFilteredDrivers([]);
+      setDriversWithinRadius(0);
+    }
+  }, [pickup, allDrivers, proximityRadius]);
+
+  // ==================== DRAGGABLE SHEET ====================
   const animateSheetTo = useCallback(
     (toValue) => {
       lastSheetTop.current = toValue;
@@ -1165,11 +1132,8 @@ export default function CommuterHomeScreen() {
     [sheetTopAnim]
   );
 
-  const toggleSheet = useCallback(() => {
-    const current = lastSheetTop.current;
-    if (current <= SHEET_TOP_EXPANDED + 20) animateSheetTo(SHEET_TOP_COLLAPSED);
-    else if (current >= SHEET_TOP_COLLAPSED - 20) animateSheetTo(SHEET_TOP_MID);
-    else animateSheetTo(SHEET_TOP_COLLAPSED);
+  useEffect(() => {
+    animateSheetTo(SHEET_TOP_MID);
   }, [animateSheetTo]);
 
   const panResponder = useRef(
@@ -1208,220 +1172,7 @@ export default function CommuterHomeScreen() {
     })
   ).current;
 
-  useEffect(() => {
-    animateSheetTo(SHEET_TOP_MID);
-  }, [animateSheetTo]);
-
-  // ==================== HELPERS ====================
-  const shakeLocationCard = (type) => {
-    const anim = type === "pickup" ? shakeAnimPickup : shakeAnimDropoff;
-    Animated.sequence([
-      Animated.timing(anim, {
-        toValue: 10,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(anim, {
-        toValue: -10,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(anim, {
-        toValue: 5,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(anim, {
-        toValue: -5,
-        duration: 50,
-        useNativeDriver: true,
-      }),
-      Animated.timing(anim, { toValue: 0, duration: 50, useNativeDriver: true }),
-    ]).start();
-  };
-
-  const showAlert = ({
-    type = "info",
-    title,
-    message,
-    confirmText = "OK",
-    cancelText = "Cancel",
-    showCancel = false,
-    onConfirm,
-    onCancel,
-  }) => {
-    setAlert({
-      visible: true,
-      type,
-      title,
-      message,
-      confirmText,
-      cancelText,
-      showCancel,
-      onConfirm: () => {
-        setAlert((p) => ({ ...p, visible: false }));
-        onConfirm?.();
-      },
-      onCancel: () => {
-        setAlert((p) => ({ ...p, visible: false }));
-        onCancel?.();
-      },
-    });
-  };
-
-  const showToast = (message, type = "info") =>
-    setToast({ visible: true, message, type });
-
-  const hideAlert = () => setAlert((p) => ({ ...p, visible: false }));
-  const trackUserAction = useCallback(() => setLastUserAction(Date.now()), []);
-
-  useEffect(() => {
-    return () => {
-      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
-    };
-  }, []);
-
-  // ==================== ACTIVE BOOKING GUARD ====================
-  const ACTIVE_BOOKING_STATUSES = ["pending", "accepted", "started"];
-
-  const fetchLatestActiveBooking = async () => {
-    try {
-      const id = commuterId || (await AsyncStorage.getItem("user_id"));
-      if (!id) return null;
-
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("commuter_id", id)
-        .in("status", ACTIVE_BOOKING_STATUSES)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) throw error;
-      return data || null;
-    } catch (err) {
-      console.log("fetchLatestActiveBooking error:", err);
-      return null;
-    }
-  };
-
-  const syncActiveBookingState = async () => {
-    const latest = await fetchLatestActiveBooking();
-    setActiveBooking(latest);
-
-    if (latest) {
-      if (latest.status === "accepted" || latest.status === "started") {
-        navigation.navigate("TrackRide", {
-          bookingId: latest.id,
-          driverId: latest.driver_id,
-        });
-      } else if (latest.status === "pending") {
-        setFindingDriver(true);
-        setCurrentBookingId(latest.id);
-      }
-      return latest;
-    }
-
-    setCurrentBookingId(null);
-    return null;
-  };
-
-  const ensureNoActiveTrip = async ({
-    source = "booking",
-    navigateToExisting = true,
-    showMessage = true,
-  } = {}) => {
-    const latest = await fetchLatestActiveBooking();
-
-    if (latest) {
-      setActiveBooking(latest);
-
-      if (showMessage) {
-        let message =
-          "You already have an active trip. Complete or cancel it before starting a new one.";
-
-        if (latest.status === "pending") {
-          message =
-            "You already have a booking that is still finding a driver. Please wait or cancel it first.";
-        } else if (latest.status === "accepted") {
-          message =
-            "You already have an accepted booking. Please continue your current trip.";
-        } else if (latest.status === "started") {
-          message =
-            "You already have an ongoing trip. Please complete it first.";
-        }
-
-        showAlert({
-          type: "warning",
-          title: "Active trip found",
-          message,
-          confirmText: "OK",
-        });
-      }
-
-      if (navigateToExisting) {
-        if (latest.status === "accepted" || latest.status === "started") {
-          navigation.navigate("TrackRide", {
-            bookingId: latest.id,
-            driverId: latest.driver_id,
-          });
-        } else if (latest.status === "pending") {
-          setFindingDriver(true);
-          setCurrentBookingId(latest.id);
-        }
-      }
-
-      return false;
-    }
-
-    setActiveBooking(null);
-    return true;
-  };
-
-  // ==================== DATA LOADING ====================
-  useFocusEffect(
-    useCallback(() => {
-      let isActive = true;
-
-      const load = async () => {
-        if (!isActive) return;
-        setLoading(true);
-
-        await Promise.all([
-          checkActiveBooking(),
-          getCommuterId(),
-          loadRecentLocations(),
-          fetchFareSettings(),
-          fetchProximityConfig(),
-          loadProximityRadius(),
-        ]);
-
-        setLoading(false);
-        setInitialLoad(false);
-      };
-
-      load();
-
-      return () => {
-        isActive = false;
-      };
-    }, [])
-  );
-
-  useEffect(() => {
-    getUserLocation();
-  }, []);
-
-  useEffect(() => {
-    if (pickup && allDrivers.length > 0) {
-      filterDriversByProximity(pickup, allDrivers, proximityRadius);
-    } else {
-      setFilteredDrivers([]);
-      setDriversWithinRadius(0);
-    }
-  }, [pickup, allDrivers, proximityRadius]);
-
+  // ==================== DATA FUNCTIONS ====================
   const fetchProximityConfig = async () => {
     try {
       const { data, error } = await supabase
@@ -1446,7 +1197,10 @@ export default function CommuterHomeScreen() {
 
       data?.forEach((item) => {
         if (item.key === "proximity_default_radius") {
-          config.defaultRadius = Math.min(0.4, Math.max(0.1, parseFloat(item.value)));
+          config.defaultRadius = Math.min(
+            0.4,
+            Math.max(0.1, parseFloat(item.value))
+          );
         }
         if (item.key === "proximity_max_radius") {
           config.maxRadius = Math.min(0.4, parseFloat(item.value));
@@ -1485,7 +1239,6 @@ export default function CommuterHomeScreen() {
       setProximityRadius(valid);
       await AsyncStorage.setItem("proximity_radius_home", valid.toString());
       setShowProximityFilter(false);
-      showToast(`Showing drivers within ${valid.toFixed(1)} km`, "success");
 
       if (pickup && allDrivers.length > 0) {
         filterDriversByProximity(pickup, allDrivers, valid);
@@ -1507,30 +1260,37 @@ export default function CommuterHomeScreen() {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  const filterDriversByProximity = (
-    pickupCoords = pickup,
-    drivers = allDrivers,
-    radius = proximityRadius
-  ) => {
-    if (!pickupCoords || !drivers.length) {
-      setFilteredDrivers([]);
-      setDriversWithinRadius(0);
-      return;
-    }
+const filterDriversByProximity = (
+  pickupCoords = latestPickupRef.current || pickup,
+  drivers = allDrivers,
+  radius = proximityRadius
+) => {
+  if (!pickupCoords || !drivers.length) {
+    setFilteredDrivers([]);
+    setDriversWithinRadius(0);
+    return;
+  }
 
-    const filtered = drivers.filter(
-      (d) =>
-        calculateDistance(
-          pickupCoords.latitude,
-          pickupCoords.longitude,
-          d.latitude,
-          d.longitude
-        ) <= radius
-    );
+  const filtered = drivers
+    .map((d) => {
+      const distance = calculateDistance(
+        pickupCoords.latitude,
+        pickupCoords.longitude,
+        d.latitude,
+        d.longitude
+      );
 
-    setFilteredDrivers(filtered);
-    setDriversWithinRadius(filtered.length);
-  };
+      return {
+        ...d,
+        distance_km: distance,
+      };
+    })
+    .filter((d) => d.distance_km <= radius)
+    .sort((a, b) => a.distance_km - b.distance_km);
+
+  setFilteredDrivers(filtered);
+  setDriversWithinRadius(filtered.length);
+};
 
   const openProximityFilter = () => {
     setTempProximityRadius(proximityRadius);
@@ -1543,7 +1303,6 @@ export default function CommuterHomeScreen() {
       getUserLocation(),
       fetchFareSettings(),
       loadRecentLocations(),
-      checkActiveBooking(),
       fetchProximityConfig(),
     ]);
     setRefreshing(false);
@@ -1614,71 +1373,87 @@ export default function CommuterHomeScreen() {
     }
   };
 
-  const checkActiveBooking = async () => {
-    try {
-      await syncActiveBookingState();
-    } catch (err) {
-      console.log("Error checking active booking:", err);
-      setActiveBooking(null);
-    }
-  };
-
   const getCommuterId = async () => {
     const id = await AsyncStorage.getItem("user_id");
     setCommuterId(id);
   };
 
-  const getNearbyDrivers = async (coords) => {
-    try {
-      const { data: drivers, error } = await supabase
-        .from("driver_locations")
-        .select(
-          `driver_id,latitude,longitude,last_updated,drivers!inner(id,first_name,last_name,status,is_active,driver_vehicles(vehicle_type,vehicle_color,plate_number))`
+const getNearbyDrivers = async (coordsArg) => {
+  try {
+    const baseCoords = coordsArg || latestPickupRef.current || userLocation;
+    if (!baseCoords) return;
+
+    const { data: drivers, error } = await supabase
+      .from("driver_locations")
+      .select(`
+        driver_id,
+        latitude,
+        longitude,
+        last_updated,
+        is_online,
+        drivers!inner(
+          id,
+          first_name,
+          last_name,
+          status,
+          is_active,
+          online_status,
+          driver_vehicles(vehicle_type,vehicle_color,plate_number)
         )
-        .eq("is_online", true)
-        .eq("drivers.status", "approved")
-        .eq("drivers.is_active", true);
+      `)
+      .eq("is_online", true)
+      .eq("drivers.status", "approved")
+      .eq("drivers.is_active", true)
+      .eq("drivers.online_status", "online");
 
-      if (error) throw error;
+    if (error) throw error;
 
-      if (drivers?.length) {
-        const mapped = drivers.map((d) => {
-          const distance = calculateDistance(
-            coords.latitude,
-            coords.longitude,
-            d.latitude,
-            d.longitude
-          );
-          const vehicle = d.drivers?.driver_vehicles?.[0] || {};
+    const mapped = (drivers || []).map((d) => {
+      const distance = calculateDistance(
+        baseCoords.latitude,
+        baseCoords.longitude,
+        d.latitude,
+        d.longitude
+      );
 
-          return {
-            driver_id: d.driver_id,
-            first_name: d.drivers?.first_name,
-            last_name: d.drivers?.last_name,
-            distance_km: distance,
-            latitude: d.latitude,
-            longitude: d.longitude,
-            vehicle_type: vehicle.vehicle_type || "Motorcycle",
-            vehicle_color: vehicle.vehicle_color || "N/A",
-            vehicle_plate: vehicle.plate_number || "N/A",
-            last_updated: d.last_updated,
-          };
-        });
+      const vehicle = d.drivers?.driver_vehicles?.[0] || {};
 
-        setAllDrivers(mapped);
-        if (pickup) filterDriversByProximity(pickup, mapped, proximityRadius);
-      } else {
-        setAllDrivers([]);
-        setDriversWithinRadius(0);
-        setFilteredDrivers([]);
-      }
-    } catch (err) {
-      console.log("Error getting nearby drivers:", err);
-      setAllDrivers([]);
-      setDriversWithinRadius(0);
+      return {
+        driver_id: d.driver_id,
+        first_name: d.drivers?.first_name || "",
+        last_name: d.drivers?.last_name || "",
+        distance_km: distance,
+        latitude: d.latitude,
+        longitude: d.longitude,
+        vehicle_type: vehicle.vehicle_type || "Motorcycle",
+        vehicle_color: vehicle.vehicle_color || "N/A",
+        vehicle_plate: vehicle.plate_number || "N/A",
+        last_updated: d.last_updated,
+        is_online: d.is_online,
+      };
+    });
+
+    if (!mountedRef.current) return;
+
+    setAllDrivers(mapped);
+
+    const activePickup = latestPickupRef.current || baseCoords;
+    if (activePickup) {
+      filterDriversByProximity(activePickup, mapped, proximityRadius);
+    } else {
       setFilteredDrivers([]);
+      setDriversWithinRadius(0);
     }
-  };
+  } catch (err) {
+    console.log("Error getting nearby drivers:", err);
+
+    if (!mountedRef.current) return;
+
+    setAllDrivers([]);
+    setFilteredDrivers([]);
+    setDriversWithinRadius(0);
+  }
+};
 
   const getUserLocation = async () => {
     try {
@@ -1730,6 +1505,61 @@ export default function CommuterHomeScreen() {
     }
   };
 
+  useEffect(() => {
+  const baseCoords = latestPickupRef.current || userLocation;
+  if (!baseCoords) return;
+
+  if (driverRealtimeChannelRef.current) {
+    supabase.removeChannel(driverRealtimeChannelRef.current);
+    driverRealtimeChannelRef.current = null;
+  }
+
+  const refreshDriversRealtime = async () => {
+    const coords = latestPickupRef.current || userLocation;
+    if (!coords) return;
+    await getNearbyDrivers(coords);
+  };
+
+  const channel = supabase
+    .channel("home-drivers-realtime")
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "driver_locations",
+      },
+      async (payload) => {
+        console.log("[Realtime] driver_locations changed:", payload.eventType);
+        await refreshDriversRealtime();
+      }
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "drivers",
+      },
+      async (payload) => {
+        console.log("[Realtime] drivers changed:", payload.eventType);
+        await refreshDriversRealtime();
+      }
+    )
+    .subscribe((status) => {
+      console.log("[Realtime] channel status:", status);
+    });
+
+  driverRealtimeChannelRef.current = channel;
+
+  return () => {
+    if (driverRealtimeChannelRef.current) {
+      supabase.removeChannel(driverRealtimeChannelRef.current);
+      driverRealtimeChannelRef.current = null;
+    }
+  };
+}, [userLocation, pickup, proximityRadius]);
+
   const handleUseCurrentLocation = () => {
     trackUserAction();
     if (!userLocation) return;
@@ -1744,7 +1574,6 @@ export default function CommuterHomeScreen() {
             region || ""
           }`
         );
-        showToast("Pickup location set!", "success");
       }
     });
   };
@@ -1758,11 +1587,9 @@ export default function CommuterHomeScreen() {
         if (type === "pickup") {
           setPickup(location);
           setPickupText(address);
-          showToast("Pickup location selected!", "success");
         } else {
           setDropoff(location);
           setDropoffText(address);
-          showToast("Dropoff location selected!", "success");
         }
 
         const np = type === "pickup" ? location : pickup;
@@ -1780,12 +1607,10 @@ export default function CommuterHomeScreen() {
       setPickup(recent.location);
       setPickupText(recent.address);
       setPickupDetails(recent.details || "");
-      showToast("Pickup set from recent", "success");
     } else {
       setDropoff(recent.location);
       setDropoffText(recent.address);
       setDropoffDetails(recent.details || "");
-      showToast("Dropoff set from recent", "success");
     }
 
     const np = recent.type === "pickup" ? recent.location : pickup;
@@ -1796,14 +1621,15 @@ export default function CommuterHomeScreen() {
 
   const decodePolyline = (encoded) => {
     const points = [];
-    let index = 0,
-      lat = 0,
-      lng = 0;
+    let index = 0;
+    let lat = 0;
+    let lng = 0;
 
     while (index < encoded.length) {
-      let b,
-        shift = 0,
-        result = 0;
+      let b;
+      let shift = 0;
+      let result = 0;
+
       do {
         b = encoded.charCodeAt(index++) - 63;
         result |= (b & 0x1f) << shift;
@@ -1850,6 +1676,7 @@ export default function CommuterHomeScreen() {
 
     try {
       const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${startCoords.latitude},${startCoords.longitude}&destination=${endCoords.latitude},${endCoords.longitude}&key=${googleApiKey}&mode=driving`;
+
       const response = await fetch(url);
       const data = await response.json();
 
@@ -1906,14 +1733,6 @@ export default function CommuterHomeScreen() {
       return;
     }
 
-    const allowed = await ensureNoActiveTrip({
-      source: "create_booking",
-      navigateToExisting: true,
-      showMessage: true,
-    });
-
-    if (!allowed) return;
-
     if (driversWithinRadius === 0) {
       showAlert({
         type: "warning",
@@ -1969,7 +1788,6 @@ export default function CommuterHomeScreen() {
 
       if (error) throw error;
 
-      setActiveBooking(booking);
       setCurrentBookingId(booking.id);
 
       if (pickup && pickupText) {
@@ -1982,23 +1800,16 @@ export default function CommuterHomeScreen() {
     } catch (err) {
       console.log("Error creating booking:", err);
 
-  // === SPECIAL HANDLING FOR ACTIVE BOOKING CONSTRAINT ===
-if (err.code === "23505" && err.message?.includes("one_active_booking_per_commuter")) {
-  showAlert({
-    type: "warning",
-    title: "Active Booking Found",
-    message: "You already have an active booking in progress.\n\nYou are not allowed to create a new booking until the current one is completed or cancelled.",
-    confirmText: "Got it",
-  });
+      if (isActiveBookingError(err)) {
+        showActiveBookingAlert(err);
+        setFindingDriver(false);
+        return;
+      }
 
-  // Refresh the active booking state
-  await checkActiveBooking();
-  return;
-}
       showAlert({
         type: "error",
         title: "Booking failed",
-        message: "Failed to create booking. Please try again.",
+        message: err?.message || "Failed to create booking. Please try again.",
         confirmText: "OK",
       });
       setFindingDriver(false);
@@ -2016,25 +1827,15 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
   const handleCancelFinding = async () => {
     setFindingDriver(false);
     setCurrentBookingId(null);
-    await checkActiveBooking();
   };
 
   const handleNoDriversFound = async () => {
     setFindingDriver(false);
     setCurrentBookingId(null);
-    await checkActiveBooking();
   };
 
   // ==================== QR SCANNER ====================
   const openScanner = async () => {
-    const allowed = await ensureNoActiveTrip({
-      source: "scan",
-      navigateToExisting: true,
-      showMessage: true,
-    });
-
-    if (!allowed) return;
-
     try {
       if (!permission?.granted) {
         const { granted } = await requestPermission();
@@ -2053,7 +1854,8 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
         showAlert({
           type: "warning",
           title: "Missing locations",
-          message: "Please select both pickup and dropoff locations before scanning.",
+          message:
+            "Please select both pickup and dropoff locations before scanning.",
           confirmText: "OK",
         });
         return;
@@ -2094,17 +1896,6 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
         message: "Please login first",
         confirmText: "OK",
       });
-      return;
-    }
-
-    const allowed = await ensureNoActiveTrip({
-      source: "direct_booking",
-      navigateToExisting: true,
-      showMessage: true,
-    });
-
-    if (!allowed) {
-      setScanningForDriver(false);
       return;
     }
 
@@ -2149,7 +1940,6 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
 
       if (error) throw error;
 
-      setActiveBooking(booking);
       if (pickup && pickupText) {
         saveRecentLocation(pickup, pickupText, pickupDetails, "pickup");
       }
@@ -2163,31 +1953,20 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
         bookingId: booking.id,
         driverId,
       });
-
     } catch (err) {
       console.log("Direct booking error:", err);
 
-      // === SPECIAL HANDLING FOR ACTIVE BOOKING CONSTRAINT ===
-      if (err.code === "23505" && err.message?.includes("one_active_booking_per_commuter")) {
-        showAlert({
-          type: "warning",
-          title: "Active Booking Found",
-          message: "You already have an active booking in progress.\n\nYou are not allowed to create a new booking until the current one is completed or cancelled.",
-          confirmText: "Got it",
-        });
-
-        // Refresh active booking state
-        await checkActiveBooking();
+      if (isActiveBookingError(err)) {
+        showActiveBookingAlert(err);
         setScanningForDriver(false);
         setFindingDriver(false);
         return;
       }
 
-      // Default error fallback
       showAlert({
         type: "error",
         title: "Booking failed",
-        message: "Failed to create booking. Please try again.",
+        message: err?.message || "Failed to create booking. Please try again.",
         confirmText: "OK",
       });
 
@@ -2244,7 +2023,6 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
         return;
       }
 
-      setScannedDriverData(driverData);
       setShowScanner(false);
 
       if (!pickup) {
@@ -2301,14 +2079,6 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
   };
 
   const handleBookRide = async () => {
-    const allowed = await ensureNoActiveTrip({
-      source: "find_driver",
-      navigateToExisting: true,
-      showMessage: true,
-    });
-
-    if (!allowed) return;
-
     if (!pickup) {
       shakeLocationCard("pickup");
       showAlert({
@@ -2364,7 +2134,6 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
   const isDropoffValid = !!dropoff && typeof dropoff.latitude === "number";
   const shouldShowButtonsFixed = isPickupValid && isDropoffValid;
   const showTripInfo = pickup && dropoff && estimatedDistance && estimatedFare;
-  const toastBottomOffset = tabBarHeight + insets.bottom + 72;
 
   // ==================== EARLY RETURNS ====================
   if (initialLoad && loading) {
@@ -2385,6 +2154,11 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
         onCancel={handleCancelFinding}
         onDriverFound={handleDriverFound}
         onNoDrivers={handleNoDriversFound}
+        onExpandRadius={() => {
+          setFindingDriver(false);
+          setCurrentBookingId(null);
+          setShowProximityFilter(true);
+        }}
         pickupText={pickupText}
         dropoffText={dropoffText}
       />
@@ -2394,7 +2168,9 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
   if (showScanner) {
     return (
       <View style={styles.container}>
-        <View style={[styles.scannerHeader, { paddingTop: insets.top + scale(12) }]}>
+        <View
+          style={[styles.scannerHeader, { paddingTop: insets.top + scale(12) }]}
+        >
           <TouchableOpacity
             onPress={handleCancelScanning}
             style={styles.scannerBackButton}
@@ -2408,6 +2184,7 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
           <Text style={styles.scannerTitle}>Scan driver QR</Text>
           <View style={{ width: moderateScale(40) }} />
         </View>
+
         <View style={styles.scannerContainer}>
           <CameraView
             style={styles.scanner}
@@ -2455,21 +2232,10 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
     >
       <View style={styles.headerSection}>
         <View>
-          {!!activeBooking && (
-            <View style={styles.activeBookingNudge}>
-              <Ionicons
-                name="alert-circle-outline"
-                size={moderateScale(14)}
-                color="#F59E0B"
-              />
-              <Text style={styles.activeBookingNudgeText}>
-                You have an active booking — complete or cancel it first
-              </Text>
-            </View>
-          )}
           <Text style={styles.greeting}>Hello,</Text>
           <Text style={styles.greetingName}>Where to?</Text>
         </View>
+
         <TouchableOpacity
           style={styles.filterButton}
           onPress={() => {
@@ -2484,13 +2250,16 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
               size={moderateScale(16)}
               color="#183B5C"
             />
-            <Text style={styles.filterText}>{proximityRadius.toFixed(1)} km</Text>
+            <Text style={styles.filterText}>
+              {proximityRadius.toFixed(1)} km
+            </Text>
             <Ionicons
               name="chevron-down"
               size={moderateScale(13)}
               color="#9CA3AF"
             />
           </View>
+
           <View style={styles.proximityIndicator}>
             <Ionicons
               name="radio-outline"
@@ -2509,6 +2278,19 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
           </View>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        style={styles.currentLocationBtn}
+        onPress={handleUseCurrentLocation}
+        activeOpacity={0.8}
+      >
+        <Ionicons
+          name="locate-outline"
+          size={moderateScale(16)}
+          color="#183B5C"
+        />
+        <Text style={styles.currentLocationText}>Use current location</Text>
+      </TouchableOpacity>
 
       <Animated.View style={{ transform: [{ translateX: shakeAnimPickup }] }}>
         <LocationCard
@@ -2575,11 +2357,20 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
       />
 
       {showTripInfo && (
-        <TripMetricsRow
-          distance={estimatedDistance}
-          time={estimatedTime}
-          passengers={passengerCount}
-        />
+        <>
+          <TripMetricsRow
+            distance={estimatedDistance}
+            time={estimatedTime}
+            passengers={passengerCount}
+          />
+
+          <FareBar
+            fare={estimatedFare}
+            passengers={passengerCount}
+            distance={estimatedDistance}
+            onBreakdownPress={() => setShowFareBreakdown(true)}
+          />
+        </>
       )}
 
       <View style={styles.helpContainer}>
@@ -2610,14 +2401,6 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
         onConfirm={alert.onConfirm}
         onCancel={alert.onCancel}
         onClose={hideAlert}
-      />
-
-      <ModernToast
-        visible={toast.visible}
-        message={toast.message}
-        type={toast.type}
-        bottomOffset={toastBottomOffset}
-        onHide={() => setToast((p) => ({ ...p, visible: false }))}
       />
 
       <ProximityModal
@@ -2659,140 +2442,80 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
             <Circle
               center={pickup}
               radius={proximityRadius * 1000}
-              strokeColor="rgba(24,59,92,0.3)"
-              fillColor="rgba(24,59,92,0.05)"
-              strokeWidth={1}
+              strokeColor="rgba(24,59,92,0.35)"
+              fillColor="rgba(24,59,92,0.08)"
             />
           )}
 
-          {pickup &&
-            filteredDrivers.map((driver) => (
-              <Marker
-                key={driver.driver_id}
-                coordinate={{
-                  latitude: driver.latitude,
-                  longitude: driver.longitude,
-                }}
-              >
-                <Image
-                  source={require("../../assets/driver-icon.png")}
-                  style={styles.driverMarkerImage}
-                  resizeMode="contain"
-                />
-              </Marker>
-            ))}
-
           {pickup && (
-            <Marker coordinate={pickup}>
-              <Image
-                source={require("../../assets/pick-up-icon.png")}
-                style={styles.pickupMarkerImage}
-                resizeMode="contain"
-              />
+            <Marker coordinate={pickup} title="Pickup">
+              <View style={styles.pickupMarker}>
+                <Ionicons name="location" size={moderateScale(18)} color="#FFF" />
+              </View>
             </Marker>
           )}
 
           {dropoff && (
-            <Marker coordinate={dropoff}>
-              <Image
-                source={require("../../assets/drop-off-icon.png")}
-                style={styles.dropoffMarkerImage}
-                resizeMode="contain"
-              />
+            <Marker coordinate={dropoff} title="Dropoff">
+              <View style={styles.dropoffMarker}>
+                <Ionicons name="flag" size={moderateScale(18)} color="#FFF" />
+              </View>
             </Marker>
           )}
 
-          {routeCoordinates.length > 0 && (
+          {filteredDrivers.map((driver) => (
+            <Marker
+              key={driver.driver_id}
+              coordinate={{
+                latitude: driver.latitude,
+                longitude: driver.longitude,
+              }}
+              title={`${driver.first_name} ${driver.last_name}`}
+              description={`${driver.vehicle_type} • ${driver.distance_km.toFixed(
+                2
+              )} km`}
+            >
+              <View style={styles.driverMarker}>
+                <Ionicons name="car-sport" size={moderateScale(16)} color="#FFF" />
+              </View>
+            </Marker>
+          ))}
+
+          {routeCoordinates?.length > 0 && (
             <Polyline
+              key={`${routeCoordinates.length}-${forceUpdate}`}
               coordinates={routeCoordinates}
-              strokeColor="#3B82F6"
-              strokeWidth={4}
+              strokeWidth={5}
+              strokeColor="#183B5C"
+              lineCap="round"
+              lineJoin="round"
             />
           )}
         </MapView>
-
-        <TouchableOpacity
-          style={[
-            styles.mapCurrentLocationButton,
-            { top: insets.top + scale(12) },
-          ]}
-          onPress={() => {
-            trackUserAction();
-            if (userLocation) {
-              mapRef.current?.animateToRegion(
-                {
-                  ...userLocation,
-                  latitudeDelta: 0.01,
-                  longitudeDelta: 0.01,
-                },
-                500
-              );
-            }
-          }}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="locate" size={moderateScale(20)} color="#FFF" />
-        </TouchableOpacity>
       </View>
 
       <Animated.View
         style={[
-          styles.draggableSheet,
-          { top: sheetTopAnim, paddingBottom: Math.max(insets.bottom, 12) },
+          styles.sheetContainer,
+          {
+            top: sheetTopAnim,
+            paddingBottom: tabBarHeight + insets.bottom,
+          },
         ]}
       >
-        <View style={styles.sheetHandleWrap} {...panResponder.panHandlers}>
-          <TouchableOpacity
-            activeOpacity={0.8}
-            onPress={toggleSheet}
-            style={styles.sheetHandleButton}
-          >
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetHandleText}>Drag or tap to resize</Text>
-          </TouchableOpacity>
+        <View style={styles.sheetHandleArea} {...panResponder.panHandlers}>
+          <View style={styles.sheetHandle} />
         </View>
 
-        {showTripInfo && (
-          <FareBar
-            fare={estimatedFare}
-            passengers={passengerCount}
-            distance={estimatedDistance}
-            onBreakdownPress={() => setShowFareBreakdown(true)}
-          />
-        )}
-
-        {!shouldShowButtonsFixed && (
-          <View style={styles.locationNudge}>
-            <Ionicons
-              name="information-circle-outline"
-              size={moderateScale(14)}
-              color="#9CA3AF"
-            />
-            <Text style={styles.locationNudgeText}>
-              Set pickup and dropoff to continue
-            </Text>
-          </View>
-        )}
-
-        {Platform.OS === "ios" ? (
-          <KeyboardAvoidingView
-            behavior="padding"
-            style={styles.sheetContentWrapper}
-            keyboardVerticalOffset={0}
-          >
-            {renderSheetContent()}
-          </KeyboardAvoidingView>
-        ) : (
-          <View style={styles.sheetContentWrapper}>{renderSheetContent()}</View>
-        )}
+        {renderSheetContent()}
       </Animated.View>
 
       <FloatingActionButtons
+        visible={shouldShowButtonsFixed}
+        disabled={!pickup || !dropoff || loading}
         onScan={openScanner}
         onFind={handleBookRide}
-        disabled={!isPickupValid || !isDropoffValid || !!activeBooking}
         trackUserAction={trackUserAction}
-        visible={shouldShowButtonsFixed}
         driversWithinRadius={driversWithinRadius}
       />
     </View>
@@ -2801,31 +2524,665 @@ if (err.code === "23505" && err.message?.includes("one_active_booking_per_commut
 
 // ==================== STYLES ====================
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F9FAFB" },
-  loadingContainer: {
+  container: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#FFF",
+    backgroundColor: "#F8FAFC",
   },
 
-  fullMapContainer: { ...StyleSheet.absoluteFillObject },
-  fullMap: { flex: 1 },
-  mapCurrentLocationButton: {
-    position: "absolute",
-    right: scale(14),
-    backgroundColor: "#183B5C",
-    width: moderateScale(44),
-    height: moderateScale(44),
-    borderRadius: moderateScale(14),
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#F8FAFC",
+  },
+
+  fullMapContainer: {
+    flex: 1,
+  },
+
+  fullMap: {
+    flex: 1,
+  },
+
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: scale(20),
+    zIndex: 999,
+  },
+
+  alertContainer: {
+    width: "100%",
+    backgroundColor: "#FFF",
+    borderRadius: moderateScale(22),
+    paddingHorizontal: scale(20),
+    paddingVertical: verticalScale(20),
+  },
+
+  alertIconContainer: {
+    width: moderateScale(72),
+    height: moderateScale(72),
+    borderRadius: moderateScale(36),
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: verticalScale(12),
+  },
+
+  alertTitle: {
+    fontSize: rf(18),
+    fontWeight: "800",
+    color: "#111827",
+    textAlign: "center",
+    marginBottom: verticalScale(8),
+  },
+
+  alertMessage: {
+    fontSize: rf(13),
+    color: "#6B7280",
+    lineHeight: moderateScale(20),
+    textAlign: "center",
+    marginBottom: verticalScale(18),
+  },
+
+  alertButtons: {
+    flexDirection: "row",
+    gap: scale(10),
+  },
+
+  alertButton: {
+    flex: 1,
+    minHeight: verticalScale(46),
+    borderRadius: moderateScale(14),
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: scale(14),
+  },
+
+  alertCancelButton: {
+    backgroundColor: "#F3F4F6",
+  },
+
+  alertConfirmButton: {
+    backgroundColor: "#183B5C",
+  },
+
+  alertCancelText: {
+    fontSize: rf(13),
+    fontWeight: "700",
+    color: "#374151",
+  },
+
+  alertConfirmText: {
+    fontSize: rf(13),
+    fontWeight: "800",
+    color: "#FFF",
+  },
+
+  locationCard: {
+    backgroundColor: "#FFF",
+    borderRadius: moderateScale(16),
+    paddingHorizontal: scale(14),
+    paddingVertical: verticalScale(14),
+    flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#F0F0F0",
+    borderColor: "#E5E7EB",
+  },
+
+  locationDot: {
+    width: moderateScale(14),
+    height: moderateScale(14),
+    borderRadius: moderateScale(7),
+    borderWidth: 2,
+    marginRight: scale(12),
+  },
+
+  locationContent: {
+    flex: 1,
+  },
+
+  locationLabel: {
+    fontSize: rf(11),
+    color: "#6B7280",
+    marginBottom: verticalScale(4),
+    fontWeight: "700",
+    textTransform: "uppercase",
+  },
+
+  locationValue: {
+    fontSize: rf(13),
+    color: "#111827",
+    fontWeight: "700",
+  },
+
+  locationPlaceholder: {
+    color: "#9CA3AF",
+    fontWeight: "500",
+  },
+
+  locationDetails: {
+    marginTop: verticalScale(8),
+    backgroundColor: "#F9FAFB",
+    borderRadius: moderateScale(12),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(10),
+    fontSize: rf(12),
+    color: "#111827",
+  },
+
+  passengerCard: {
+    backgroundColor: "#FFF",
+    borderRadius: moderateScale(16),
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: scale(14),
+    paddingVertical: verticalScale(14),
+    marginTop: verticalScale(12),
+  },
+
+  passengerTitle: {
+    fontSize: rf(13),
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: verticalScale(10),
+  },
+
+  passengerControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  passengerControl: {
+    width: moderateScale(42),
+    height: moderateScale(42),
+    borderRadius: moderateScale(12),
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  passengerControlDisabled: {
+    opacity: 0.5,
+  },
+
+  passengerNumber: {
+    fontSize: rf(18),
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  tripMetricsRow: {
+    backgroundColor: "#FFF",
+    borderRadius: moderateScale(16),
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingVertical: verticalScale(14),
+    flexDirection: "row",
+    alignItems: "stretch",
+    marginTop: verticalScale(12),
+  },
+
+  tripMetricItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: scale(8),
+  },
+
+  tripMetricIcon: {
+    width: moderateScale(34),
+    height: moderateScale(34),
+    borderRadius: moderateScale(17),
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: verticalScale(6),
+  },
+
+  tripMetricValue: {
+    fontSize: rf(14),
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  tripMetricLabel: {
+    fontSize: rf(11),
+    color: "#6B7280",
+    marginTop: verticalScale(2),
+  },
+
+  tripMetricDivider: {
+    width: 1,
+    backgroundColor: "#E5E7EB",
+  },
+
+  fareBar: {
+    backgroundColor: "#FFF",
+    marginTop: verticalScale(12),
+    borderRadius: moderateScale(16),
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: scale(14),
+    paddingVertical: verticalScale(14),
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  fareBarLeft: {
+    flex: 1,
+    marginRight: scale(10),
+  },
+
+  fareBarAmount: {
+    fontSize: rf(22),
+    fontWeight: "900",
+    color: "#183B5C",
+  },
+
+  fareBarMeta: {
+    marginTop: verticalScale(4),
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+
+  fareBarLabel: {
+    fontSize: rf(11),
+    color: "#6B7280",
+    fontWeight: "600",
+  },
+
+  fareMinBadge: {
+    marginLeft: scale(8),
+    backgroundColor: "#FEF3C7",
+    borderRadius: moderateScale(999),
+    paddingHorizontal: scale(8),
+    paddingVertical: verticalScale(3),
+  },
+
+  fareMinText: {
+    fontSize: rf(10),
+    color: "#92400E",
+    fontWeight: "800",
+  },
+
+  fareBreakdownBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+    borderRadius: moderateScale(12),
+    paddingHorizontal: scale(10),
+    paddingVertical: verticalScale(10),
+  },
+
+  fareBreakdownLabel: {
+    marginLeft: scale(6),
+    fontSize: rf(12),
+    fontWeight: "800",
+    color: "#183B5C",
+  },
+
+  breakdownOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(15,23,42,0.45)",
+  },
+
+  breakdownBackdrop: {
+    flex: 1,
+  },
+
+  breakdownModal: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: moderateScale(24),
+    borderTopRightRadius: moderateScale(24),
+    paddingHorizontal: scale(18),
+    paddingTop: verticalScale(10),
+    paddingBottom: verticalScale(20),
+  },
+
+  breakdownHandle: {
+    width: moderateScale(40),
+    height: verticalScale(5),
+    borderRadius: moderateScale(999),
+    backgroundColor: "#D1D5DB",
+    alignSelf: "center",
+    marginBottom: verticalScale(14),
+  },
+
+  breakdownHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: verticalScale(12),
+  },
+
+  breakdownHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  breakdownIconWrap: {
+    width: moderateScale(34),
+    height: moderateScale(34),
+    borderRadius: moderateScale(12),
+    backgroundColor: "#EEF2FF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: scale(10),
+  },
+
+  breakdownTitle: {
+    fontSize: rf(16),
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  breakdownClose: {
+    width: moderateScale(34),
+    height: moderateScale(34),
+    borderRadius: moderateScale(17),
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F9FAFB",
+  },
+
+  breakdownTripStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: verticalScale(14),
+    flexWrap: "wrap",
+  },
+
+  breakdownTripItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  breakdownTripText: {
+    marginLeft: scale(4),
+    fontSize: rf(11),
+    color: "#6B7280",
+    fontWeight: "700",
+  },
+
+  breakdownTripDot: {
+    width: moderateScale(4),
+    height: moderateScale(4),
+    borderRadius: moderateScale(2),
+    backgroundColor: "#D1D5DB",
+    marginHorizontal: scale(8),
+  },
+
+  breakdownRows: {
+    backgroundColor: "#F9FAFB",
+    borderRadius: moderateScale(16),
+    padding: scale(14),
+  },
+
+  breakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: verticalScale(10),
+  },
+
+  breakdownRowLabel: {
+    flex: 1,
+    fontSize: rf(12),
+    color: "#374151",
+    paddingRight: scale(10),
+  },
+
+  breakdownRowValue: {
+    fontSize: rf(12),
+    color: "#111827",
+    fontWeight: "800",
+  },
+
+  breakdownInfoRow: {
+    flexDirection: "row",
+    marginBottom: verticalScale(10),
+  },
+
+  breakdownInfoText: {
+    flex: 1,
+    fontSize: rf(11),
+    color: "#92400E",
+    marginLeft: scale(6),
+  },
+
+  breakdownTotal: {
+    marginTop: verticalScale(14),
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+
+  breakdownTotalLabel: {
+    fontSize: rf(14),
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  breakdownTotalAmount: {
+    fontSize: rf(22),
+    fontWeight: "900",
+    color: "#183B5C",
+  },
+
+  floatingActionContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
     zIndex: 20,
   },
 
-  draggableSheet: {
+  floatingActionButtons: {
+    flexDirection: "row",
+    backgroundColor: "rgba(255,255,255,0.97)",
+    padding: scale(10),
+    borderRadius: moderateScale(18),
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+    gap: scale(10),
+  },
+
+  floatingActionButton: {
+    flex: 1,
+    borderRadius: moderateScale(14),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(10),
+    backgroundColor: "#F8FAFC",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  floatingActionButtonPrimary: {
+    backgroundColor: "#183B5C",
+  },
+
+  floatingActionButtonDisabled: {
+    opacity: 0.5,
+  },
+
+  floatingActionIconWrapper: {
+    width: moderateScale(36),
+    height: moderateScale(36),
+    borderRadius: moderateScale(18),
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ECFDF5",
+    marginRight: scale(10),
+  },
+
+  floatingActionIconWrapperPrimary: {
+    backgroundColor: "rgba(255,255,255,0.16)",
+  },
+
+  floatingActionTextContainer: {
+    flex: 1,
+  },
+
+  floatingActionTitle: {
+    fontSize: rf(13),
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  floatingActionTitleLight: {
+    color: "#FFF",
+  },
+
+  floatingActionSubtitle: {
+    fontSize: rf(10),
+    color: "#6B7280",
+    marginTop: verticalScale(2),
+  },
+
+  floatingActionSubtitleLight: {
+    color: "rgba(255,255,255,0.78)",
+  },
+
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(15,23,42,0.45)",
+  },
+
+  modalBackdrop: {
+    flex: 1,
+  },
+
+  modalContent: {
+    backgroundColor: "#FFF",
+    borderTopLeftRadius: moderateScale(24),
+    borderTopRightRadius: moderateScale(24),
+    paddingHorizontal: scale(18),
+    paddingTop: verticalScale(10),
+    paddingBottom: verticalScale(22),
+  },
+
+  modalHandle: {
+    width: moderateScale(40),
+    height: verticalScale(5),
+    borderRadius: moderateScale(999),
+    backgroundColor: "#D1D5DB",
+    alignSelf: "center",
+    marginBottom: verticalScale(14),
+  },
+
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: verticalScale(16),
+  },
+
+  modalTitle: {
+    fontSize: rf(18),
+    fontWeight: "900",
+    color: "#111827",
+  },
+
+  modalClose: {
+    width: moderateScale(34),
+    height: moderateScale(34),
+    borderRadius: moderateScale(17),
+    backgroundColor: "#F9FAFB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  radiusDisplay: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    marginBottom: verticalScale(16),
+  },
+
+  radiusValue: {
+    fontSize: rf(34),
+    fontWeight: "900",
+    color: "#183B5C",
+  },
+
+  radiusUnit: {
+    fontSize: rf(16),
+    fontWeight: "700",
+    color: "#6B7280",
+    marginLeft: scale(6),
+    marginBottom: verticalScale(4),
+  },
+
+  radiusOptionsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: scale(10),
+    marginBottom: verticalScale(16),
+  },
+
+  radiusOptionChip: {
+    paddingHorizontal: scale(14),
+    paddingVertical: verticalScale(10),
+    borderRadius: moderateScale(12),
+    backgroundColor: "#F3F4F6",
+  },
+
+  radiusOptionChipActive: {
+    backgroundColor: "#183B5C",
+  },
+
+  radiusOptionText: {
+    fontSize: rf(12),
+    fontWeight: "800",
+    color: "#374151",
+  },
+
+  radiusOptionTextActive: {
+    color: "#FFF",
+  },
+
+  driverStats: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F9FAFB",
+    borderRadius: moderateScale(12),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(12),
+    marginBottom: verticalScale(16),
+  },
+
+  driverStatsText: {
+    marginLeft: scale(8),
+    flex: 1,
+    fontSize: rf(12),
+    color: "#374151",
+    fontWeight: "600",
+  },
+
+  applyButton: {
+    backgroundColor: "#183B5C",
+    borderRadius: moderateScale(14),
+    minHeight: verticalScale(48),
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  applyButtonText: {
+    fontSize: rf(14),
+    fontWeight: "900",
+    color: "#FFF",
+  },
+
+  sheetContainer: {
     position: "absolute",
     left: 0,
     right: 0,
@@ -2834,658 +3191,278 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: moderateScale(24),
     borderTopRightRadius: moderateScale(24),
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
     shadowOpacity: 0.12,
-    shadowRadius: 12,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: -10 },
     elevation: 12,
-    overflow: "hidden",
   },
-  sheetHandleWrap: {
-    paddingTop: moderateVerticalScale(8),
-    paddingBottom: moderateVerticalScale(4),
+
+  sheetHandleArea: {
+    paddingTop: verticalScale(10),
+    paddingBottom: verticalScale(4),
     alignItems: "center",
-    backgroundColor: "#FFF",
   },
-  sheetHandleButton: { width: "100%", alignItems: "center" },
+
   sheetHandle: {
-    width: scale(42),
-    height: 5,
-    borderRadius: 999,
+    width: moderateScale(42),
+    height: verticalScale(5),
+    borderRadius: moderateScale(999),
     backgroundColor: "#D1D5DB",
-    marginBottom: 4,
   },
-  sheetHandleText: { fontSize: rf(10), color: "#9CA3AF", fontWeight: "500" },
-  sheetContentWrapper: { flex: 1 },
+
   scrollContent: {
-    paddingHorizontal: scale(18),
-    paddingTop: moderateVerticalScale(12),
+    paddingHorizontal: scale(16),
   },
-
-  locationNudge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: scale(6),
-    paddingHorizontal: scale(18),
-    paddingVertical: moderateVerticalScale(8),
-    backgroundColor: "#F9FAFB",
-    borderBottomWidth: 0.5,
-    borderBottomColor: "#E5E7EB",
-  },
-  locationNudgeText: { fontSize: rf(11), color: "#9CA3AF" },
-
-  fareBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#EFF6FF",
-    borderTopWidth: 0.5,
-    borderBottomWidth: 0.5,
-    borderColor: "#DBEAFE",
-    paddingHorizontal: scale(18),
-    paddingVertical: moderateVerticalScale(10),
-  },
-  fareBarLeft: { flex: 1 },
-  fareBarAmount: {
-    fontSize: rf(26),
-    fontWeight: "700",
-    color: "#183B5C",
-    lineHeight: rf(30),
-  },
-  fareBarMeta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: scale(6),
-    marginTop: 3,
-    flexWrap: "wrap",
-  },
-  fareBarLabel: { fontSize: rf(11), color: "#6B7280" },
-  fareMinBadge: {
-    backgroundColor: "#FEF3C7",
-    paddingHorizontal: scale(7),
-    paddingVertical: 2,
-    borderRadius: moderateScale(8),
-  },
-  fareMinText: { fontSize: rf(10), color: "#92400E", fontWeight: "500" },
-  fareBreakdownBtn: {
-    alignItems: "center",
-    gap: 3,
-    backgroundColor: "#FFF",
-    paddingHorizontal: scale(14),
-    paddingVertical: moderateVerticalScale(8),
-    borderRadius: moderateScale(12),
-    borderWidth: 0.5,
-    borderColor: "#E5E7EB",
-  },
-  fareBreakdownLabel: { fontSize: rf(10), color: "#374151", fontWeight: "600" },
 
   headerSection: {
+    marginTop: verticalScale(6),
+    marginBottom: verticalScale(12),
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: moderateVerticalScale(14),
+    alignItems: "flex-start",
   },
-  greeting: { fontSize: rf(13), color: "#6B7280", marginBottom: 2 },
-  greetingName: { fontSize: rf(22), fontWeight: "600", color: "#111827" },
+
+  greeting: {
+    fontSize: rf(13),
+    color: "#6B7280",
+    fontWeight: "600",
+  },
+
+  greetingName: {
+    marginTop: verticalScale(2),
+    fontSize: rf(24),
+    color: "#111827",
+    fontWeight: "900",
+  },
+
   filterButton: {
-    flexDirection: "column",
-    alignItems: "flex-end",
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: scale(11),
-    paddingVertical: moderateVerticalScale(7),
-    borderRadius: moderateScale(18),
-    gap: 3,
-    minWidth: scale(82),
+    backgroundColor: "#F9FAFB",
+    borderRadius: moderateScale(16),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(10),
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
   },
+
   filterButtonContent: {
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(5),
   },
-  filterText: { fontSize: rf(13), fontWeight: "600", color: "#183B5C" },
+
+  filterText: {
+    marginHorizontal: scale(6),
+    fontSize: rf(12),
+    fontWeight: "800",
+    color: "#183B5C",
+  },
+
   proximityIndicator: {
     flexDirection: "row",
     alignItems: "center",
-    gap: scale(3),
-    backgroundColor: "rgba(16,185,129,0.1)",
-    paddingHorizontal: scale(7),
-    paddingVertical: 2,
-    borderRadius: moderateScale(10),
+    marginTop: verticalScale(6),
   },
+
   proximityIndicatorText: {
-    fontSize: rf(9),
-    fontWeight: "500",
+    marginLeft: scale(4),
+    fontSize: rf(10),
     color: "#10B981",
+    fontWeight: "800",
   },
 
-  locationCard: {
+  currentLocationBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFF",
-    borderRadius: moderateScale(14),
-    padding: scale(14),
-    borderWidth: 0.5,
-    borderColor: "#E5E7EB",
-    minHeight: moderateVerticalScale(64),
-    gap: scale(12),
+    alignSelf: "flex-start",
+    marginBottom: verticalScale(12),
+    backgroundColor: "#EFF6FF",
+    borderRadius: moderateScale(12),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(10),
   },
-  locationDot: {
-    width: moderateScale(12),
-    height: moderateScale(12),
-    borderRadius: moderateScale(6),
-    borderWidth: 2,
-    flexShrink: 0,
-  },
-  locationContent: { flex: 1 },
-  locationLabel: { fontSize: rf(10), color: "#9CA3AF", marginBottom: 3 },
-  locationValue: { fontSize: rf(14), fontWeight: "500", color: "#111827" },
-  locationPlaceholder: { color: "#9CA3AF", fontWeight: "400" },
-  locationDetails: {
+
+  currentLocationText: {
+    marginLeft: scale(6),
     fontSize: rf(12),
-    color: "#6B7280",
-    paddingTop: moderateVerticalScale(6),
-    marginTop: 4,
-    borderTopWidth: 0.5,
-    borderTopColor: "#F3F4F6",
-  },
-
-  locationConnector: { paddingLeft: scale(32), marginVertical: -1 },
-  locationConnectorLine: {
-    width: 1.5,
-    height: 14,
-    backgroundColor: "#E5E7EB",
-  },
-
-  passengerCard: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#FFF",
-    borderRadius: moderateScale(14),
-    padding: scale(14),
-    marginBottom: moderateVerticalScale(10),
-    borderWidth: 0.5,
-    borderColor: "#E5E7EB",
-    top: 5,
-  },
-  passengerTitle: { fontSize: rf(14), fontWeight: "500", color: "#111827" },
-  passengerControls: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: scale(12),
-  },
-  passengerControl: {
-    width: moderateScale(32),
-    height: moderateScale(32),
-    borderRadius: moderateScale(16),
-    backgroundColor: "#F3F4F6",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  passengerControlDisabled: { opacity: 0.4 },
-  passengerNumber: {
-    fontSize: rf(18),
-    fontWeight: "500",
+    fontWeight: "800",
     color: "#183B5C",
-    minWidth: scale(20),
-    textAlign: "center",
   },
 
-  tripMetricsRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFF",
-    borderRadius: moderateScale(14),
-    borderWidth: 0.5,
-    borderColor: "#E5E7EB",
-    paddingVertical: moderateVerticalScale(12),
-    paddingHorizontal: scale(10),
-    marginBottom: moderateVerticalScale(14),
-  },
-  tripMetricItem: { flex: 1, alignItems: "center", gap: 4 },
-  tripMetricIcon: {
-    width: moderateScale(32),
-    height: moderateScale(32),
-    borderRadius: moderateScale(16),
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: 2,
-  },
-  tripMetricValue: { fontSize: rf(14), fontWeight: "700", color: "#111827" },
-  tripMetricLabel: { fontSize: rf(10), color: "#9CA3AF" },
-  tripMetricDivider: {
-    width: 1,
-    height: moderateScale(28),
-    backgroundColor: "#E5E7EB",
+  locationConnector: {
+    alignItems: "flex-start",
+    paddingLeft: scale(20),
+    paddingVertical: verticalScale(4),
   },
 
-  recentSection: { marginBottom: moderateVerticalScale(14) },
+  locationConnectorLine: {
+    width: 2,
+    height: verticalScale(14),
+    backgroundColor: "#D1D5DB",
+  },
+
+  recentSection: {
+    marginTop: verticalScale(12),
+  },
+
   sectionTitle: {
-    fontSize: rf(12),
-    fontWeight: "500",
-    color: "#6B7280",
-    marginBottom: moderateVerticalScale(10),
+    fontSize: rf(13),
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: verticalScale(10),
   },
+
   recentChip: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: scale(12),
-    paddingVertical: moderateVerticalScale(7),
-    borderRadius: moderateScale(18),
-    marginRight: scale(7),
-    gap: scale(5),
-  },
-  recentChipText: { fontSize: rf(12), color: "#374151", maxWidth: scale(90) },
-
-  helpContainer: {
-    alignItems: "center",
-    paddingVertical: moderateVerticalScale(10),
-  },
-  helpText: { fontSize: rf(10), color: "#D1D5DB", textAlign: "center" },
-
-  activeBookingNudge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: scale(6),
-    backgroundColor: "#FEF3C7",
-    alignSelf: "flex-start",
-    paddingHorizontal: scale(10),
-    paddingVertical: moderateVerticalScale(5),
-    borderRadius: moderateScale(10),
-    marginBottom: moderateVerticalScale(8),
-  },
-  activeBookingNudgeText: {
-    fontSize: rf(10),
-    color: "#92400E",
-    fontWeight: "600",
-  },
-
-  alertOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  alertContainer: {
-    backgroundColor: "#FFF",
-    borderRadius: moderateScale(22),
-    padding: scale(22),
-    width: SCREEN_WIDTH - scale(40),
-    maxWidth: moderateScale(340),
-    alignItems: "center",
-  },
-  alertIconContainer: {
-    width: moderateScale(70),
-    height: moderateScale(70),
-    borderRadius: moderateScale(35),
-    justifyContent: "center",
-    alignItems: "center",
-    marginBottom: moderateVerticalScale(16),
-  },
-  alertTitle: {
-    fontSize: rf(18),
-    fontWeight: "600",
-    color: "#111827",
-    marginBottom: 7,
-    textAlign: "center",
-  },
-  alertMessage: {
-    fontSize: rf(13),
-    color: "#6B7280",
-    textAlign: "center",
-    marginBottom: moderateVerticalScale(20),
-    lineHeight: rf(18),
-  },
-  alertButtons: { flexDirection: "row", gap: scale(10), width: "100%" },
-  alertButton: {
-    flex: 1,
-    paddingVertical: moderateVerticalScale(11),
-    borderRadius: moderateScale(11),
-    alignItems: "center",
-  },
-  alertCancelButton: { backgroundColor: "#F3F4F6" },
-  alertCancelText: { color: "#6B7280", fontSize: rf(14), fontWeight: "600" },
-  alertConfirmButton: { backgroundColor: "#183B5C" },
-  alertConfirmText: { color: "#FFF", fontSize: rf(14), fontWeight: "600" },
-
-  toastContainer: {
-    position: "absolute",
-    left: scale(16),
-    right: scale(16),
-    flexDirection: "row",
-    alignItems: "center",
-    gap: scale(10),
-    paddingHorizontal: scale(14),
-    paddingVertical: moderateVerticalScale(11),
-    borderRadius: moderateScale(11),
-    zIndex: 1000,
-  },
-  toastMessage: { flex: 1, color: "#FFF", fontSize: rf(13), fontWeight: "500" },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  modalBackdrop: { flex: 1 },
-  modalContent: {
-    backgroundColor: "#FFF",
-    borderTopLeftRadius: moderateScale(22),
-    borderTopRightRadius: moderateScale(22),
-    paddingHorizontal: scale(18),
-    paddingTop: moderateVerticalScale(10),
-    paddingBottom: moderateVerticalScale(32),
-  },
-  modalHandle: {
-    width: scale(36),
-    height: 4,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: moderateVerticalScale(14),
-  },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: moderateVerticalScale(20),
-  },
-  modalTitle: { fontSize: rf(18), fontWeight: "600", color: "#111827" },
-  modalClose: { padding: 4 },
-  radiusDisplay: { alignItems: "center", marginBottom: moderateVerticalScale(20) },
-  radiusValue: { fontSize: rf(50), fontWeight: "700", color: "#183B5C" },
-  radiusUnit: { fontSize: rf(14), color: "#9CA3AF", marginTop: -6 },
-  radiusOptionsGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    gap: scale(10),
-    marginBottom: moderateVerticalScale(20),
-  },
-  radiusOptionChip: {
-    flex: 1,
-    minWidth: "22%",
-    paddingVertical: moderateVerticalScale(11),
-    backgroundColor: "#F3F4F6",
-    borderRadius: moderateScale(11),
-    alignItems: "center",
+    backgroundColor: "#F9FAFB",
     borderWidth: 1,
     borderColor: "#E5E7EB",
+    borderRadius: moderateScale(999),
+    paddingHorizontal: scale(12),
+    paddingVertical: verticalScale(8),
+    marginRight: scale(8),
+    maxWidth: scale(180),
   },
-  radiusOptionChipActive: {
-    backgroundColor: "#183B5C",
-    borderColor: "#183B5C",
-  },
-  radiusOptionText: { fontSize: rf(13), color: "#374151", fontWeight: "500" },
-  radiusOptionTextActive: { color: "#FFF" },
-  driverStats: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: scale(7),
-    backgroundColor: "#F9FAFB",
-    paddingVertical: moderateVerticalScale(11),
-    borderRadius: moderateScale(11),
-    marginBottom: moderateVerticalScale(20),
-  },
-  driverStatsText: { fontSize: rf(13), color: "#6B7280" },
-  applyButton: {
-    backgroundColor: "#183B5C",
-    paddingVertical: moderateVerticalScale(15),
-    borderRadius: moderateScale(14),
-    alignItems: "center",
-  },
-  applyButtonText: { color: "#FFF", fontSize: rf(15), fontWeight: "600" },
 
-  breakdownOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "flex-end",
-  },
-  breakdownBackdrop: { flex: 1 },
-  breakdownModal: {
-    backgroundColor: "#FFF",
-    borderTopLeftRadius: moderateScale(24),
-    borderTopRightRadius: moderateScale(24),
-    paddingHorizontal: scale(20),
-    paddingTop: moderateVerticalScale(10),
-    paddingBottom: moderateVerticalScale(36),
-  },
-  breakdownHandle: {
-    width: scale(36),
-    height: 4,
-    backgroundColor: "#E5E7EB",
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: moderateVerticalScale(14),
-  },
-  breakdownHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: moderateVerticalScale(12),
-  },
-  breakdownHeaderLeft: { flexDirection: "row", alignItems: "center", gap: scale(10) },
-  breakdownIconWrap: {
-    width: moderateScale(36),
-    height: moderateScale(36),
-    borderRadius: moderateScale(18),
-    backgroundColor: "#EFF6FF",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  breakdownTitle: { fontSize: rf(17), fontWeight: "700", color: "#111827" },
-  breakdownClose: {
-    padding: 4,
-    borderRadius: moderateScale(8),
-    backgroundColor: "#F3F4F6",
-  },
-  breakdownTripStrip: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F9FAFB",
-    borderRadius: moderateScale(10),
-    paddingVertical: moderateVerticalScale(8),
-    paddingHorizontal: scale(14),
-    marginBottom: moderateVerticalScale(16),
-    gap: scale(8),
-  },
-  breakdownTripItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  breakdownTripText: { fontSize: rf(12), color: "#6B7280", fontWeight: "500" },
-  breakdownTripDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "#D1D5DB",
-  },
-  breakdownRows: {
-    backgroundColor: "#F9FAFB",
-    borderRadius: moderateScale(12),
-    paddingHorizontal: scale(14),
-    paddingVertical: moderateVerticalScale(4),
-    marginBottom: moderateVerticalScale(12),
-  },
-  breakdownRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: moderateVerticalScale(10),
-    borderBottomWidth: 1,
-    borderBottomColor: "#F3F4F6",
-  },
-  breakdownRowLabel: {
-    fontSize: rf(13),
-    color: "#6B7280",
-    flex: 1,
-    paddingRight: scale(8),
-  },
-  breakdownRowValue: { fontSize: rf(13), fontWeight: "600", color: "#111827" },
-  breakdownInfoRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: scale(6),
-    backgroundColor: "#FEF3C7",
-    padding: scale(10),
-    borderRadius: moderateScale(8),
-    marginVertical: moderateVerticalScale(6),
-  },
-  breakdownInfoText: {
-    flex: 1,
+  recentChipText: {
+    marginLeft: scale(6),
     fontSize: rf(11),
-    color: "#92400E",
-    lineHeight: rf(15),
-  },
-  breakdownTotal: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#183B5C",
-    borderRadius: moderateScale(14),
-    paddingHorizontal: scale(16),
-    paddingVertical: moderateVerticalScale(14),
-    marginBottom: moderateVerticalScale(6),
-  },
-  breakdownTotalLabel: { fontSize: rf(15), fontWeight: "600", color: "#FFFFFF" },
-  breakdownTotalAmount: {
-    fontSize: rf(24),
+    color: "#374151",
     fontWeight: "700",
-    color: "#FFFFFF",
   },
-  breakdownPerPax: {
+
+  helpContainer: {
+    marginTop: verticalScale(14),
+    marginBottom: verticalScale(10),
+    alignItems: "center",
+  },
+
+  helpText: {
     fontSize: rf(11),
     color: "#9CA3AF",
     textAlign: "center",
-    marginBottom: moderateVerticalScale(14),
   },
-  breakdownFooter: { flexDirection: "row", gap: scale(8), flexWrap: "wrap" },
-  breakdownBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: scale(4),
-    backgroundColor: "#F3F4F6",
-    paddingHorizontal: scale(10),
-    paddingVertical: moderateVerticalScale(5),
-    borderRadius: moderateScale(10),
-  },
-  breakdownBadgeText: { fontSize: rf(10), color: "#374151", fontWeight: "500" },
 
-  floatingActionContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    zIndex: 999,
-    elevation: 999,
-  },
-  floatingActionButtons: {
-    flexDirection: "row",
+  pickupMarker: {
+    width: moderateScale(34),
+    height: moderateScale(34),
+    borderRadius: moderateScale(17),
+    backgroundColor: "#10B981",
     alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "rgba(255,255,255,0.96)",
-    marginHorizontal: scale(2),
-    borderWidth: 1,
-    borderColor: "#F3F4F6",
-  },
-  floatingActionButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#FFFFFF",
-  },
-  floatingActionButtonPrimary: { backgroundColor: "#183B5C" },
-  floatingActionButtonDisabled: { opacity: 0.45 },
-  floatingActionIconWrapper: {
     justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#FFF",
+  },
+
+  dropoffMarker: {
+    width: moderateScale(34),
+    height: moderateScale(34),
+    borderRadius: moderateScale(17),
+    backgroundColor: "#EF4444",
     alignItems: "center",
-    backgroundColor: "#ECFDF5",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#FFF",
   },
-  floatingActionIconWrapperPrimary: {
-    backgroundColor: "rgba(255,255,255,0.18)",
+
+  driverMarker: {
+    width: moderateScale(32),
+    height: moderateScale(32),
+    borderRadius: moderateScale(16),
+    backgroundColor: "#183B5C",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#FFF",
   },
-  floatingActionTextContainer: { flex: 1 },
-  floatingActionTitle: { color: "#111827", fontWeight: "700" },
-  floatingActionTitleLight: { color: "#FFFFFF" },
-  floatingActionSubtitle: {
-    color: "#6B7280",
-    fontWeight: "500",
-    marginTop: 1,
-  },
-  floatingActionSubtitleLight: { color: "rgba(255,255,255,0.82)" },
 
   scannerHeader: {
+    backgroundColor: "#111827",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: scale(18),
-    paddingBottom: moderateVerticalScale(16),
-    backgroundColor: "#000",
-  },
-  scannerBackButton: {
-    width: moderateScale(38),
-    height: moderateScale(38),
-    borderRadius: moderateScale(19),
-    backgroundColor: "rgba(255,255,255,0.2)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  scannerTitle: { fontSize: rf(17), fontWeight: "600", color: "#FFF" },
-  scannerContainer: { flex: 1, backgroundColor: "#000" },
-  scanner: { flex: 1 },
-  scannerOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  scanArea: { width: scale(220), height: scale(220), position: "relative" },
-  scanCorner: {
-    position: "absolute",
-    width: scale(36),
-    height: scale(36),
-    borderColor: "#FFF",
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    top: 0,
-    left: 0,
-  },
-  scanCornerTopRight: {
-    right: 0,
-    left: "auto",
-    borderLeftWidth: 0,
-    borderRightWidth: 3,
-  },
-  scanCornerBottomLeft: {
-    bottom: 0,
-    top: "auto",
-    borderTopWidth: 0,
-    borderBottomWidth: 3,
-  },
-  scanCornerBottomRight: {
-    bottom: 0,
-    top: "auto",
-    right: 0,
-    left: "auto",
-    borderTopWidth: 0,
-    borderLeftWidth: 0,
-    borderRightWidth: 3,
-    borderBottomWidth: 3,
-  },
-  scannerInstruction: {
-    color: "#FFF",
-    fontSize: rf(13),
-    marginTop: moderateVerticalScale(26),
-    textAlign: "center",
+    paddingHorizontal: scale(16),
+    paddingBottom: verticalScale(14),
   },
 
-  driverMarkerImage: {
-    width: moderateScale(42),
-    height: moderateScale(42),
+  scannerBackButton: {
+    width: moderateScale(40),
+    height: moderateScale(40),
+    borderRadius: moderateScale(20),
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  pickupMarkerImage: {
-    width: moderateScale(42),
-    height: moderateScale(42),
+
+  scannerTitle: {
+    fontSize: rf(16),
+    fontWeight: "800",
+    color: "#FFF",
   },
-  dropoffMarkerImage: {
-    width: moderateScale(42),
-    height: moderateScale(42),
+
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+
+  scanner: {
+    flex: 1,
+  },
+
+  scannerOverlay: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.28)",
+  },
+
+  scanArea: {
+    width: scale(240),
+    height: scale(240),
+    borderRadius: moderateScale(20),
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.25)",
+  },
+
+  scanCorner: {
+    position: "absolute",
+    width: scale(30),
+    height: scale(30),
+    borderLeftWidth: 4,
+    borderTopWidth: 4,
+    borderColor: "#FFF",
+    top: -2,
+    left: -2,
+  },
+
+  scanCornerTopRight: {
+    right: -2,
+    left: undefined,
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+  },
+
+  scanCornerBottomLeft: {
+    top: undefined,
+    bottom: -2,
+    borderTopWidth: 0,
+    borderBottomWidth: 4,
+  },
+
+  scanCornerBottomRight: {
+    top: undefined,
+    right: -2,
+    left: undefined,
+    bottom: -2,
+    borderTopWidth: 0,
+    borderLeftWidth: 0,
+    borderRightWidth: 4,
+    borderBottomWidth: 4,
+  },
+
+  scannerInstruction: {
+    marginTop: verticalScale(20),
+    color: "#FFF",
+    fontSize: rf(13),
+    fontWeight: "700",
   },
 });

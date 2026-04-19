@@ -25,6 +25,36 @@ import TopRatedDriversScreen from "../commuter/TopRatedDrivers";
 const { width, height } = Dimensions.get("window");
 
 const MENU_CATEGORIES = [
+  // 🔥 TOP PRIORITY SERVICES (NEW)
+{
+  id: "services",
+  title: "SERVICES",
+  icon: "flash-outline",
+  items: [
+    {
+      id: "pabili",
+      name: "Pabili",
+      icon: "bag-handle-outline",
+      activeIcon: "bag-handle",
+      screen: "PabiliScreen",
+      color: "#F97316",
+      gradient: ["#F97316", "#FB923C"],
+      comingSoon: false,
+    },
+    {
+      id: "delivery",
+      name: "Padala",
+      icon: "cube-outline",
+      activeIcon: "cube",
+      screen: "PadalaScreen",
+      color: "#10B981",
+      gradient: ["#10B981", "#34D399"],
+      comingSoon: true,
+    },
+  ],
+},
+
+  // ✅ ORIGINAL MAIN
   {
     id: "main",
     title: "MAIN",
@@ -59,6 +89,8 @@ const MENU_CATEGORIES = [
       },
     ],
   },
+
+  // ✅ REWARDS
   {
     id: "rewards",
     title: "REWARDS & POINTS",
@@ -93,6 +125,8 @@ const MENU_CATEGORIES = [
       },
     ],
   },
+
+  // ✅ COMMUNICATION
   {
     id: "communication",
     title: "COMMUNICATION & PROFILE",
@@ -115,43 +149,6 @@ const MENU_CATEGORIES = [
         screen: "Account",
         color: "#6B7280",
         gradient: ["#6B7280", "#9CA3AF"],
-      },
-    ],
-  },
-  {
-    id: "extras",
-    title: "EXTRAS",
-    icon: "grid-outline",
-    items: [
-      {
-        id: "foodStore",
-        name: "Food Hub",
-        icon: "restaurant-outline",
-        activeIcon: "restaurant",
-        screen: FoodStoreScreen,
-        color: "#EC489A",
-        gradient: ["#EC489A", "#F472B6"],
-        comingSoon: false,
-      },
-      {
-        id: "shopping",
-        name: "Shopping",
-        icon: "cart-outline",
-        activeIcon: "cart",
-        screen: null,
-        color: "#10B981",
-        gradient: ["#10B981", "#34D399"],
-        comingSoon: true,
-      },
-      {
-        id: "promos",
-        name: "Promos",
-        icon: "pricetag-outline",
-        activeIcon: "pricetag",
-        screen: null,
-        color: "#F59E0B",
-        gradient: ["#F59E0B", "#FBBF24"],
-        comingSoon: true,
       },
     ],
   },

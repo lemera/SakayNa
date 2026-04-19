@@ -38,7 +38,6 @@ import OtpScreen from "./app/commuter/OtpScreen.js";
 import CommuterDetails from "./app/commuter/CommuterDetails.js";
 import HomePage from "./app/commuter/HomePage.js";
 import SelectDriverScreen from "./app/commuter/SelectDriverScreen";
-import TrackRideScreen from "./app/commuter/TrackRideScreen.js";
 import PaymentScreen from "./app/commuter/PaymentScreen.js";
 import MapPickerScreen from "./app/commuter/MapPickerScreen.js";
 import TransactionHistory from "./app/commuter/TransactionHistory.js";
@@ -57,6 +56,11 @@ import FloatingMenu from "./app/components/FloatingMenu.js";
 import MenuButton from "./app/components/MenuButton.js";
 import FoodStoreScreen from "./app/commuter/FoodStoreScreen";
 import WithdrawalDetailsScreen from "./app/commuter/WithdrawalDetailsScreen.js";
+import PabiliScreen from "./app/commuter/PabiliScreen";
+import PadalaScreen from "./app/commuter/PadalaScreen";
+import ConfirmDeliveryScreen from "./app/commuter/ConfirmDeliveryScreen";
+import PabiliFindingDriverScreen from "./app/commuter/PabiliFindingDriverScreen";
+import CommuterTrackRidesScreen from "./app/commuter/CommuterTrackRidesScreen";
 
 // Driver Flow
 import DriverLoginScreen from "./app/Driver/DriverLogin.js";
@@ -76,6 +80,9 @@ import RateDriverScreen from "./app/commuter/RateDriverScreen.js";
 import TopRatedDriversScreen from "./app/commuter/TopRatedDrivers";
 import AllTripsScreen from "./app/Driver/AllTripsScreen.js";
 import RideMissionsScreen from "./app/Driver/RideMissionsScreen";
+// import DriverHomeRequestsScreen from "./app/Driver/DriverHomeRequestsScreen";
+import DriverTrackRideScreen from "./app/Driver/DriverTrackRideScreen";
+import DriverTrackPabiliScreen from "./app/Driver/DriverTrackPabiliScreen";
 import {
   configureNotificationHandler,
   setupNotificationChannels,
@@ -433,7 +440,6 @@ useEffect(() => {
               name="SelectDriverScreen"
               component={SelectDriverScreen}
             />
-            <Stack.Screen name="TrackRideScreen" component={TrackRideScreen} />
             <Stack.Screen name="PaymentScreen" component={PaymentScreen} />
             <Stack.Screen name="MapPicker" component={MapPickerScreen} />
             <Stack.Screen
@@ -460,6 +466,12 @@ useEffect(() => {
             <Stack.Screen name="FloatingMenu" component={FloatingMenu} />
             <Stack.Screen name="MenuButton" component={MenuButton} />
             <Stack.Screen name="FoodStoreScreen" component={FoodStoreScreen} />
+            <Stack.Screen name="PabiliScreen" component={PabiliScreen} />
+            <Stack.Screen name="PadalaScreen" component={PadalaScreen} />
+            <Stack.Screen name="ConfirmDeliveryScreen" component={ConfirmDeliveryScreen} />
+            <Stack.Screen name="PabiliFindingDriverScreen" component={PabiliFindingDriverScreen} />
+            {/* <Stack.Screen name="CommuterTrackRidesScreen" component={CommuterTrackRidesScreen} /> */}
+            
             <Stack.Screen
               name="WithdrawalDetails"
               component={WithdrawalDetailsScreen}
@@ -506,6 +518,9 @@ useEffect(() => {
             <Stack.Screen name="account" component={DriverAccountScreen} />
             <Stack.Screen name="AllTripsScreen" component={AllTripsScreen} />
             <Stack.Screen name="RideMissionsScreen" component={RideMissionsScreen} />
+            {/* <Stack.Screen name="DriverHomeRequestsScreen" component={DriverHomeRequestsScreen} /> */}
+            <Stack.Screen name="DriverTrackRideScreen" component={DriverTrackRideScreen} />
+            <Stack.Screen name="DriverTrackPabiliScreen" component={DriverTrackPabiliScreen} />
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

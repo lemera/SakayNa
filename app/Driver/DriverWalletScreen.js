@@ -522,7 +522,7 @@ const fetchStatistics = async (uid) => {
             marginRight: 20,
           }}
         >
-          My Wallet
+          My Earnings
         </Text>
         <Text 
           style={{ 
